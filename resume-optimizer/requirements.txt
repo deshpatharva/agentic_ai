@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+python-docx
+pdfplumber
+pypdf
+spacy==3.7.5
+scikit-learn
+anthropic
+python-multipart
+sse-starlette
+python-dotenv
+google-genai
+groq
