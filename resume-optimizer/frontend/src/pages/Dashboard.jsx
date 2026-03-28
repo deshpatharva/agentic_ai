@@ -41,7 +41,7 @@ export default function Dashboard() {
   const limits = summary?.limits || {};
 
   return (
-    <div className="flex h-screen bg-surface overflow-hidden">
+    <div className="flex h-screen bg-surface overflow-hidden page-fade">
       <Sidebar />
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-5xl mx-auto px-8 py-8">
@@ -51,13 +51,15 @@ export default function Dashboard() {
           {/* Stats row */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
             {[
-              { icon: TrendingUp, label: "Today's runs",      value: `${today.runs || 0} / ${limits.daily_uploads || 0}`, color: 'text-primary' },
-              { icon: Target,     label: 'Best score',        value: stats.best_score || 0,    color: 'text-teal' },
-              { icon: FileText,   label: 'Resumes optimized', value: stats.total_resumes || 0, color: 'text-primary' },
-              { icon: Briefcase,  label: 'Unread matches',    value: stats.unread_matches || 0,color: 'text-amber' },
-            ].map(({ icon: Icon, label, value, color }) => (
+              { icon: TrendingUp, label: "Today's runs",      value: `${today.runs || 0} / ${limits.daily_uploads || 0}`, iconBg: 'bg-violet-50', iconColor: 'text-violet-500' },
+              { icon: Target,     label: 'Best score',        value: stats.best_score || 0,                                iconBg: 'bg-green-50',  iconColor: 'text-green-500' },
+              { icon: FileText,   label: 'Resumes optimized', value: stats.total_resumes || 0,                             iconBg: 'bg-violet-50', iconColor: 'text-violet-500' },
+              { icon: Briefcase,  label: 'Unread matches',    value: stats.unread_matches || 0,                            iconBg: 'bg-amber-50',  iconColor: 'text-amber-500' },
+            ].map(({ icon: Icon, label, value, iconBg, iconColor }) => (
               <Card key={label} className="!p-5">
-                <Icon className={`w-5 h-5 mb-3 ${color}`} />
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center mb-3 ${iconBg}`}>
+                  <Icon className={`w-4 h-4 ${iconColor}`} />
+                </div>
                 <div className="text-2xl font-bold text-gray-900 mb-0.5">{value}</div>
                 <div className="text-xs text-gray-500">{label}</div>
               </Card>
@@ -110,7 +112,7 @@ export default function Dashboard() {
                 </tr></thead>
                 <tbody className="divide-y divide-gray-50">
                   {summary.recent_resumes.map(r => (
-                    <tr key={r.id}>
+                    <tr key={r.id} className="hover:bg-gray-50 transition-colors">
                       <td className="py-3 font-medium text-gray-800 truncate max-w-[180px]">{r.filename}</td>
                       <td className="py-3">
                         <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${scoreColor(r.final_score || 0)}`}>
