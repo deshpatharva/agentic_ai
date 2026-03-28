@@ -10,14 +10,22 @@ import client from '../api/client';
 import useAuthStore from '../store/authStore';
 
 export default function Settings() {
-  const { user, logout } = useAuthStore();
+  const { user, logout, fetchMe } = useAuthStore();
   const [form, setForm] = useState({ full_name: user?.full_name || '', email: user?.email || '' });
   const [saving, setSaving] = useState(false);
 
   const save = async (e) => {
     e.preventDefault();
     setSaving(true);
-    setTimeout(() => { toast.success('Profile updated'); setSaving(false); }, 800);
+    try {
+      await client.put('/auth/me', form);
+      await fetchMe();
+      toast.success('Profile updated');
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Failed to save profile');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
