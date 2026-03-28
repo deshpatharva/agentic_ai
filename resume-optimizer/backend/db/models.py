@@ -4,7 +4,7 @@ Transactional data only. Analytics in Delta Lake.
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum as PyEnum
 
 from sqlalchemy import (
@@ -36,7 +36,7 @@ class User(Base):
     stripe_customer_id     = Column(String(255), nullable=True)
     stripe_subscription_id = Column(String(255), nullable=True)
     is_active              = Column(Boolean, default=True, nullable=False)
-    created_at             = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at             = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     resumes = relationship("Resume", back_populates="user", cascade="all, delete-orphan")
 
@@ -63,6 +63,6 @@ class Resume(Base):
     scores_json       = Column(JSON, nullable=True)
     iterations        = Column(Integer, default=0, nullable=False)
     version           = Column(Integer, default=1, nullable=False)
-    created_at        = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at        = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     user = relationship("User", back_populates="resumes")

@@ -53,7 +53,13 @@ SCORE_TARGET        = 90
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql+asyncpg://postgres:password@localhost:5432/resumeopt")
 
 # ── JWT Auth ──────────────────────────────────────────────────────────────────
-JWT_SECRET      = os.environ.get("JWT_SECRET", "change-me-in-production-use-32-char-random-string")
+_JWT_SECRET_DEFAULT = "change-me-in-production-use-32-char-random-string"
+JWT_SECRET = os.environ.get("JWT_SECRET", _JWT_SECRET_DEFAULT)
+if not JWT_SECRET or JWT_SECRET == _JWT_SECRET_DEFAULT:
+    raise ValueError(
+        "JWT_SECRET env var is not set or is still the default placeholder. "
+        "Generate a secret with: python -c \"import secrets; print(secrets.token_hex(32))\""
+    )
 JWT_ALGORITHM   = os.environ.get("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_DAYS = int(os.environ.get("JWT_EXPIRE_DAYS", "7"))
 

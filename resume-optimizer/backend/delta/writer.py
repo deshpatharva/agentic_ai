@@ -11,7 +11,7 @@ Prod: set DELTA_STORAGE_PATH=s3://your-bucket/delta/
 """
 
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -66,7 +66,7 @@ def write_daily_usage(record: dict) -> None:
     Expected keys: user_id, date (str YYYY-MM-DD or date obj),
                    pipeline_runs, uploads, tokens_used
     """
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     row = {
         "user_id":       str(record["user_id"]),
         "date":          str(record.get("date", date.today().isoformat())),
@@ -93,7 +93,7 @@ def write_job_match(record: dict) -> None:
                    similarity_score, raw_description, scraped_at (ISO str or datetime),
                    is_read (bool, default False)
     """
-    scraped_at = record.get("scraped_at", datetime.utcnow().isoformat())
+    scraped_at = record.get("scraped_at", datetime.now(timezone.utc).isoformat())
     if isinstance(scraped_at, datetime):
         scraped_at_str = scraped_at.isoformat()
         dt = scraped_at
@@ -138,7 +138,9 @@ def read_usage_last_n_days(user_id: str, days: int = 30) -> pd.DataFrame:
 
     cutoff = (date.today() - timedelta(days=days)).isoformat()
     dt = DeltaTable.from_uri(path)
-    df = dt.to_pandas()
+    df = dt.to_pandas(
+        filters=[("user_id", "=", user_id), ("date", ">=", cutoff)]
+    )
 
     df = df[(df["user_id"] == user_id) & (df["date"] >= cutoff)]
     if df.empty:
@@ -169,9 +171,11 @@ def read_job_matches(
     if not Path(path).exists() or not (Path(path) / "_delta_log").exists():
         return {"total": 0, "page": page, "per_page": per_page, "results": []}
 
-    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     dt = DeltaTable.from_uri(path)
-    df = dt.to_pandas()
+    df = dt.to_pandas(
+        filters=[("user_id", "=", user_id), ("scraped_at", ">=", cutoff)]
+    )
 
     df = df[(df["user_id"] == user_id) & (df["scraped_at"] >= cutoff)]
     df = df.sort_values("scraped_at", ascending=False)
@@ -195,7 +199,7 @@ def vacuum_old_matches(retention_days: int = 90) -> None:
     if not Path(path).exists() or not (Path(path) / "_delta_log").exists():
         return
 
-    cutoff_dt = datetime.utcnow() - timedelta(days=retention_days)
+    cutoff_dt = datetime.now(timezone.utc) - timedelta(days=retention_days)
     cutoff_str = cutoff_dt.isoformat()
 
     dt = DeltaTable.from_uri(path)

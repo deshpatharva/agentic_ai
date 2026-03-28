@@ -58,8 +58,11 @@ async def check_plan_limit(
         df = await asyncio.to_thread(read_usage_last_n_days, str(user.id), 1)
         today_df = df[df["date"] == today_str]
         used = int(today_df["pipeline_runs"].sum()) if not today_df.empty else 0
-    except Exception:
-        used = 0
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Usage tracking temporarily unavailable. Please try again in a moment.",
+        ) from exc
 
     if used >= limits.daily_uploads:
         raise HTTPException(

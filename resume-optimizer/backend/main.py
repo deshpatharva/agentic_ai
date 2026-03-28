@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import date as date_type
@@ -35,15 +36,10 @@ from parsers.pdf_parser import parse_pdf
 from parsers.docx_parser import parse_docx
 from generators.docx_generator import generate_docx
 from llm import create_gemini_cache, delete_gemini_cache
-from delta.writer import (
-    write_daily_usage,
-    write_job_match,
-    read_usage_last_n_days,
-    read_job_matches,
-)
+from delta.writer import write_daily_usage, write_job_match
 from scraper.scraper import scrape_jobs
 from db.session import get_db, init_db, AsyncSessionLocal
-from db.models import Resume
+from db.models import Resume, User
 from auth.router import router as auth_router
 from auth.dependencies import get_current_user, check_plan_limit
 from dashboard.router import router as dashboard_router
@@ -51,16 +47,37 @@ from dashboard.router import router as dashboard_router
 
 # ── App setup ────────────────────────────────────────────────────────────────
 
+_JOB_TTL_SECONDS = 3600  # 1 hour
+
+
+async def _cleanup_jobs():
+    """Remove completed/errored jobs older than JOB_TTL_SECONDS to prevent memory leaks."""
+    while True:
+        await asyncio.sleep(300)  # run every 5 minutes
+        now = time.monotonic()
+        stale = [
+            job_id for job_id, job in list(jobs.items())
+            if job.get("status") in ("done", "error")
+            and (now - job.get("created_at", now)) > _JOB_TTL_SECONDS
+        ]
+        for job_id in stale:
+            jobs.pop(job_id, None)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    cleanup_task = asyncio.create_task(_cleanup_jobs())
     yield
+    cleanup_task.cancel()
 
 app = FastAPI(title="Resume Optimizer API", version="1.0.0", lifespan=lifespan)
 
+_ALLOWED_ORIGINS = list({FRONTEND_URL, "http://localhost:5173", "http://localhost:5174"})
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*", FRONTEND_URL],
+    allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -88,11 +105,9 @@ class AnalyzeJDRequest(BaseModel):
 class RunPipelineRequest(BaseModel):
     job_id: str
     jd_text: str
-    user_id: str = ""  # populated from auth token in authenticated flow
 
 
 class ScrapeJobsRequest(BaseModel):
-    user_id: str
     resume_id: str
     keywords: str
     per_source: int = 20
@@ -111,13 +126,17 @@ def _new_job(resume_text: str = "", jd_text: str = "") -> dict:
         "iteration": 0,
         "queue": asyncio.Queue(),
         "download_path": None,
+        "created_at": time.monotonic(),
     }
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
 
 @app.post("/upload")
-async def upload_resume(file: UploadFile = File(...)):
+async def upload_resume(
+    file: UploadFile = File(...),
+    current_user: User = Depends(check_plan_limit),
+):
     """
     Accept a .pdf or .docx resume file, parse it, and return structured text.
     """
@@ -160,7 +179,10 @@ async def upload_resume(file: UploadFile = File(...)):
 
 
 @app.post("/analyze-jd")
-async def analyze_jd_endpoint(request: AnalyzeJDRequest):
+async def analyze_jd_endpoint(
+    request: AnalyzeJDRequest,
+    current_user: User = Depends(get_current_user),
+):
     """
     Analyze a job description and return extracted keywords, requirements, and skills.
     """
@@ -176,7 +198,12 @@ async def analyze_jd_endpoint(request: AnalyzeJDRequest):
 
 
 @app.post("/run-pipeline")
-async def run_pipeline(request: RunPipelineRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
+async def run_pipeline(
+    request: RunPipelineRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(check_plan_limit),
+    db: AsyncSession = Depends(get_db),
+):
     """
     Start the optimization pipeline for a previously uploaded resume.
     Returns immediately; progress is streamed via SSE at /status/{job_id}.
@@ -193,7 +220,7 @@ async def run_pipeline(request: RunPipelineRequest, background_tasks: Background
     # Reset queue in case of re-run
     job["queue"] = asyncio.Queue()
 
-    background_tasks.add_task(_run_pipeline_task, request.job_id, request.user_id, db)
+    background_tasks.add_task(_run_pipeline_task, request.job_id, str(current_user.id), db)
 
     return {"job_id": request.job_id, "status": "started"}
 
@@ -220,7 +247,10 @@ async def stream_status(job_id: str):
 
 
 @app.get("/download/{job_id}")
-async def download_resume(job_id: str):
+async def download_resume(
+    job_id: str,
+    current_user: User = Depends(get_current_user),
+):
     """
     Download the generated .docx resume for a completed job.
     """
@@ -245,41 +275,13 @@ async def download_resume(job_id: str):
     )
 
 
-# ── Dashboard & analytics endpoints ──────────────────────────────────────────
-
-@app.get("/dashboard/usage/{user_id}")
-async def dashboard_usage(user_id: str, days: int = 30):
-    """
-    Return aggregated daily usage for user_id over the last N days (from Delta Lake).
-    """
-    try:
-        df = await asyncio.to_thread(read_usage_last_n_days, user_id, days)
-        return {"user_id": user_id, "days": days, "rows": df.to_dict(orient="records")}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read usage: {str(e)}")
-
-
-@app.get("/dashboard/job-matches/{user_id}")
-async def dashboard_job_matches(
-    user_id: str,
-    days: int = 30,
-    page: int = 1,
-    per_page: int = 20,
-):
-    """
-    Return paginated job matches for user_id scraped in the last N days (from Delta Lake).
-    """
-    try:
-        result = await asyncio.to_thread(read_job_matches, user_id, days, page, per_page)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read job matches: {str(e)}")
-
-
 # ── Job scraper endpoint ──────────────────────────────────────────────────────
 
 @app.post("/scrape-jobs")
-async def scrape_jobs_endpoint(request: ScrapeJobsRequest):
+async def scrape_jobs_endpoint(
+    request: ScrapeJobsRequest,
+    current_user: User = Depends(get_current_user),
+):
     """
     Scrape job postings from all active sources using provided keywords.
     Persists results to Delta Lake and returns them.
@@ -292,11 +294,13 @@ async def scrape_jobs_endpoint(request: ScrapeJobsRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Scraping failed: {str(e)}")
 
+    user_id = str(current_user.id)
+
     # Persist each posting to Delta Lake in a background thread
     async def _persist():
         for posting in postings:
             record = {
-                "user_id":   request.user_id,
+                "user_id":   user_id,
                 "resume_id": request.resume_id,
                 **posting,
             }

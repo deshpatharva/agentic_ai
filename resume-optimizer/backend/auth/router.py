@@ -2,7 +2,7 @@
 Auth endpoints — register, login, me.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from jose import jwt
@@ -28,6 +28,11 @@ class RegisterRequest(BaseModel):
     full_name: str = ""
 
 
+class UpdateProfileRequest(BaseModel):
+    full_name: str = ""
+    email: EmailStr
+
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
@@ -42,7 +47,7 @@ class TokenResponse(BaseModel):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _make_token(user_id: str) -> str:
-    expire = datetime.utcnow() + timedelta(days=JWT_EXPIRE_DAYS)
+    expire = datetime.now(timezone.utc) + timedelta(days=JWT_EXPIRE_DAYS)
     return jwt.encode({"sub": user_id, "exp": expire}, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
@@ -109,6 +114,27 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
 
 @router.get("/me")
 async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(PlanLimit).where(PlanLimit.plan == user.plan.value))
+    limits = result.scalar_one_or_none()
+    return _user_dict(user, limits)
+
+
+@router.put("/me")
+async def update_profile(
+    request: UpdateProfileRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if request.email != user.email:
+        existing = await db.execute(select(User).where(User.email == request.email))
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Email already in use.")
+
+    user.full_name = request.full_name
+    user.email = request.email
+    await db.commit()
+    await db.refresh(user)
+
     result = await db.execute(select(PlanLimit).where(PlanLimit.plan == user.plan.value))
     limits = result.scalar_one_or_none()
     return _user_dict(user, limits)
