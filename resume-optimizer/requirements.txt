@@ -11,3 +11,11 @@ sse-starlette
 python-dotenv
 google-genai
 groq
+# Delta Lake
+deltalake
+pandas
+pyarrow
+# Job scraper
+httpx
+# Optional: boto3 for S3 Delta storage in prod
+# boto3

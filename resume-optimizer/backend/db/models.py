@@ -1,0 +1,68 @@
+"""
+SQLAlchemy async models — PostgreSQL tables.
+Transactional data only. Analytics in Delta Lake.
+"""
+
+import uuid
+from datetime import datetime
+from enum import Enum as PyEnum
+
+from sqlalchemy import (
+    Boolean, Column, DateTime, Enum, Float, ForeignKey,
+    Integer, JSON, String, Text,
+)
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import DeclarativeBase, relationship
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class PlanType(str, PyEnum):
+    free       = "free"
+    pro        = "pro"
+    enterprise = "enterprise"
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id                     = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email                  = Column(String(255), unique=True, nullable=False, index=True)
+    password_hash          = Column(String(255), nullable=False)
+    full_name              = Column(String(255), nullable=True)
+    plan                   = Column(Enum(PlanType), default=PlanType.free, nullable=False)
+    stripe_customer_id     = Column(String(255), nullable=True)
+    stripe_subscription_id = Column(String(255), nullable=True)
+    is_active              = Column(Boolean, default=True, nullable=False)
+    created_at             = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    resumes = relationship("Resume", back_populates="user", cascade="all, delete-orphan")
+
+
+class PlanLimit(Base):
+    __tablename__ = "plan_limits"
+
+    plan                  = Column(String(50), primary_key=True)
+    daily_uploads         = Column(Integer, nullable=False)
+    max_stored_resumes    = Column(Integer, nullable=False)
+    job_scraping_enabled  = Column(Boolean, nullable=False)
+    price_cents           = Column(Integer, nullable=False)
+
+
+class Resume(Base):
+    __tablename__ = "resumes"
+
+    id                = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id           = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    original_filename = Column(String(500), nullable=False)
+    file_path         = Column(String(1000), nullable=True)
+    jd_text           = Column(Text, nullable=True)
+    final_score       = Column(Float, nullable=True)
+    scores_json       = Column(JSON, nullable=True)
+    iterations        = Column(Integer, default=0, nullable=False)
+    version           = Column(Integer, default=1, nullable=False)
+    created_at        = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    user = relationship("User", back_populates="resumes")

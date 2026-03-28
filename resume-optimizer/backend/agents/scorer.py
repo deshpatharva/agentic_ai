@@ -1,7 +1,10 @@
 """
 Resume Scorers
-  1. ATS Match  — pure Python, zero API calls
-  2-4. Impact + Skills Gap + Readability — single combined call via MODEL_SCORER
+All 4 scores returned from a single LLM call via MODEL_SCORER.
+  1. ATS Match     — keyword coverage (moved from local to LLM prompt)
+  2. Impact Score  — quantified achievements, action verbs
+  3. Skills Gap    — JD skills vs resume skills
+  4. Readability   — structure, tone, formatting
 """
 
 import json
@@ -30,45 +33,49 @@ def _clean_json(text: str) -> str:
     return text.strip()
 
 
-# ── SCORER 1: ATS Match (pure Python) ───────────────────────────────────────
-
-def score_ats(resume_text: str, jd_text: str, jd_keywords: list) -> dict:
+def _extract_jd_keywords(jd_text: str, jd_keywords: list) -> list:
+    """Extract keywords from JD using spaCy + TF-IDF (used to build keyword list for ATS prompt)."""
     doc = nlp(jd_text)
-    spacy_keywords = [chunk.text.lower() for chunk in doc.noun_chunks]
-    spacy_keywords += [
-        token.text.lower()
-        for token in doc
-        if token.pos_ in ("NOUN", "PROPN") and not token.is_stop
-    ]
+    spacy_kw = [chunk.text.lower() for chunk in doc.noun_chunks]
+    spacy_kw += [t.text.lower() for t in doc if t.pos_ in ("NOUN", "PROPN") and not t.is_stop]
     try:
         tfidf = TfidfVectorizer(ngram_range=(1, 2), stop_words="english", max_features=30)
         tfidf.fit([jd_text])
-        tfidf_keywords = list(tfidf.get_feature_names_out())
+        tfidf_kw = list(tfidf.get_feature_names_out())
     except Exception:
-        tfidf_keywords = []
-
-    all_keywords = list(dict.fromkeys(
-        spacy_keywords + tfidf_keywords + [k.lower() for k in jd_keywords]
-    ))
-    all_keywords = [k for k in all_keywords if len(k) > 2]
-    resume_lower = resume_text.lower()
-    matched = [k for k in all_keywords if k in resume_lower]
-    missing = [k for k in all_keywords if k not in resume_lower]
-    score = round((len(matched) / len(all_keywords)) * 100) if all_keywords else 0
-    return {"score": score, "missing_keywords": missing[:20], "matched_keywords": matched[:20]}
+        tfidf_kw = []
+    all_kw = list(dict.fromkeys(spacy_kw + tfidf_kw + [k.lower() for k in jd_keywords]))
+    return [k for k in all_kw if len(k) > 2]
 
 
-# ── SCORERS 2-4: Combined single LLM call ────────────────────────────────────
+# ── All 4 scores in one LLM call ─────────────────────────────────────────────
 
-async def score_combined(resume_text: str, jd_text: str) -> dict:
+async def score_combined(
+    resume_text: str,
+    jd_text: str,
+    jd_keywords: list = None,
+    gemini_cache_name: str = None,
+) -> dict:
     cached = result_cache.get("combined", resume_text, jd_text)
     if cached is not None:
         return cached
 
-    prompt = f"""You are a professional resume evaluator. Score this resume on 3 dimensions.
+    # Build keyword list for ATS scoring context
+    kw_list = _extract_jd_keywords(jd_text, jd_keywords or [])
+    keywords_str = ", ".join(kw_list[:50]) if kw_list else "see job description"
 
-Job Description:
-{jd_text}
+    if gemini_cache_name:
+        # JD text is in the server-side cache — omit it from the prompt to save tokens
+        jd_section = "Job Description: (see cached context above)"
+    else:
+        jd_section = f"Job Description:\n{jd_text}"
+
+    prompt = f"""You are a professional resume evaluator. Score this resume on 4 dimensions against the job description.
+
+{jd_section}
+
+Extracted JD Keywords (for ATS scoring):
+{keywords_str}
 
 Resume:
 {resume_text}
@@ -76,23 +83,26 @@ Resume:
 Return ONLY a valid JSON object. No explanation, no markdown. Max 3 items per list.
 Example:
 {{
-  "impact": {{"score": 74, "weak_bullets": ["responsible for reports"], "suggestions": ["add metrics"]}},
-  "skills_gap": {{"score": 68, "missing_skills": ["docker"], "matched_skills": ["python"]}},
-  "readability": {{"score": 82, "issues": ["missing summary"], "strengths": ["clear sections"]}}
+  "ats": {{"score": 74, "missing_keywords": ["docker", "ci/cd"], "matched_keywords": ["python", "sql"]}},
+  "impact": {{"score": 68, "weak_bullets": ["responsible for reports"], "suggestions": ["add metrics"]}},
+  "skills_gap": {{"score": 72, "missing_skills": ["kubernetes"], "matched_skills": ["python"]}},
+  "readability": {{"score": 85, "issues": ["missing summary"], "strengths": ["clear sections"]}}
 }}
 
 Scoring criteria:
+- ats (0-100): how many of the extracted JD keywords appear in the resume (keyword coverage)
 - impact (0-100): quantified achievements, strong action verbs, measurable outcomes
 - skills_gap (0-100): required JD skills vs skills demonstrated in resume
 - readability (0-100): section completeness, formatting consistency, professional tone
 
 JSON:"""
 
-    raw = await complete(prompt, MODEL_SCORER, max_tokens=1024)
+    raw = await complete(prompt, MODEL_SCORER, max_tokens=1024, gemini_cache_name=gemini_cache_name)
 
     try:
         data = json.loads(_clean_json(raw))
         for key, defaults in [
+            ("ats",         {"missing_keywords": [], "matched_keywords": []}),
             ("impact",      {"weak_bullets": [], "suggestions": []}),
             ("skills_gap",  {"missing_skills": [], "matched_skills": []}),
             ("readability", {"issues": [], "strengths": []}),
@@ -104,6 +114,7 @@ JSON:"""
                 data[key].setdefault(field, default)
     except (json.JSONDecodeError, ValueError, TypeError):
         data = {
+            "ats":         {"score": 50, "missing_keywords": [], "matched_keywords": []},
             "impact":      {"score": 50, "weak_bullets": [], "suggestions": []},
             "skills_gap":  {"score": 50, "missing_skills": [], "matched_skills": []},
             "readability": {"score": 50, "issues": [], "strengths": []},
@@ -111,18 +122,3 @@ JSON:"""
 
     result_cache.set("combined", resume_text, jd_text, value=data)
     return data
-
-
-async def score_impact(resume_text: str, jd_text: str = "", _combined: dict = None) -> dict:
-    combined = _combined or await score_combined(resume_text, jd_text)
-    return combined["impact"]
-
-
-async def score_skills_gap(resume_text: str, jd_text: str, _combined: dict = None) -> dict:
-    combined = _combined or await score_combined(resume_text, jd_text)
-    return combined["skills_gap"]
-
-
-async def score_readability(resume_text: str, jd_text: str = "", _combined: dict = None) -> dict:
-    combined = _combined or await score_combined(resume_text, jd_text)
-    return combined["readability"]

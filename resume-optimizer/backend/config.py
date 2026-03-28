@@ -9,9 +9,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── API Keys ──────────────────────────────────────────────────────────────────
-ANTHROPIC_API_KEY       = os.environ.get("ANTHROPIC_API_KEY", "")
+ANTHROPIC_API_KEY        = os.environ.get("ANTHROPIC_API_KEY", "")
 GOOGLE_AI_STUDIO_API_KEY = os.environ.get("google_ai_studio_api_key", "")
-GROQ_API_KEY            = os.environ.get("groq_api_key", "")
+GROQ_API_KEY             = os.environ.get("groq_api_key", "")
+
+# ── Job scraper keys (all optional — sources are skipped when key is absent) ──
+ADZUNA_APP_ID    = os.environ.get("ADZUNA_APP_ID", "")
+ADZUNA_APP_KEY   = os.environ.get("ADZUNA_APP_KEY", "")
+THE_MUSE_API_KEY = os.environ.get("THE_MUSE_API_KEY", "")   # optional for The Muse
+APIFY_TOKEN      = os.environ.get("APIFY_TOKEN", "")        # optional paid source
+
+# ── Delta Lake ────────────────────────────────────────────────────────────────
+# Local dev: ./delta_store    Prod: s3://your-bucket/delta/
+DELTA_STORAGE_PATH = os.environ.get("DELTA_STORAGE_PATH", "./delta_store")
 
 # ── Models ────────────────────────────────────────────────────────────────────
 # Rewriter — Gemini 2.5 Flash (high intelligence, fast, cheap)
@@ -36,6 +46,16 @@ BACKEND_URL  = os.environ.get("BACKEND_URL",  "http://localhost:8000")
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")
 
 # ── Pipeline settings ─────────────────────────────────────────────────────────
-MAX_ITERATIONS      = 3
+MAX_ITERATIONS      = 4
 SCORE_TARGET        = 90
 
+# ── Database ──────────────────────────────────────────────────────────────────
+DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql+asyncpg://postgres:password@localhost:5432/resumeopt")
+
+# ── JWT Auth ──────────────────────────────────────────────────────────────────
+JWT_SECRET      = os.environ.get("JWT_SECRET", "change-me-in-production-use-32-char-random-string")
+JWT_ALGORITHM   = os.environ.get("JWT_ALGORITHM", "HS256")
+JWT_EXPIRE_DAYS = int(os.environ.get("JWT_EXPIRE_DAYS", "7"))
+
+# ── Stripe (optional) ─────────────────────────────────────────────────────────
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")

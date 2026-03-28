@@ -1,0 +1,177 @@
+"""
+Dashboard endpoints — summary, resumes, usage history, job matches.
+All require authentication.
+"""
+
+import asyncio
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from auth.dependencies import get_current_user
+from db.models import PlanLimit, Resume, User
+from db.session import get_db
+from delta.writer import read_job_matches, read_usage_last_n_days
+from config import BACKEND_URL
+
+router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+@router.get("/summary")
+async def summary(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return overview: user info, today's usage, plan limits, resume stats, unread matches."""
+    user_id = str(user.id)
+
+    # Plan limits
+    lim_res = await db.execute(select(PlanLimit).where(PlanLimit.plan == user.plan.value))
+    limits = lim_res.scalar_one_or_none()
+
+    # Resume stats
+    res_q = await db.execute(
+        select(func.count(Resume.id), func.max(Resume.final_score), func.avg(Resume.final_score))
+        .where(Resume.user_id == user.id)
+    )
+    total_resumes, best_score, avg_score = res_q.one()
+
+    # Recent resumes (last 5)
+    recent_q = await db.execute(
+        select(Resume).where(Resume.user_id == user.id)
+        .order_by(Resume.created_at.desc()).limit(5)
+    )
+    recent = recent_q.scalars().all()
+
+    # Today's usage from Delta
+    try:
+        from datetime import date
+        today_str = date.today().isoformat()
+        df = await asyncio.to_thread(read_usage_last_n_days, user_id, 1)
+        today_df = df[df["date"] == today_str]
+        runs_today    = int(today_df["pipeline_runs"].sum()) if not today_df.empty else 0
+        uploads_today = int(today_df["uploads"].sum())      if not today_df.empty else 0
+        tokens_today  = int(today_df["tokens_used"].sum())  if not today_df.empty else 0
+    except Exception:
+        runs_today = uploads_today = tokens_today = 0
+
+    # Unread job matches from Delta
+    try:
+        matches = await asyncio.to_thread(read_job_matches, user_id, 30, 1, 1000)
+        unread_count = sum(1 for r in matches["results"] if not r.get("is_read"))
+    except Exception:
+        unread_count = 0
+
+    quota_pct = round((runs_today / limits.daily_uploads * 100) if limits and limits.daily_uploads else 0, 1)
+
+    return {
+        "user": {
+            "email":       user.email,
+            "full_name":   user.full_name or "",
+            "plan":        user.plan.value,
+            "member_since": user.created_at.isoformat(),
+        },
+        "today": {
+            "runs":        runs_today,
+            "uploads":     uploads_today,
+            "tokens_used": tokens_today,
+        },
+        "limits": {
+            "daily_uploads":        limits.daily_uploads if limits else 0,
+            "job_scraping_enabled": limits.job_scraping_enabled if limits else False,
+        },
+        "quota_pct": quota_pct,
+        "stats": {
+            "total_resumes":  total_resumes or 0,
+            "best_score":     round(float(best_score), 1) if best_score else 0,
+            "avg_score":      round(float(avg_score), 1)  if avg_score  else 0,
+            "unread_matches": unread_count,
+        },
+        "recent_resumes": [
+            {
+                "id":           str(r.id),
+                "filename":     r.original_filename,
+                "final_score":  r.final_score,
+                "iterations":   r.iterations,
+                "version":      r.version,
+                "created_at":   r.created_at.isoformat(),
+                "download_url": f"{BACKEND_URL}/download/{r.id}",
+            }
+            for r in recent
+        ],
+    }
+
+
+@router.get("/resumes")
+async def list_resumes(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(10, ge=1, le=50),
+):
+    offset = (page - 1) * per_page
+    count_q = await db.execute(select(func.count(Resume.id)).where(Resume.user_id == user.id))
+    total = count_q.scalar()
+
+    res_q = await db.execute(
+        select(Resume).where(Resume.user_id == user.id)
+        .order_by(Resume.created_at.desc())
+        .offset(offset).limit(per_page)
+    )
+    resumes = res_q.scalars().all()
+
+    return {
+        "total":    total,
+        "page":     page,
+        "per_page": per_page,
+        "results": [
+            {
+                "id":           str(r.id),
+                "filename":     r.original_filename,
+                "final_score":  r.final_score,
+                "scores":       r.scores_json,
+                "iterations":   r.iterations,
+                "version":      r.version,
+                "created_at":   r.created_at.isoformat(),
+                "download_url": f"{BACKEND_URL}/download/{r.id}",
+            }
+            for r in resumes
+        ],
+    }
+
+
+@router.get("/usage-history")
+async def usage_history(
+    user: User = Depends(get_current_user),
+    days: int = Query(30, ge=1, le=90),
+):
+    try:
+        df = await asyncio.to_thread(read_usage_last_n_days, str(user.id), days)
+        return {"days": days, "rows": df.to_dict(orient="records")}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read usage: {str(e)}")
+
+
+@router.get("/job-matches")
+async def job_matches(
+    user: User = Depends(get_current_user),
+    days: int = Query(30, ge=1, le=90),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    source: str = Query(None),
+    min_score: float = Query(None, ge=0.0, le=1.0),
+):
+    try:
+        result = await asyncio.to_thread(read_job_matches, str(user.id), days, page, per_page)
+        rows = result["results"]
+        if source:
+            rows = [r for r in rows if r.get("source") == source]
+        if min_score is not None:
+            rows = [r for r in rows if (r.get("similarity_score") or 0) >= min_score]
+        result["results"] = rows
+        result["total"]   = len(rows)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read job matches: {str(e)}")

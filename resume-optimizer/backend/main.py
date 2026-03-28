@@ -9,30 +9,54 @@ import json
 import os
 import sys
 import uuid
+from contextlib import asynccontextmanager
+from datetime import date as date_type
 from pathlib import Path
 
 # Ensure backend/ is on the path regardless of where uvicorn is launched from
 sys.path.insert(0, str(Path(__file__).parent))
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, UploadFile, File
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── Agent & utility imports ──────────────────────────────────────────────────
 from agents.jd_analyzer import analyze_jd
 from utils import cache as result_cache
-from config import MAX_ITERATIONS, SCORE_TARGET, BACKEND_URL, FRONTEND_URL
+from config import MAX_ITERATIONS, SCORE_TARGET, BACKEND_URL, FRONTEND_URL, MODEL_SCORER
 from agents.rewriter import rewrite_resume
 from agents.humanizer import humanize_resume
-from agents.scorer import score_ats, score_combined, score_impact, score_skills_gap, score_readability
+from agents.scorer import score_combined
 from parsers.pdf_parser import parse_pdf
 from parsers.docx_parser import parse_docx
 from generators.docx_generator import generate_docx
+from llm import create_gemini_cache, delete_gemini_cache
+from delta.writer import (
+    write_daily_usage,
+    write_job_match,
+    read_usage_last_n_days,
+    read_job_matches,
+)
+from scraper.scraper import scrape_jobs
+from db.session import get_db, init_db, AsyncSessionLocal
+from db.models import Resume
+from auth.router import router as auth_router
+from auth.dependencies import get_current_user, check_plan_limit
+from dashboard.router import router as dashboard_router
+
 
 # ── App setup ────────────────────────────────────────────────────────────────
-app = FastAPI(title="Resume Optimizer API", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db()
+    yield
+
+app = FastAPI(title="Resume Optimizer API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -41,6 +65,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth_router)
+app.include_router(dashboard_router)
 
 # ── Directory setup ──────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent
@@ -61,6 +88,14 @@ class AnalyzeJDRequest(BaseModel):
 class RunPipelineRequest(BaseModel):
     job_id: str
     jd_text: str
+    user_id: str = ""  # populated from auth token in authenticated flow
+
+
+class ScrapeJobsRequest(BaseModel):
+    user_id: str
+    resume_id: str
+    keywords: str
+    per_source: int = 20
 
 
 # ── Helper ───────────────────────────────────────────────────────────────────
@@ -115,6 +150,7 @@ async def upload_resume(file: UploadFile = File(...)):
 
     # Create job entry
     jobs[job_id] = _new_job(resume_text=parsed["raw_text"])
+    jobs[job_id]["original_filename"] = file.filename
 
     return {
         "job_id": job_id,
@@ -140,7 +176,7 @@ async def analyze_jd_endpoint(request: AnalyzeJDRequest):
 
 
 @app.post("/run-pipeline")
-async def run_pipeline(request: RunPipelineRequest, background_tasks: BackgroundTasks):
+async def run_pipeline(request: RunPipelineRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     """
     Start the optimization pipeline for a previously uploaded resume.
     Returns immediately; progress is streamed via SSE at /status/{job_id}.
@@ -157,7 +193,7 @@ async def run_pipeline(request: RunPipelineRequest, background_tasks: Background
     # Reset queue in case of re-run
     job["queue"] = asyncio.Queue()
 
-    background_tasks.add_task(_run_pipeline_task, request.job_id)
+    background_tasks.add_task(_run_pipeline_task, request.job_id, request.user_id, db)
 
     return {"job_id": request.job_id, "status": "started"}
 
@@ -209,9 +245,78 @@ async def download_resume(job_id: str):
     )
 
 
+# ── Dashboard & analytics endpoints ──────────────────────────────────────────
+
+@app.get("/dashboard/usage/{user_id}")
+async def dashboard_usage(user_id: str, days: int = 30):
+    """
+    Return aggregated daily usage for user_id over the last N days (from Delta Lake).
+    """
+    try:
+        df = await asyncio.to_thread(read_usage_last_n_days, user_id, days)
+        return {"user_id": user_id, "days": days, "rows": df.to_dict(orient="records")}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read usage: {str(e)}")
+
+
+@app.get("/dashboard/job-matches/{user_id}")
+async def dashboard_job_matches(
+    user_id: str,
+    days: int = 30,
+    page: int = 1,
+    per_page: int = 20,
+):
+    """
+    Return paginated job matches for user_id scraped in the last N days (from Delta Lake).
+    """
+    try:
+        result = await asyncio.to_thread(read_job_matches, user_id, days, page, per_page)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read job matches: {str(e)}")
+
+
+# ── Job scraper endpoint ──────────────────────────────────────────────────────
+
+@app.post("/scrape-jobs")
+async def scrape_jobs_endpoint(request: ScrapeJobsRequest):
+    """
+    Scrape job postings from all active sources using provided keywords.
+    Persists results to Delta Lake and returns them.
+    """
+    if not request.keywords.strip():
+        raise HTTPException(status_code=400, detail="keywords cannot be empty.")
+
+    try:
+        postings = await scrape_jobs(request.keywords.strip(), per_source=request.per_source)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Scraping failed: {str(e)}")
+
+    # Persist each posting to Delta Lake in a background thread
+    async def _persist():
+        for posting in postings:
+            record = {
+                "user_id":   request.user_id,
+                "resume_id": request.resume_id,
+                **posting,
+            }
+            try:
+                await asyncio.to_thread(write_job_match, record)
+            except Exception:
+                pass  # Best-effort — don't fail the request if Delta write fails
+
+    asyncio.create_task(_persist())
+
+    return {
+        "total":    len(postings),
+        "keywords": request.keywords,
+        "results":  postings,
+    }
+
+
 # ── Background pipeline task ─────────────────────────────────────────────────
 
-async def _run_pipeline_task(job_id: str):
+async def _run_pipeline_task(job_id: str, user_id: str = "", db: AsyncSession = None):
     """
     Main optimization loop:
     1. Analyze JD
@@ -227,6 +332,8 @@ async def _run_pipeline_task(job_id: str):
     async def emit(event: dict):
         await queue.put(json.dumps(event))
 
+    jd_cache_name = None
+    task_db = AsyncSessionLocal() if user_id else None
     try:
         result_cache.clear()  # Fresh cache per pipeline run
         resume_text: str = job["resume_text"]
@@ -245,12 +352,44 @@ async def _run_pipeline_task(job_id: str):
             "keywords": jd_keywords[:20],
         })
 
+        # ── Create Gemini context cache for JD (reused across all iterations) ──
+        try:
+            jd_cache_name = await create_gemini_cache(jd_text, MODEL_SCORER)
+        except Exception:
+            jd_cache_name = None  # Cache creation is optional — fall back gracefully
+
         current_resume = resume_text
         consolidated_feedback = None
         iteration = 0
         prev_average = 0
 
-        while iteration < MAX_ITERATIONS:
+        # ── Initial score of original resume before any rewriting ───────────
+        await emit({"type": "stage", "message": "Scoring original resume...", "stage": "score"})
+        initial_combined = await score_combined(current_resume, jd_text, jd_keywords, gemini_cache_name=jd_cache_name)
+        initial_avg = round(sum(initial_combined[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")) / 4)
+        await emit({
+            "type": "average",
+            "score": initial_avg,
+            "iteration": 0,
+            "scores": {k: initial_combined[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")},
+            "message": f"Original resume score: {initial_avg}",
+        })
+
+        if initial_avg >= SCORE_TARGET:
+            await emit({
+                "type": "stage",
+                "message": f"Original resume already scores {initial_avg} — no optimization needed. Finalizing...",
+                "stage": "finalize",
+            })
+            job["scores"] = {
+                "ats": initial_combined["ats"],
+                "impact": initial_combined["impact"],
+                "skills_gap": initial_combined["skills_gap"],
+                "readability": initial_combined["readability"],
+                "average": initial_avg,
+            }
+
+        while iteration < MAX_ITERATIONS and initial_avg < SCORE_TARGET:
             iteration += 1
             job["iteration"] = iteration
             is_fast_iter = iteration > 1 and prev_average >= 75
@@ -282,25 +421,21 @@ async def _run_pipeline_task(job_id: str):
                 job["current_resume"] = current_resume
                 await emit({"type": "stage", "message": "Humanization complete.", "stage": "humanize"})
 
-            # ── Step 4: Score ───────────────────────────────────────────────
-            await emit({"type": "stage", "message": "Running ATS Keyword Scorer...", "stage": "score"})
-            ats_result = score_ats(current_resume, jd_text, jd_keywords)
-            await emit({
-                "type": "score",
-                "platform": "ATS Match",
-                "score": ats_result["score"],
-                "feedback": ats_result.get("missing_keywords", [])[:8],
-                "matched": ats_result.get("matched_keywords", [])[:8],
-            })
+            # ── Step 4: Score (all 4 in one LLM call) ──────────────────────
+            await emit({"type": "stage", "message": "Running all 4 scorers...", "stage": "score"})
+            combined = await score_combined(current_resume, jd_text, jd_keywords, gemini_cache_name=jd_cache_name)
 
-            # Single Gemini Flash-8B call returns all 3 scores at once
-            await emit({"type": "stage", "message": "Running Impact / Skills / Readability scorers...", "stage": "score"})
-            combined = await score_combined(current_resume, jd_text)
-
-            impact_result = combined["impact"]
-            skills_result = combined["skills_gap"]
+            ats_result         = combined["ats"]
+            impact_result      = combined["impact"]
+            skills_result      = combined["skills_gap"]
             readability_result = combined["readability"]
 
+            await emit({
+                "type": "score", "platform": "ATS Match",
+                "score": ats_result["score"],
+                "feedback": ats_result.get("missing_keywords", [])[:3],
+                "matched": ats_result.get("matched_keywords", [])[:3],
+            })
             await emit({
                 "type": "score", "platform": "Impact Score",
                 "score": impact_result["score"],
@@ -385,6 +520,44 @@ async def _run_pipeline_task(job_id: str):
         job["download_path"] = output_path
         job["status"] = "done"
 
+        # ── Persist resume record to PostgreSQL ─────────────────────────────
+        if user_id and task_db:
+            try:
+                # Get next version number for this user
+                ver_q = await task_db.execute(
+                    select(func.coalesce(func.max(Resume.version), 0) + 1)
+                    .where(Resume.user_id == user_id)
+                )
+                next_version = ver_q.scalar() or 1
+
+                resume_record = Resume(
+                    user_id=user_id,
+                    original_filename=jobs[job_id].get("original_filename", "resume"),
+                    file_path=output_path,
+                    jd_text=jd_text,
+                    final_score=float(job["scores"].get("average", 0)),
+                    scores_json=job["scores"],
+                    iterations=iteration,
+                    version=next_version,
+                )
+                task_db.add(resume_record)
+                await task_db.commit()
+            except Exception:
+                pass  # Don't fail the pipeline if DB write fails
+
+        # ── Write daily usage to Delta Lake ─────────────────────────────────
+        if user_id:
+            try:
+                await asyncio.to_thread(write_daily_usage, {
+                    "user_id":       user_id,
+                    "date":          date_type.today().isoformat(),
+                    "pipeline_runs": 1,
+                    "uploads":       1,
+                    "tokens_used":   0,
+                })
+            except Exception:
+                pass  # Don't fail the pipeline if Delta write fails
+
         await emit({
             "type": "done",
             "message": "Resume optimization complete! Your optimized resume is ready.",
@@ -398,5 +571,11 @@ async def _run_pipeline_task(job_id: str):
         await emit({"type": "error", "message": f"Pipeline error: {str(e)}"})
 
     finally:
+        # Best-effort cleanup of Gemini context cache
+        if jd_cache_name:
+            await delete_gemini_cache(jd_cache_name)
+        # Close task-local DB session
+        if task_db:
+            await task_db.close()
         # Send sentinel to close SSE stream
         await queue.put(None)
