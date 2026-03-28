@@ -35,8 +35,10 @@ export default function Sidebar() {
           return (
             <Link key={to} to={to}
               className={clsx(
-                'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors',
-                active ? 'bg-primary text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white'
+                'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-150 border-l-2',
+                active
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'border-transparent text-gray-400 hover:bg-white/5 hover:text-white'
               )}>
               <Icon className="w-4 h-4 shrink-0" />
               <span className="flex-1">{label}</span>

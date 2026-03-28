@@ -6,17 +6,18 @@ export default function CircularProgress({ score, size = 120, strokeWidth = 10 }
 
   return (
     <svg width={size} height={size} className="rotate-[-90deg]">
-      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#e5e7eb" strokeWidth={strokeWidth} />
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#f0f0f8" strokeWidth={strokeWidth} />
       <circle
         cx={size/2} cy={size/2} r={r} fill="none"
         stroke={color} strokeWidth={strokeWidth}
         strokeDasharray={circ} strokeDashoffset={offset}
-        strokeLinecap="round" style={{ transition: 'stroke-dashoffset 0.6s ease' }}
+        strokeLinecap="round"
+        style={{ transition: 'stroke-dashoffset 0.6s cubic-bezier(.4,0,.2,1)' }}
       />
       <text x="50%" y="50%" textAnchor="middle" dy="0.35em"
-        className="rotate-90" fill={color}
+        fill={color}
         fontSize={size * 0.22} fontWeight="700"
-        style={{ transform: `rotate(90deg)`, transformOrigin: 'center' }}
+        style={{ transform: 'rotate(90deg)', transformOrigin: 'center' }}
       >
         {score}
       </text>

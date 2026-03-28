@@ -106,7 +106,7 @@ export default function AppPage() {
   const avg = scores?.score || 0;
 
   return (
-    <div className="min-h-screen bg-surface">
+    <div className="min-h-screen bg-surface page-fade">
       <TopNav />
       <div className="max-w-7xl mx-auto px-6 py-8">
         <div className="mb-8">
@@ -122,7 +122,7 @@ export default function AppPage() {
               onDragOver={e => { e.preventDefault(); setDragging(true); }}
               onDragLeave={() => setDragging(false)}
               onDrop={handleDrop}
-              className={`rounded-2xl border-2 border-dashed p-8 text-center cursor-pointer transition-all ${dragging ? 'border-primary bg-purple-50' : file ? 'border-green-400 bg-green-50' : 'border-gray-200 hover:border-primary/50'}`}
+              className={`rounded-2xl border-2 border-dashed p-8 text-center cursor-pointer transition-all ${dragging ? 'border-primary bg-purple-50' : file ? 'border-green-400 bg-green-50' : 'border-violet-200 hover:border-primary/50'}`}
             >
               {uploading ? (
                 <div className="flex flex-col items-center gap-3 text-gray-500">
@@ -137,7 +137,9 @@ export default function AppPage() {
                 </div>
               ) : (
                 <div className="flex flex-col items-center gap-3">
-                  <Upload className="w-8 h-8 text-gray-300" />
+                  <div className="w-12 h-12 rounded-xl bg-violet-50 flex items-center justify-center">
+                    <Upload className="w-6 h-6 text-primary" />
+                  </div>
                   <div>
                     <p className="text-sm font-medium text-gray-700">Drop your resume here</p>
                     <p className="text-xs text-gray-400 mt-1">or click to browse · PDF, DOCX</p>
