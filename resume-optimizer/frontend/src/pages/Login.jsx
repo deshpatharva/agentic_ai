@@ -30,7 +30,7 @@ export default function Login() {
 
   return (
     <AuthLayout title="Welcome back" subtitle="Sign in to your account to continue">
-      <form onSubmit={submit} className="space-y-5">
+      <form onSubmit={submit} className="space-y-5 page-fade">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1.5">Email</label>
           <input type="email" required value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}

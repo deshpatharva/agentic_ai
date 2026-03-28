@@ -48,7 +48,7 @@ export default function Register() {
 
   return (
     <AuthLayout title="Create your account" subtitle="Start optimizing resumes for free">
-      <form onSubmit={submit} className="space-y-5">
+      <form onSubmit={submit} className="space-y-5 page-fade">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1.5">Full name</label>
           <input type="text" value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))}
