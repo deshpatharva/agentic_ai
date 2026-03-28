@@ -21,7 +21,7 @@ export default function Settings() {
   };
 
   return (
-    <div className="flex h-screen bg-surface overflow-hidden">
+    <div className="flex h-screen bg-surface overflow-hidden page-fade">
       <Sidebar />
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto px-8 py-8 space-y-6">
@@ -33,12 +33,12 @@ export default function Settings() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">Full name</label>
                 <input value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))}
-                  className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary" />
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all duration-150 focus:shadow-[0_0_0_3px_rgba(127,119,221,.15)]" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">Email</label>
                 <input value={form.email} type="email" onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                  className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary" />
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all duration-150 focus:shadow-[0_0_0_3px_rgba(127,119,221,.15)]" />
               </div>
               <Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</Button>
             </form>
