@@ -21,11 +21,13 @@ export default function JobMatches() {
   }, [isPro]);
 
   if (!isPro) return (
-    <div className="flex h-screen bg-surface overflow-hidden">
+    <div className="flex h-screen bg-surface overflow-hidden page-fade">
       <Sidebar />
       <main className="flex-1 flex items-center justify-center">
         <div className="text-center max-w-sm">
-          <Lock className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+          <div className="bg-gray-100 p-4 rounded-2xl inline-flex items-center justify-center mb-4">
+            <Lock className="w-10 h-10 text-gray-400" />
+          </div>
           <h2 className="text-xl font-bold text-gray-800 mb-2">Job Matching is a Pro feature</h2>
           <p className="text-gray-500 text-sm mb-6">Upgrade to get nightly job matches from Adzuna, RemoteOK, and The Muse.</p>
           <Link to="/dashboard/settings" className="bg-primary text-white px-6 py-2.5 rounded-xl font-medium inline-flex items-center gap-2 hover:bg-primary-dark transition-colors">
@@ -37,7 +39,7 @@ export default function JobMatches() {
   );
 
   return (
-    <div className="flex h-screen bg-surface overflow-hidden">
+    <div className="flex h-screen bg-surface overflow-hidden page-fade">
       <Sidebar />
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-4xl mx-auto px-8 py-8">
@@ -53,12 +55,25 @@ export default function JobMatches() {
                       <h3 className="font-semibold text-gray-900 truncate">{m.job_title}</h3>
                       {!m.is_read && <span className="w-2 h-2 rounded-full bg-primary shrink-0" />}
                     </div>
-                    <p className="text-sm text-gray-500 mb-2">{m.company || 'Company not listed'}</p>
+                    <p className="text-sm text-gray-500 mb-1">{m.company || 'Company not listed'}</p>
+                    {m.similarity_score != null && (
+                      <div className="flex items-center gap-2 mt-1 mb-2">
+                        <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                          <div
+                            className="h-1.5 rounded-full"
+                            style={{
+                              width: `${Math.round(m.similarity_score * 100)}%`,
+                              background: 'linear-gradient(90deg, #7F77DD, #a78bfa)',
+                            }}
+                          />
+                        </div>
+                        <span className="text-xs font-bold text-primary">
+                          {Math.round(m.similarity_score * 100)}%
+                        </span>
+                      </div>
+                    )}
                     <div className="flex items-center gap-2">
                       <Badge variant={sourceBadge[m.source] || 'free'}>{m.source}</Badge>
-                      {m.similarity_score != null && (
-                        <span className="text-xs text-gray-400">{Math.round(m.similarity_score * 100)}% match</span>
-                      )}
                       <span className="text-xs text-gray-300">{new Date(m.scraped_at).toLocaleDateString()}</span>
                     </div>
                   </div>
