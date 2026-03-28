@@ -6,3 +6,26 @@
 
 * { box-sizing: border-box; }
 body { font-family: 'Inter', system-ui, sans-serif; background: #FAFAF8; color: #1a1a1a; }
+
+@layer base {
+  button, a, input, textarea, select {
+    transition: color 150ms ease, background-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+  }
+}
+
+.page-fade {
+  animation: pageFade 150ms ease;
+}
+@keyframes pageFade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Custom scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #c4c3dc #e5e7eb;
+}
+::-webkit-scrollbar       { width: 6px; height: 6px; }
+::-webkit-scrollbar-track  { background: #e5e7eb; border-radius: 99px; }
+::-webkit-scrollbar-thumb  { background: #c4c3dc; border-radius: 99px; }
