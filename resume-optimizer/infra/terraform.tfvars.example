@@ -1,0 +1,29 @@
+# Copy this file to terraform.tfvars and fill in your values
+# terraform.tfvars is gitignored — never commit it
+
+# Find your subscription ID:
+#   az account show --query id -o tsv
+subscription_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# Short prefix — used in all resource names (must be globally unique for storage/keyvault)
+# e.g. "resumai" + "st" + "dev" = "resumaistdev" (storage account name)
+prefix      = "resumai"
+environment = "dev"
+location    = "eastus"
+
+# PostgreSQL
+postgres_admin_login = "resumeadmin"
+postgres_db_name     = "resumeopt"
+
+# API keys — paste your actual values here
+# These are written to Key Vault at provision time
+google_ai_api_key = "AIzaSy..."
+groq_api_key      = "gsk_..."
+anthropic_api_key = "sk-ant-..."
+
+# Optional — leave as REPLACE_ME to skip
+adzuna_app_id     = "REPLACE_ME"
+adzuna_app_key    = "REPLACE_ME"
+the_muse_api_key  = "REPLACE_ME"
+apify_token       = "REPLACE_ME"
+stripe_secret_key = "REPLACE_ME"
