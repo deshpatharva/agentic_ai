@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main, backend_design]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Backend ──────────────────────────────────────────────────────────────────
+  backend:
+    name: Backend — import check + smoke tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: resume-optimizer
+
+    env:
+      JWT_SECRET: ci-test-secret-32-chars-long-enough
+      DATABASE_URL: sqlite+aiosqlite:///./test_ci.db
+      ANTHROPIC_API_KEY: test
+      google_ai_studio_api_key: test
+      groq_api_key: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: resume-optimizer/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install asyncpg sqlalchemy[asyncio] python-jose[cryptography] \
+                      bcrypt passlib httpx pytest pytest-asyncio pytest-httpx \
+                      aiosqlite
+
+      - name: Download spaCy model
+        run: python -m spacy download en_core_web_sm
+
+      - name: Import check
+        run: python -c "import backend.main" || python -c "import sys; sys.path.insert(0,'backend'); import main; print('imports OK')"
+
+      - name: Run smoke tests
+        run: pytest backend/tests/test_smoke.py -v --tb=short
+
+  # ── Frontend ─────────────────────────────────────────────────────────────────
+  frontend:
+    name: Frontend — build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: resume-optimizer/frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: resume-optimizer/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
