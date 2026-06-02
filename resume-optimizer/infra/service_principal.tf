@@ -13,17 +13,40 @@ resource "azuread_service_principal" "app" {
   owners                       = [data.azuread_client_config.current.object_id]
 }
 
-# Rotate by changing the rotation_days or end_date values
-resource "azuread_service_principal_password" "app" {
-  service_principal_id = azuread_service_principal.app.id
-  display_name         = "terraform-managed"
+# ── OIDC Federated Identity Credentials (no stored secret) ───────────────────
+# GitHub Actions authenticates to Azure via OIDC — no client_secret is created,
+# stored, or rotated.  The SP is used only by CI/CD pipelines.
+#
+# GitHub Actions workflow must set:
+#   permissions:
+#     id-token: write
+#     contents: read
+#
+# And use the azure/login action with:
+#   client-id:       ${{ secrets.AZURE_CLIENT_ID }}    (non-sensitive GUID)
+#   tenant-id:       ${{ secrets.AZURE_TENANT_ID }}    (non-sensitive GUID)
+#   subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-  rotate_when_changed = {
-    rotation = "2026-01-01" # Update this date to force password rotation
-  }
+resource "azuread_application_federated_identity_credential" "github_main" {
+  application_id = azuread_application.app.id
+  display_name   = "github-main"
+  description    = "GitHub Actions OIDC — deshpatharva/agentic_ai main branch"
+  audiences      = ["api://AzureADTokenExchange"]
+  issuer         = "https://token.actions.githubusercontent.com"
+  subject        = "repo:deshpatharva/agentic_ai:ref:refs/heads/main"
 }
 
-# ── Terraform caller gets Key Vault admin (so it can write secrets) ───────────
+resource "azuread_application_federated_identity_credential" "github_env_production" {
+  application_id = azuread_application.app.id
+  display_name   = "github-env-production"
+  description    = "GitHub Actions OIDC — deshpatharva/agentic_ai production environment"
+  audiences      = ["api://AzureADTokenExchange"]
+  issuer         = "https://token.actions.githubusercontent.com"
+  subject        = "repo:deshpatharva/agentic_ai:environment:production"
+}
+
+# ── Terraform caller → Key Vault Administrator ────────────────────────────────
+# Grants this apply run write access to Key Vault secrets.
 
 data "azurerm_client_config" "current" {}
 

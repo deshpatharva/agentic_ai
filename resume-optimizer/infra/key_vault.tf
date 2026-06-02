@@ -28,6 +28,8 @@ resource "time_sleep" "wait_for_kv_rbac" {
 }
 
 # ── Service Principal → Key Vault Secrets User ────────────────────────────────
+# The SP is used only by CI/CD (GitHub Actions OIDC); it reads secrets for
+# deployment pipelines.  The App Service uses its Managed Identity instead.
 
 resource "azurerm_role_assignment" "sp_kv_secrets_user" {
   scope                = azurerm_key_vault.main.id
@@ -38,6 +40,10 @@ resource "azurerm_role_assignment" "sp_kv_secrets_user" {
 # ── Secrets ───────────────────────────────────────────────────────────────────
 # Every secret depends on time_sleep.wait_for_kv_rbac, not directly on the role
 # assignment, so first-apply 403s are avoided.
+#
+# Secrets NOT stored here (removed from KV):
+#   AZURE-CLIENT-SECRET      — SP has no password; CI/CD uses OIDC
+#   AZURE-STORAGE-ACCOUNT-KEY — shared key access disabled on the storage account
 
 resource "azurerm_key_vault_secret" "jwt_secret" {
   name         = "JWT-SECRET"
@@ -52,7 +58,7 @@ resource "azurerm_key_vault_secret" "database_url" {
   # urlencode() percent-encodes every char that is not unreserved in a URL
   # (letters, digits, -, _, ., ~) — belt-and-suspenders on top of the
   # URL-safe override_special set in random_password.postgres_password.
-  value = "postgresql+asyncpg://${var.postgres_admin_login}:${urlencode(random_password.postgres_password.result)}@${azurerm_postgresql_flexible_server.main.fqdn}:5432/${var.postgres_db_name}?ssl=require"
+  value        = "postgresql+asyncpg://${var.postgres_admin_login}:${urlencode(random_password.postgres_password.result)}@${azurerm_postgresql_flexible_server.main.fqdn}:5432/${var.postgres_db_name}?ssl=require"
   key_vault_id = azurerm_key_vault.main.id
   depends_on   = [time_sleep.wait_for_kv_rbac]
   tags         = local.tags
@@ -85,14 +91,6 @@ resource "azurerm_key_vault_secret" "anthropic_api_key" {
 resource "azurerm_key_vault_secret" "azure_storage_account_name" {
   name         = "AZURE-STORAGE-ACCOUNT-NAME"
   value        = azurerm_storage_account.main.name
-  key_vault_id = azurerm_key_vault.main.id
-  depends_on   = [time_sleep.wait_for_kv_rbac]
-  tags         = local.tags
-}
-
-resource "azurerm_key_vault_secret" "azure_storage_account_key" {
-  name         = "AZURE-STORAGE-ACCOUNT-KEY"
-  value        = azurerm_storage_account.main.primary_access_key
   key_vault_id = azurerm_key_vault.main.id
   depends_on   = [time_sleep.wait_for_kv_rbac]
   tags         = local.tags
@@ -146,6 +144,8 @@ resource "azurerm_key_vault_secret" "stripe_secret_key" {
   tags         = local.tags
 }
 
+# SP identity values — non-sensitive GUIDs, stored for config.py local-dev parity
+
 resource "azurerm_key_vault_secret" "sp_tenant_id" {
   name         = "AZURE-TENANT-ID"
   value        = data.azurerm_client_config.current.tenant_id
@@ -157,14 +157,6 @@ resource "azurerm_key_vault_secret" "sp_tenant_id" {
 resource "azurerm_key_vault_secret" "sp_client_id" {
   name         = "AZURE-CLIENT-ID"
   value        = azuread_application.app.client_id
-  key_vault_id = azurerm_key_vault.main.id
-  depends_on   = [time_sleep.wait_for_kv_rbac]
-  tags         = local.tags
-}
-
-resource "azurerm_key_vault_secret" "sp_client_secret" {
-  name         = "AZURE-CLIENT-SECRET"
-  value        = azuread_service_principal_password.app.value
   key_vault_id = azurerm_key_vault.main.id
   depends_on   = [time_sleep.wait_for_kv_rbac]
   tags         = local.tags
