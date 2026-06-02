@@ -49,6 +49,11 @@ FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")
 MAX_ITERATIONS      = 4
 SCORE_TARGET        = 90
 
+# ── Input guards ──────────────────────────────────────────────────────────────
+MAX_UPLOAD_BYTES    = int(os.environ.get("MAX_UPLOAD_BYTES",    5 * 1024 * 1024))  # 5 MB
+MAX_RESUME_CHARS    = int(os.environ.get("MAX_RESUME_CHARS",    15_000))  # ~2 pages of text
+MAX_JD_CHARS        = int(os.environ.get("MAX_JD_CHARS",        8_000))   # typical JD fits here
+
 # ── Database ──────────────────────────────────────────────────────────────────
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql+asyncpg://postgres:password@localhost:5432/resumeopt")
 

@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # ── Agent & utility imports ──────────────────────────────────────────────────
 from agents.jd_analyzer import analyze_jd
 from utils import cache as result_cache
-from config import MAX_ITERATIONS, SCORE_TARGET, BACKEND_URL, FRONTEND_URL, MODEL_SCORER
+from config import MAX_ITERATIONS, SCORE_TARGET, BACKEND_URL, FRONTEND_URL, MODEL_SCORER, MAX_UPLOAD_BYTES, MAX_RESUME_CHARS, MAX_JD_CHARS
 from agents.rewriter import rewrite_resume
 from agents.humanizer import humanize_resume
 from agents.scorer import score_combined
@@ -134,7 +134,12 @@ async def upload_resume(
     job_id = str(uuid.uuid4())
     save_path = UPLOADS_DIR / f"{job_id}{ext}"
 
-    contents = await file.read()
+    contents = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(contents) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum upload size is {MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
+        )
     await asyncio.to_thread(save_path.write_bytes, contents)
 
     try:
@@ -177,7 +182,7 @@ async def analyze_jd_endpoint(
         raise HTTPException(status_code=400, detail="jd_text cannot be empty.")
 
     try:
-        result = await analyze_jd(request.jd_text)
+        result = await analyze_jd(request.jd_text[:MAX_JD_CHARS])
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"JD analysis failed: {str(e)}")
 
@@ -416,8 +421,8 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             # Load job state from DB
             job_result = await db.execute(select(PipelineJob).where(PipelineJob.id == job_uuid))
             job_row = job_result.scalar_one()
-            resume_text: str = job_row.resume_text
-            jd_text: str = job_row.jd_text
+            resume_text: str = job_row.resume_text[:MAX_RESUME_CHARS]
+            jd_text: str     = job_row.jd_text[:MAX_JD_CHARS]
 
             # Build claims ledger once from the original resume text.
             # Used by the rewriter (constrain invented facts) and the guard (verify output).
