@@ -37,7 +37,6 @@ from agents.fabrication_guard import fabrication_guard
 from parsers.pdf_parser import parse_pdf
 from parsers.docx_parser import parse_docx
 from generators.docx_generator import generate_docx
-from llm import create_gemini_cache, delete_gemini_cache
 from delta.writer import write_daily_usage, write_job_match
 from scraper.scraper import scrape_jobs
 from db.session import get_db, init_db, AsyncSessionLocal
@@ -414,7 +413,6 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             await db.execute(update(PipelineJob).where(PipelineJob.id == job_uuid).values(**kwargs))
             await db.commit()
 
-        jd_cache_name = None
         try:
             result_cache.clear()
 
@@ -439,12 +437,6 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                 "keywords": jd_keywords[:20],
             })
 
-            # ── Create Gemini context cache for JD ─────────────────────────
-            try:
-                jd_cache_name = await create_gemini_cache(jd_text, MODEL_SCORER)
-            except Exception:
-                jd_cache_name = None
-
             current_resume = resume_text
             consolidated_feedback = None
             iteration = 0
@@ -452,7 +444,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
 
             # ── Initial score ───────────────────────────────────────────────
             await emit({"type": "stage", "message": "Scoring original resume...", "stage": "score"})
-            initial_combined = await score_combined(current_resume, jd_text, jd_keywords, gemini_cache_name=jd_cache_name)
+            initial_combined = await score_combined(current_resume, jd_text, jd_keywords)
             initial_avg = round(sum(initial_combined[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")) / 4)
             await emit({
                 "type": "average",
@@ -521,7 +513,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
 
                 # ── Step 4: Score ───────────────────────────────────────────
                 await emit({"type": "stage", "message": "Running all 4 scorers...", "stage": "score"})
-                combined = await score_combined(current_resume, jd_text, jd_keywords, gemini_cache_name=jd_cache_name)
+                combined = await score_combined(current_resume, jd_text, jd_keywords)
 
                 ats_result         = combined["ats"]
                 impact_result      = combined["impact"]
@@ -655,7 +647,3 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
         except Exception as e:
             await update_job(status=JobStatus.error, error_message=str(e))
             await emit({"type": "error", "message": f"Pipeline error: {str(e)}"})
-
-        finally:
-            if jd_cache_name:
-                await delete_gemini_cache(jd_cache_name)

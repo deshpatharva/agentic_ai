@@ -8,9 +8,6 @@ Agents call:
     # With Anthropic prompt caching on a large prefix block:
     text = await complete(prompt, MODEL_HUMANIZER, cached_prefix="<large text>")
 
-    # With a pre-created Gemini context cache:
-    text = await complete(prompt, MODEL_SCORER, gemini_cache_name="cachedContents/abc123")
-
 To switch a model tomorrow, change config.py only.
 To add a new provider, add a branch here only.
 """
@@ -49,35 +46,6 @@ def _get_groq():
     return _groq_client
 
 
-# ── Gemini context cache management ─────────────────────────────────────────
-
-async def create_gemini_cache(content: str, model: str, ttl_seconds: int = 3600) -> str:
-    """
-    Create a Gemini server-side context cache for large repeated content (e.g. JD text).
-    Returns the cache name to pass into complete() via gemini_cache_name.
-
-    Note: Gemini requires >= 32,768 tokens to cache. For shorter content the call
-    will succeed but caching may not activate — still safe to call.
-    """
-    client = _get_google()
-    cache = await asyncio.to_thread(
-        client.caches.create,
-        model=model,
-        contents=[genai_types.Content(role="user", parts=[genai_types.Part(text=content)])],
-        ttl=f"{ttl_seconds}s",
-    )
-    return cache.name
-
-
-async def delete_gemini_cache(cache_name: str) -> None:
-    """Delete a Gemini context cache when the pipeline is done."""
-    client = _get_google()
-    try:
-        await asyncio.to_thread(client.caches.delete, name=cache_name)
-    except Exception:
-        pass  # Best-effort cleanup
-
-
 # ── Router ───────────────────────────────────────────────────────────────────
 
 async def complete(
@@ -85,20 +53,17 @@ async def complete(
     model: str,
     max_tokens: int = 8096,
     cached_prefix: str = None,
-    gemini_cache_name: str = None,
 ) -> str:
     """
     Send a prompt to the appropriate provider.
 
     Args:
-        prompt:            The main prompt / instruction text.
-        model:             Model name — routes to correct provider automatically.
-        max_tokens:        Max output tokens.
-        cached_prefix:     (Anthropic only) Large text block to send with
-                           cache_control=ephemeral before the main prompt.
-                           Saves ~90% of input token cost on cache hits.
-        gemini_cache_name: (Gemini only) Cache name from create_gemini_cache().
-                           Attaches server-side cached content to the request.
+        prompt:        The main prompt / instruction text.
+        model:         Model name — routes to correct provider automatically.
+        max_tokens:    Max output tokens.
+        cached_prefix: (Anthropic only) Large text block to send with
+                       cache_control=ephemeral before the main prompt.
+                       Saves ~90% of input token cost on cache hits.
     """
     model_lower = model.lower()
 
@@ -136,23 +101,11 @@ async def complete(
     # ── Google Gemini ─────────────────────────────────────────────────────────
     if model_lower.startswith("gemini"):
         client = _get_google()
-
-        if gemini_cache_name:
-            # Use server-side cached content — sends only the new prompt tokens
-            response = await asyncio.to_thread(
-                client.models.generate_content,
-                model=model,
-                contents=prompt,
-                config=genai_types.GenerateContentConfig(
-                    cached_content=gemini_cache_name,
-                ),
-            )
-        else:
-            response = await asyncio.to_thread(
-                client.models.generate_content,
-                model=model,
-                contents=prompt,
-            )
+        response = await asyncio.to_thread(
+            client.models.generate_content,
+            model=model,
+            contents=prompt,
+        )
         return response.text.strip()
 
     # ── Groq ──────────────────────────────────────────────────────────────────
