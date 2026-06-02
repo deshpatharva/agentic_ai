@@ -107,6 +107,10 @@ class ScrapeJobsRequest(BaseModel):
     per_source: int = 20
 
 
+class GenerateDocRequest(BaseModel):
+    resume_text: str
+
+
 # ── Routes ───────────────────────────────────────────────────────────────────
 
 @app.post("/upload")
@@ -196,7 +200,8 @@ async def run_pipeline(
 
     result = await db.execute(select(PipelineJob).where(PipelineJob.id == job_uuid))
     job = result.scalar_one_or_none()
-    if not job:
+    # Return 404 (not 403) to avoid leaking whether the job exists at all
+    if not job or str(job.user_id) != str(current_user.id):
         raise HTTPException(status_code=404, detail="Job not found. Upload a resume first.")
 
     if not request.jd_text.strip():
@@ -237,7 +242,7 @@ async def stream_status(
         result = await db.execute(select(PipelineJob).where(PipelineJob.id == job_uuid))
         job = result.scalar_one_or_none()
 
-    if not job:
+    if not job or (job.user_id and str(job.user_id) != user_id):
         raise HTTPException(status_code=404, detail="Job not found.")
 
     # Reconnection: honour Last-Event-ID sent by EventSource on reconnect
@@ -296,7 +301,7 @@ async def download_resume(
 
     result = await db.execute(select(Resume).where(Resume.id == resume_uuid))
     resume = result.scalar_one_or_none()
-    if not resume:
+    if not resume or str(resume.user_id) != str(current_user.id):
         raise HTTPException(status_code=404, detail="Resume not found.")
 
     if not resume.file_path or not Path(resume.file_path).exists():
@@ -305,6 +310,36 @@ async def download_resume(
     return FileResponse(
         path=resume.file_path,
         filename=f"optimized_{resume.original_filename or 'resume'}.docx",
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+
+# ── Generate-doc endpoint ────────────────────────────────────────────────────
+
+@app.post("/generate-doc")
+async def generate_doc_endpoint(
+    request: GenerateDocRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Generate a formatted .docx from the provided resume text without running
+    the optimization pipeline. The user's text is trusted as-is — no AI rewriting.
+    Works for raw uploads, inline-edited text, and (future) saved profiles.
+    """
+    if not request.resume_text.strip():
+        raise HTTPException(status_code=400, detail="resume_text cannot be empty.")
+
+    doc_id = str(uuid.uuid4())
+    output_path = str(OUTPUTS_DIR / f"gen_{doc_id}.docx")
+
+    try:
+        await asyncio.to_thread(generate_docx, request.resume_text, output_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate document: {str(e)}")
+
+    return FileResponse(
+        path=output_path,
+        filename="resume.docx",
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
 

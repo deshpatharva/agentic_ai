@@ -23,13 +23,15 @@ export default function AppPage() {
   const { user, token } = useAuthStore();
   const { status, stages, logs, scores, iteration, downloadUrl, setStatus, setStage, addLog, setScores, setDownload, setIteration, reset, setJobId, jobId } = usePipelineStore();
 
-  const [file, setFile]       = useState(null);
+  const [file, setFile]           = useState(null);
   const [jobIdLocal, setJobIdLocal] = useState(null);
-  const [jdText, setJdText]   = useState('');
-  const [dragging, setDragging] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [keywords, setKeywords] = useState([]);
-  const [analyzing, setAnalyzing] = useState(false);
+  const [parsedText, setParsedText] = useState('');
+  const [jdText, setJdText]         = useState('');
+  const [dragging, setDragging]     = useState(false);
+  const [uploading, setUploading]   = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [keywords, setKeywords]     = useState([]);
+  const [analyzing, setAnalyzing]   = useState(false);
   const logRef = useRef(null);
   const esRef = useRef(null);
 
@@ -46,6 +48,7 @@ export default function AppPage() {
       const { data } = await client.post('/upload', fd);
       setJobIdLocal(data.job_id);
       setJobId(data.job_id);
+      setParsedText(data.text || '');
       setStage('upload', 'done');
       toast.success('Resume uploaded');
     } catch { toast.error('Upload failed'); setFile(null); }
@@ -82,6 +85,24 @@ export default function AppPage() {
       }
       if (ev.type === 'error') { setStatus('error'); toast.error(ev.message); }
     } catch {}
+  };
+
+  const generateDoc = async () => {
+    if (!parsedText.trim()) return;
+    setGenerating(true);
+    try {
+      const response = await client.post('/generate-doc', { resume_text: parsedText }, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'resume.docx';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Document downloaded');
+    } catch { toast.error('Failed to generate document'); }
+    finally { setGenerating(false); }
   };
 
   const runPipeline = async () => {
@@ -133,7 +154,7 @@ export default function AppPage() {
                 <div className="flex flex-col items-center gap-3">
                   <FileText className="w-8 h-8 text-green-500" />
                   <span className="text-sm font-medium text-gray-700">{file.name}</span>
-                  <button onClick={() => { setFile(null); setJobIdLocal(null); }} className="text-xs text-red-400 hover:text-red-600 flex items-center gap-1"><X className="w-3 h-3" />Remove</button>
+                  <button onClick={() => { setFile(null); setJobIdLocal(null); setParsedText(''); }} className="text-xs text-red-400 hover:text-red-600 flex items-center gap-1"><X className="w-3 h-3" />Remove</button>
                 </div>
               ) : (
                 <div className="flex flex-col items-center gap-3">
@@ -170,12 +191,19 @@ export default function AppPage() {
               </div>
             </div>
 
-            {/* Run button */}
-            <Button size="lg" className="w-full justify-center"
-              disabled={!file || !jdText.trim() || status === 'running'}
-              onClick={runPipeline}>
-              {status === 'running' ? <><Loader2 className="w-4 h-4 animate-spin" />Optimizing…</> : 'Optimize Resume'}
-            </Button>
+            {/* Action buttons */}
+            <div className="flex gap-3">
+              <Button variant="secondary" size="lg" className="flex-1 justify-center"
+                disabled={!file || generating}
+                onClick={generateDoc}>
+                {generating ? <><Loader2 className="w-4 h-4 animate-spin" />Generating…</> : <><Download className="w-4 h-4" />Generate Doc</>}
+              </Button>
+              <Button size="lg" className="flex-1 justify-center"
+                disabled={!file || !jdText.trim() || status === 'running'}
+                onClick={runPipeline}>
+                {status === 'running' ? <><Loader2 className="w-4 h-4 animate-spin" />Optimizing…</> : 'Optimize Resume'}
+              </Button>
+            </div>
             {user && <p className="text-xs text-center text-gray-400">Signed in as {user.email} · {user.plan} plan</p>}
           </div>
 
