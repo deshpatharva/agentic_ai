@@ -69,24 +69,21 @@ variable "app_service_sku" {
 # ── API Keys (written to Key Vault at provision time) ─────────────────────────
 
 variable "google_ai_api_key" {
-  description = "Google AI Studio API key (Gemini)"
+  description = "Google AI Studio API key (Gemini) — required, no default"
   type        = string
   sensitive   = true
-  default     = "REPLACE_ME"
 }
 
 variable "groq_api_key" {
-  description = "Groq API key"
+  description = "Groq API key — required, no default"
   type        = string
   sensitive   = true
-  default     = "REPLACE_ME"
 }
 
 variable "anthropic_api_key" {
-  description = "Anthropic API key"
+  description = "Anthropic API key — required, no default"
   type        = string
   sensitive   = true
-  default     = "REPLACE_ME"
 }
 
 variable "adzuna_app_id" {

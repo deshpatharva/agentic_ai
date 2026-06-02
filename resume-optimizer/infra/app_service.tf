@@ -5,7 +5,7 @@ resource "azurerm_service_plan" "main" {
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
   os_type             = "Linux"
-  sku_name            = var.app_service_sku  # B1 ~$13/mo on student credit
+  sku_name            = var.app_service_sku # B1 ~$13/mo on student credit
 
   tags = local.tags
 }
@@ -21,13 +21,12 @@ resource "azurerm_linux_web_app" "backend" {
   https_only = true
 
   site_config {
-    always_on = false  # Must be false on B1 (Basic tier)
+    always_on = true # Required: keeps the worker alive for SSE streams and in-flight pipeline jobs
 
     application_stack {
       python_version = "3.11"
     }
 
-    # FastAPI startup command
     app_command_line = "uvicorn main:app --host 0.0.0.0 --port 8000"
 
     cors {
@@ -37,20 +36,16 @@ resource "azurerm_linux_web_app" "backend" {
   }
 
   # ── App settings: only the 4 values the SP needs to boot ─────────────────
-  # The Python app reads these at startup and fetches everything else from KV
+  # The Python app reads these at startup and fetches everything else from KV.
 
   app_settings = {
-    # Service Principal — used by config.py to authenticate to Key Vault + Storage
     AZURE_TENANT_ID     = data.azurerm_client_config.current.tenant_id
     AZURE_CLIENT_ID     = azuread_application.app.client_id
     AZURE_CLIENT_SECRET = azuread_service_principal_password.app.value
     KEY_VAULT_URL       = azurerm_key_vault.main.vault_uri
 
-    # Python / App Service
-    SCM_DO_BUILD_DURING_DEPLOYMENT = "true"
-    WEBSITES_PORT                  = "8000"
-
-    # Disable default Azure logging noise
+    SCM_DO_BUILD_DURING_DEPLOYMENT     = "true"
+    WEBSITES_PORT                      = "8000"
     WEBSITE_HTTPLOGGING_RETENTION_DAYS = "3"
   }
 
