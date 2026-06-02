@@ -1,0 +1,60 @@
+name: Deploy — Backend
+
+# Triggers when backend code or dependencies change on main.
+# Also manually dispatchable for hotfix deploys or first-time setup.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "resume-optimizer/backend/**"
+      - "resume-optimizer/requirements.txt"
+      - ".github/workflows/deploy-backend.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false # never cancel a deploy mid-flight
+
+permissions:
+  id-token: write  # required for OIDC token exchange with Azure
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to Azure App Service
+    runs-on: ubuntu-latest
+    environment: production  # requires reviewer approval + OIDC environment credential
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── OIDC login — no client secret stored anywhere ─────────────────────────
+      - uses: azure/login@v2
+        with:
+          client-id:       ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # ── Prepare deployment package ────────────────────────────────────────────
+      # App Service (Oryx) runs pip install from the package root.
+      # requirements.txt lives one level above backend/ in the repo, so we copy
+      # it in before zipping.  The spaCy model wheel URL in requirements.txt
+      # ensures Oryx installs en_core_web_sm without a separate download step.
+      - name: Prepare package
+        run: |
+          cp resume-optimizer/requirements.txt resume-optimizer/backend/requirements.txt
+
+      # ── Deploy to App Service via Oryx (code deploy, not container) ───────────
+      # Deployment method: code-based Oryx build.
+      # Evidence: app_service.tf sets application_stack { python_version = "3.11" }
+      # and SCM_DO_BUILD_DURING_DEPLOYMENT = "true"; no container registry is
+      # provisioned in Terraform.
+      #
+      # Oryx will:
+      #   1. pip install -r requirements.txt  (including the spaCy model wheel)
+      #   2. Start the app with the startup command set in app_settings:
+      #      uvicorn main:app --host 0.0.0.0 --port 8000
+      - uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          package:  resume-optimizer/backend
