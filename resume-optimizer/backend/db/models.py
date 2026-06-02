@@ -25,6 +25,13 @@ class PlanType(str, PyEnum):
     enterprise = "enterprise"
 
 
+class JobStatus(str, PyEnum):
+    pending = "pending"
+    running = "running"
+    done    = "done"
+    error   = "error"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -66,3 +73,35 @@ class Resume(Base):
     created_at        = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     user = relationship("User", back_populates="resumes")
+
+
+class PipelineJob(Base):
+    """Persistent job state — replaces the in-memory jobs: dict."""
+    __tablename__ = "pipeline_jobs"
+
+    id                = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id           = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    status            = Column(Enum(JobStatus), default=JobStatus.pending, nullable=False, index=True)
+    original_filename = Column(String(500), nullable=False, default="resume")
+    resume_text       = Column(Text, nullable=False)
+    jd_text           = Column(Text, nullable=True)
+    scores_json       = Column(JSON, nullable=True)
+    download_path     = Column(String(1000), nullable=True)
+    iteration         = Column(Integer, default=0, nullable=False)
+    error_message     = Column(String(2000), nullable=True)
+    created_at        = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at        = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    events = relationship("PipelineEvent", back_populates="job", cascade="all, delete-orphan")
+
+
+class PipelineEvent(Base):
+    """Append-only SSE event log — replaces asyncio.Queue; survives restarts and multiple workers."""
+    __tablename__ = "pipeline_events"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)  # sequential ordering
+    job_id     = Column(UUID(as_uuid=True), ForeignKey("pipeline_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_json = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    job = relationship("PipelineJob", back_populates="events")

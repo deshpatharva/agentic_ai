@@ -20,7 +20,7 @@ const STAGES = [
 ];
 
 export default function AppPage() {
-  const { user } = useAuthStore();
+  const { user, token } = useAuthStore();
   const { status, stages, logs, scores, iteration, downloadUrl, setStatus, setStage, addLog, setScores, setDownload, setIteration, reset, setJobId, jobId } = usePipelineStore();
 
   const [file, setFile]       = useState(null);
@@ -92,8 +92,8 @@ export default function AppPage() {
     setStage('upload', 'done');
 
     try {
-      await client.post('/run-pipeline', { job_id: jobIdLocal, jd_text: jdText, user_id: user?.id || '' });
-      const es = new EventSource(`${client.defaults.baseURL}/status/${jobIdLocal}`);
+      await client.post('/run-pipeline', { job_id: jobIdLocal, jd_text: jdText });
+      const es = new EventSource(`${client.defaults.baseURL}/status/${jobIdLocal}?token=${encodeURIComponent(token || '')}`);
       esRef.current = es;
       es.onmessage = handleSSE;
       es.onerror = () => { es.close(); if (status !== 'done') setStatus('error'); };
