@@ -120,3 +120,27 @@ variable "stripe_secret_key" {
   sensitive   = true
   default     = "REPLACE_ME"
 }
+
+# ── Blob lifecycle / retention ────────────────────────────────────────────────
+
+variable "output_blob_retention_days" {
+  description = "Days after last modification before blobs in the outputs container are auto-deleted. Generated .docx files are ephemeral once downloaded."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = var.output_blob_retention_days >= 1
+    error_message = "Retention must be at least 1 day."
+  }
+}
+
+variable "delta_blob_retention_days" {
+  description = "Days after last modification before Delta Lake data-partition blobs are auto-deleted. Acts as a safety net; the application-level vacuum_old_matches() is the primary cleanup path. Must be >= the application retention window (90 days)."
+  type        = number
+  default     = 90
+
+  validation {
+    condition     = var.delta_blob_retention_days >= 7
+    error_message = "Delta retention must be at least 7 days to avoid deleting active partitions."
+  }
+}
