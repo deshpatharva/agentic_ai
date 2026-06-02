@@ -24,8 +24,8 @@ APIFY_TOKEN      = os.environ.get("APIFY_TOKEN", "")        # optional paid sour
 DELTA_STORAGE_PATH = os.environ.get("DELTA_STORAGE_PATH", "./delta_store")
 
 # ── Models ────────────────────────────────────────────────────────────────────
-# Rewriter — Gemini 2.5 Flash (high intelligence, fast, cheap)
-MODEL_REWRITER      = "gemini-2.5-flash"
+# Rewriter — Gemini 3.1 Flash Lite (latest Google Flash-tier, stays on Gemini)
+MODEL_REWRITER      = "gemini-3.1-flash-lite"
 # Rewriter iter 2+ — applying feedback diffs only, lite is sufficient
 MODEL_REWRITER_FAST = "gemini-2.5-flash-lite"
 
