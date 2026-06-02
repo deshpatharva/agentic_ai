@@ -2,21 +2,34 @@ name: CI
 
 on:
   push:
-    branches: [main, backend_design]
+    branches: [main]
+    paths:
+      - "resume-optimizer/backend/**"
+      - "resume-optimizer/requirements.txt"
+      - "resume-optimizer/frontend/**"
+      - "resume-optimizer/pytest.ini"
+      - ".github/workflows/ci.yml"
   pull_request:
     branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   # ── Backend ──────────────────────────────────────────────────────────────────
   backend:
-    name: Backend — import check + smoke tests
+    name: Backend — lint + smoke tests
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: resume-optimizer
 
     env:
-      JWT_SECRET: ci-test-secret-32-chars-long-enough
+      JWT_SECRET: ci-test-secret-32-chars-long-enough-x
       DATABASE_URL: sqlite+aiosqlite:///./test_ci.db
       ANTHROPIC_API_KEY: test
       google_ai_studio_api_key: test
@@ -31,21 +44,36 @@ jobs:
           cache: pip
           cache-dependency-path: resume-optimizer/requirements.txt
 
-      - name: Install dependencies
+      - name: Install runtime + test dependencies
         run: |
           pip install -r requirements.txt
-          pip install asyncpg sqlalchemy[asyncio] python-jose[cryptography] \
-                      bcrypt passlib httpx pytest pytest-asyncio pytest-httpx \
-                      aiosqlite
+          pip install \
+            asyncpg \
+            "sqlalchemy[asyncio]" \
+            "python-jose[cryptography]" \
+            bcrypt \
+            passlib \
+            httpx \
+            pytest \
+            pytest-asyncio \
+            aiosqlite \
+            ruff
 
-      - name: Download spaCy model
-        run: python -m spacy download en_core_web_sm
+      # en_core_web_sm is now in requirements.txt as a wheel URL (Oryx-compatible).
+      # The explicit download here is a fast-path fallback for CI; the wheel
+      # installation above already covers it, so this is idempotent.
+      - name: Ensure spaCy model is available
+        run: python -m spacy validate || python -m spacy download en_core_web_sm
+
+      - name: Lint — ruff
+        run: ruff check backend/ --select=E,F,W --ignore=E501
 
       - name: Import check
-        run: python -c "import backend.main" || python -c "import sys; sys.path.insert(0,'backend'); import main; print('imports OK')"
+        working-directory: resume-optimizer/backend
+        run: python -c "import sys; sys.path.insert(0,'.'); import main; print('imports OK')"
 
-      - name: Run smoke tests
-        run: pytest backend/tests/test_smoke.py -v --tb=short
+      - name: Smoke tests
+        run: pytest --tb=short -v
 
   # ── Frontend ─────────────────────────────────────────────────────────────────
   frontend:
