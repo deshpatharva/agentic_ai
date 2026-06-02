@@ -2,31 +2,45 @@
 Resume Rewriter Agent
 """
 
+from typing import Optional
+
 from llm import complete
 from config import MODEL_REWRITER, MODEL_REWRITER_FAST
+from agents.fact_extractor import ClaimsLedger
 
 
 async def rewrite_resume(
     resume_text: str,
     jd_keywords: list,
     consolidated_feedback: dict = None,
+    claims_ledger: Optional[ClaimsLedger] = None,
 ) -> str:
     keywords_str = ", ".join(jd_keywords[:40]) if jd_keywords else "None provided"
 
-    prompt = f"""You are an expert resume writer and career coach specializing in ATS optimization.
+    # Inject the claims ledger when available so the model knows which
+    # numbers and organisations are real facts it may use.
+    ledger_block = (
+        f"\n{claims_ledger.prompt_block()}\n"
+        if claims_ledger else ""
+    )
+
+    prompt = f"""You are an expert resume writer and career coach specialising in ATS optimisation.
 
 Rewrite the following resume to strongly align with the job description keywords provided.
 
 Key objectives:
 1. Naturally incorporate as many of the JD keywords as possible throughout the resume
-2. Strengthen bullet points with quantifiable achievements (use numbers where plausible)
+2. Strengthen bullet points with quantifiable achievements — use ONLY numbers and metrics
+   that appear verbatim in the CLAIMS LEDGER below; do NOT invent new figures
 3. Mirror the language and terminology used in the job description
-4. Preserve all factual information — do NOT fabricate companies, titles, or dates. Do NOT add parenthetical qualifiers like "(Established Company)" after company names
+4. Preserve all factual information — do NOT fabricate companies, titles, or dates.
+   Do NOT add parenthetical qualifiers like "(Established Company)" after company names
 5. Keep the overall structure: name/contact, summary, experience, education, skills
 6. Use strong action verbs at the start of each bullet point
 7. Keep formatting clean: plain text, no tables or columns
-8. STRICT LENGTH LIMIT: The entire resume must fit within 2 pages — maximum 600 words / 50 bullet points total. Cut older or less relevant bullets if needed to stay within this limit. Do NOT pad or repeat content.
-
+8. STRICT LENGTH LIMIT: The entire resume must fit within 2 pages — maximum 600 words /
+   50 bullet points total. Cut older or less relevant bullets if needed. Do NOT pad.
+{ledger_block}
 Job Description Keywords to incorporate:
 {keywords_str}
 

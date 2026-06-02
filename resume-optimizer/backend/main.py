@@ -32,6 +32,8 @@ from config import MAX_ITERATIONS, SCORE_TARGET, BACKEND_URL, FRONTEND_URL, MODE
 from agents.rewriter import rewrite_resume
 from agents.humanizer import humanize_resume
 from agents.scorer import score_combined
+from agents.fact_extractor import extract_claims
+from agents.fabrication_guard import fabrication_guard
 from parsers.pdf_parser import parse_pdf
 from parsers.docx_parser import parse_docx
 from generators.docx_generator import generate_docx
@@ -417,6 +419,10 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             resume_text: str = job_row.resume_text
             jd_text: str = job_row.jd_text
 
+            # Build claims ledger once from the original resume text.
+            # Used by the rewriter (constrain invented facts) and the guard (verify output).
+            ledger = await asyncio.to_thread(extract_claims, resume_text)
+
             # ── Step 1: Analyze JD ──────────────────────────────────────────
             await emit({"type": "stage", "message": "Analyzing Job Description...", "stage": "jd_analysis"})
             jd_result = await analyze_jd(jd_text)
@@ -486,7 +492,20 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                     resume_text=current_resume,
                     jd_keywords=jd_keywords,
                     consolidated_feedback=consolidated_feedback,
+                    claims_ledger=ledger,
                 )
+
+                # ── Fabrication guard — verify the rewrite ──────────────────
+                guard = await asyncio.to_thread(fabrication_guard, current_resume, ledger, resume_text)
+                current_resume = guard.text
+                if guard.stripped or guard.gaps:
+                    await emit({
+                        "type":    "guard",
+                        "message": f"Fabrication guard: removed {len(guard.stripped)} unverified claim(s).",
+                        "stripped": guard.stripped[:10],
+                        "gaps":     guard.gaps[:5],
+                    })
+
                 await emit({"type": "stage", "message": "Resume rewrite complete.", "stage": "rewrite"})
 
                 # ── Step 3: Humanize ────────────────────────────────────────
