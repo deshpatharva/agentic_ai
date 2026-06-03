@@ -1,6 +1,6 @@
 """Admin API routes. All endpoints (except /bootstrap) require get_admin_user."""
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.dependencies import get_admin_user
 from admin.schemas import AdminStats, BootstrapRequest, UserUpdate
+from config import STUCK_JOB_TIMEOUT_MINUTES
 from db.models import JobStatus, PipelineJob, PlanType, Resume, User
 from db.session import get_db
 
@@ -98,6 +99,7 @@ async def get_stats(
     today_start = datetime.now(timezone.utc).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
+    stuck_cutoff = datetime.now(timezone.utc) - timedelta(minutes=STUCK_JOB_TIMEOUT_MINUTES)
     return AdminStats(
         total_users=(await db.execute(select(func.count(User.id)))).scalar() or 0,
         active_users=(
@@ -109,6 +111,14 @@ async def get_stats(
                 select(func.count(PipelineJob.id)).where(
                     PipelineJob.created_at >= today_start,
                     PipelineJob.status == JobStatus.done,
+                )
+            )
+        ).scalar() or 0,
+        stuck_jobs=(
+            await db.execute(
+                select(func.count(PipelineJob.id)).where(
+                    PipelineJob.status == JobStatus.running,
+                    PipelineJob.updated_at < stuck_cutoff,
                 )
             )
         ).scalar() or 0,

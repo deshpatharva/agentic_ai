@@ -122,7 +122,7 @@ async def test_stats_returns_correct_shape(client, admin_token):
     r = await client.get("/admin/stats", headers={"Authorization": f"Bearer {admin_token}"})
     assert r.status_code == 200
     data = r.json()
-    for key in ("total_users", "active_users", "pipeline_runs_today", "total_resumes"):
+    for key in ("total_users", "active_users", "pipeline_runs_today", "total_resumes", "stuck_jobs"):
         assert key in data, f"Missing key: {key}"
     assert data["total_users"] >= 1
 

@@ -34,3 +34,4 @@ class AdminStats(BaseModel):
     active_users: int
     pipeline_runs_today: int
     total_resumes: int
+    stuck_jobs: int
