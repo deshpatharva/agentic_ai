@@ -8,7 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from config import DATABASE_URL
-from db.models import PlanLimit
+from db.models import PlanLimit, ProviderCost
 
 engine = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
 AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -42,7 +42,7 @@ def _run_migrations() -> None:
 
 
 async def init_db() -> None:
-    """Run pending migrations then seed plan_limits on first run."""
+    """Run pending migrations then seed plan_limits and provider_costs on first run."""
     await asyncio.to_thread(_run_migrations)
 
     async with AsyncSessionLocal() as session:
@@ -73,4 +73,30 @@ async def init_db() -> None:
                 ),
             ]
             session.add_all(plans)
+            await session.commit()
+
+        result = await session.execute(text("SELECT COUNT(*) FROM provider_costs WHERE active = true"))
+        count = result.scalar()
+        if count == 0:
+            provider_costs = [
+                ProviderCost(
+                    provider="Anthropic",
+                    input_cost_per_1m_tokens=0.003,
+                    output_cost_per_1m_tokens=0.009,
+                    active=True,
+                ),
+                ProviderCost(
+                    provider="Google",
+                    input_cost_per_1m_tokens=0.0005,
+                    output_cost_per_1m_tokens=0.0015,
+                    active=True,
+                ),
+                ProviderCost(
+                    provider="Groq",
+                    input_cost_per_1m_tokens=0.0001,
+                    output_cost_per_1m_tokens=0.0001,
+                    active=True,
+                ),
+            ]
+            session.add_all(provider_costs)
             await session.commit()

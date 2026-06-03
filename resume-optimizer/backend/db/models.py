@@ -135,3 +135,19 @@ class UserPromoRedemption(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "promo_code_id", name="uq_user_code"),
     )
+
+
+class ProviderCost(Base):
+    __tablename__ = "provider_costs"
+
+    id                            = Column(Uuid(), primary_key=True, default=uuid.uuid4)
+    provider                      = Column(String(50), nullable=False)
+    input_cost_per_1m_tokens      = Column(Float, nullable=False)
+    output_cost_per_1m_tokens     = Column(Float, nullable=False)
+    active                        = Column(Boolean, default=True, nullable=False)
+    created_at                    = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at                    = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("provider", "active", name="uq_provider_active"),
+    )
