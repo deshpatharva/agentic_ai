@@ -33,6 +33,23 @@ resource "azurerm_postgresql_flexible_server_database" "app" {
 }
 
 # ── Firewall — allow Azure services (App Service) ─────────────────────────────
+# SECURITY NOTE — prod tightening required:
+#
+# The 0.0.0.0/0.0.0.0 rule is Azure's magic sentinel for "Allow access to Azure
+# services", but it opens the server to EVERY resource in Azure across ALL
+# tenants and subscriptions — not just our App Service.  Any other Azure customer
+# can attempt a connection from their IP if they know the hostname and credentials.
+#
+# For dev this is acceptable; for staging/prod replace with one of:
+#   a) VNet Integration: add the App Service to a VNet subnet, replace this rule
+#      with azurerm_postgresql_flexible_server_virtual_network_rule pointing at
+#      that subnet, and enable the service endpoint "Microsoft.Sql" on the subnet.
+#   b) Private Endpoint: provision azurerm_private_endpoint for the Postgres
+#      server inside a VNet subnet; disable public network access entirely
+#      (public_network_access_enabled = false on the server).
+#
+# Both options require an azurerm_virtual_network and at least one subnet, which
+# are not provisioned here.  Track as a prod prerequisite before going live.
 
 resource "azurerm_postgresql_flexible_server_firewall_rule" "allow_azure_services" {
   name             = "AllowAzureServices"

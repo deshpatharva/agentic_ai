@@ -19,6 +19,21 @@ from delta.writer import read_usage_last_n_days
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 
+def decode_token(token: str) -> str:
+    """Decode a JWT and return the user_id (sub claim). Raises HTTP 401 on failure.
+
+    Used by endpoints that cannot use the Authorization header (e.g. SSE via EventSource).
+    """
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user_id: str = payload.get("sub")
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        return user_id
+    except JWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+
+
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),

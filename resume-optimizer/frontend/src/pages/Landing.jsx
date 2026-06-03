@@ -41,8 +41,8 @@ export default function Landing() {
             style={{ background: 'linear-gradient(135deg,#8b84e0,#7F77DD)' }}>
             Get started free <ArrowRight className="w-5 h-5" />
           </Link>
-          <Link to="/app" className="text-gray-600 hover:text-gray-900 px-6 py-3.5 font-medium transition-colors">
-            Try without account →
+          <Link to="/login" className="text-gray-600 hover:text-gray-900 px-6 py-3.5 font-medium transition-colors">
+            Sign in →
           </Link>
         </div>
 

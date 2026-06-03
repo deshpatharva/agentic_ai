@@ -69,24 +69,21 @@ variable "app_service_sku" {
 # ── API Keys (written to Key Vault at provision time) ─────────────────────────
 
 variable "google_ai_api_key" {
-  description = "Google AI Studio API key (Gemini)"
+  description = "Google AI Studio API key (Gemini) — required, no default"
   type        = string
   sensitive   = true
-  default     = "REPLACE_ME"
 }
 
 variable "groq_api_key" {
-  description = "Groq API key"
+  description = "Groq API key — required, no default"
   type        = string
   sensitive   = true
-  default     = "REPLACE_ME"
 }
 
 variable "anthropic_api_key" {
-  description = "Anthropic API key"
+  description = "Anthropic API key — required, no default"
   type        = string
   sensitive   = true
-  default     = "REPLACE_ME"
 }
 
 variable "adzuna_app_id" {
@@ -122,4 +119,28 @@ variable "stripe_secret_key" {
   type        = string
   sensitive   = true
   default     = "REPLACE_ME"
+}
+
+# ── Blob lifecycle / retention ────────────────────────────────────────────────
+
+variable "output_blob_retention_days" {
+  description = "Days after last modification before blobs in the outputs container are auto-deleted. Generated .docx files are ephemeral once downloaded."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = var.output_blob_retention_days >= 1
+    error_message = "Retention must be at least 1 day."
+  }
+}
+
+variable "delta_blob_retention_days" {
+  description = "Days after last modification before Delta Lake data-partition blobs are auto-deleted. Acts as a safety net; the application-level vacuum_old_matches() is the primary cleanup path. Must be >= the application retention window (90 days)."
+  type        = number
+  default     = 90
+
+  validation {
+    condition     = var.delta_blob_retention_days >= 7
+    error_message = "Delta retention must be at least 7 days to avoid deleting active partitions."
+  }
 }

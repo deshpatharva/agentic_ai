@@ -1,0 +1,210 @@
+name: Terraform
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "resume-optimizer/infra/**"
+      - ".github/workflows/terraform.yml"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "plan-only → inspect the plan; apply → deploy after reviewer approval"
+        required: true
+        type: choice
+        options: [plan-only, apply]
+        default: plan-only
+
+# Never cancel a running apply; cancel superseded plans on PRs.
+concurrency:
+  group: terraform
+  cancel-in-progress: false
+
+permissions:
+  id-token: write      # required for OIDC token exchange
+  contents: read
+  pull-requests: write # required to post plan as PR comment
+
+# ── Shared Terraform authentication env vars ──────────────────────────────────
+# ARM_USE_OIDC tells the azurerm provider to request an OIDC token from GitHub
+# rather than using a client_secret.  azure/login also sets up the CLI session
+# so any az commands in later steps work too.
+env:
+  ARM_CLIENT_ID:       ${{ vars.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID:       ${{ vars.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+  ARM_USE_OIDC:        "true"
+
+jobs:
+  # ── Plan ─────────────────────────────────────────────────────────────────────
+  # Runs on every PR that touches infra/ and on every workflow_dispatch.
+  # Produces a plan binary that the apply job consumes verbatim.
+
+  plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: resume-optimizer/infra
+
+    # Map Terraform input variables from GitHub secrets / variables.
+    # TF_VAR_<name> is the standard way to pass values without a tfvars file.
+    env:
+      TF_VAR_subscription_id:    ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_google_ai_api_key:  ${{ secrets.TF_VAR_GOOGLE_AI_API_KEY }}
+      TF_VAR_groq_api_key:       ${{ secrets.TF_VAR_GROQ_API_KEY }}
+      TF_VAR_anthropic_api_key:  ${{ secrets.TF_VAR_ANTHROPIC_API_KEY }}
+      # Optional variables — omit to use defaults from variables.tf
+      # TF_VAR_adzuna_app_id:    ${{ secrets.TF_VAR_ADZUNA_APP_ID }}
+      # TF_VAR_adzuna_app_key:   ${{ secrets.TF_VAR_ADZUNA_APP_KEY }}
+      # TF_VAR_the_muse_api_key: ${{ secrets.TF_VAR_THE_MUSE_API_KEY }}
+      # TF_VAR_apify_token:      ${{ secrets.TF_VAR_APIFY_TOKEN }}
+      # TF_VAR_stripe_secret_key:${{ secrets.TF_VAR_STRIPE_SECRET_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # azure/login sets up the CLI session; ARM_USE_OIDC covers Terraform itself.
+      - uses: azure/login@v2
+        with:
+          client-id:       ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.5"
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ vars.AZURE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ secrets.TFSTATE_STORAGE_ACCOUNT_NAME }}" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=resume-optimizer/dev/terraform.tfstate" \
+            -backend-config="use_azuread_auth=true"
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          set +e
+          terraform plan \
+            -detailed-exitcode \
+            -no-color \
+            -out=tfplan \
+            2>&1 | tee plan_output.txt
+          # Exit codes: 0=no changes, 1=error, 2=changes present
+          exitcode=${PIPESTATUS[0]}
+          echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
+          [ $exitcode -eq 1 ] && exit 1 || exit 0
+
+      # Upload the compiled plan binary so the apply job can execute it
+      # without re-planning (guarantees apply matches what was reviewed).
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ github.run_id }}
+          path: |
+            resume-optimizer/infra/tfplan
+            resume-optimizer/infra/plan_output.txt
+          retention-days: 1
+
+      # Post the human-readable plan as a PR comment; replace any prior comment.
+      - name: Post plan to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const raw = fs.readFileSync('resume-optimizer/infra/plan_output.txt', 'utf8');
+            // Truncate to 60 000 chars so the comment stays under GitHub's limit.
+            const plan = raw.length > 60000
+              ? '... (output truncated — see workflow logs for full plan)\n\n' + raw.slice(-60000)
+              : raw;
+
+            const header = '## Terraform Plan\n';
+            const body   = `${header}\`\`\`hcl\n${plan}\n\`\`\``;
+
+            // Delete previous plan comments on this PR to avoid clutter.
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            for (const c of comments) {
+              if (c.body.startsWith(header)) {
+                await github.rest.issues.deleteComment({
+                  owner:      context.repo.owner,
+                  repo:       context.repo.repo,
+                  comment_id: c.id,
+                });
+              }
+            }
+
+            await github.rest.issues.createComment({
+              owner:        context.repo.owner,
+              repo:         context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+  # ── Apply ─────────────────────────────────────────────────────────────────────
+  # Runs only on workflow_dispatch with action=apply.
+  # Blocked by the "production" environment's required-reviewer protection —
+  # a human must approve before Terraform touches real infrastructure.
+  # Applies the EXACT plan binary produced by the plan job above.
+
+  apply:
+    name: Terraform Apply
+    needs: plan
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply'
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run:
+        working-directory: resume-optimizer/infra
+
+    env:
+      TF_VAR_subscription_id:   ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_google_ai_api_key: ${{ secrets.TF_VAR_GOOGLE_AI_API_KEY }}
+      TF_VAR_groq_api_key:      ${{ secrets.TF_VAR_GROQ_API_KEY }}
+      TF_VAR_anthropic_api_key: ${{ secrets.TF_VAR_ANTHROPIC_API_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id:       ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.5"
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ vars.AZURE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ secrets.TFSTATE_STORAGE_ACCOUNT_NAME }}" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=resume-optimizer/dev/terraform.tfstate" \
+            -backend-config="use_azuread_auth=true"
+
+      # Download the plan binary produced in the plan job.
+      # Applying a saved plan guarantees apply executes exactly what was reviewed.
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ github.run_id }}
+          path: resume-optimizer/infra/
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan

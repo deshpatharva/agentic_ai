@@ -1,0 +1,47 @@
+name: Deploy — Frontend
+
+# Triggers when frontend source changes on main.
+# Also manually dispatchable.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "resume-optimizer/frontend/**"
+      - ".github/workflows/deploy-frontend.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-frontend
+  cancel-in-progress: false
+
+permissions:
+  id-token: write  # required for OIDC (azure/login used to verify deployment token ownership)
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to Azure Static Web Apps
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true  # Static Web Apps action may need submodule content
+
+      # ── Deploy ────────────────────────────────────────────────────────────────
+      # The Azure/static-web-apps-deploy action builds the app internally using
+      # the Oryx build system, then uploads the output to Azure CDN.
+      # VITE_API_URL is injected at build time so the compiled JS bundle
+      # points at the correct App Service URL without hardcoding it.
+      - uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token:                      ${{ secrets.GITHUB_TOKEN }}
+          action:                          "upload"
+          app_location:                    "resume-optimizer/frontend"
+          output_location:                 "dist"
+          # The action runs 'npm ci && npm run build' internally.
+          # VITE_API_URL is read by src/api/client.js at build time via import.meta.env.
+        env:
+          VITE_API_URL: https://${{ vars.AZURE_WEBAPP_NAME }}.azurewebsites.net

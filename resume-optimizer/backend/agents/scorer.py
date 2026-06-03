@@ -54,7 +54,6 @@ async def score_combined(
     resume_text: str,
     jd_text: str,
     jd_keywords: list = None,
-    gemini_cache_name: str = None,
 ) -> dict:
     cached = result_cache.get("combined", resume_text, jd_text)
     if cached is not None:
@@ -64,15 +63,10 @@ async def score_combined(
     kw_list = _extract_jd_keywords(jd_text, jd_keywords or [])
     keywords_str = ", ".join(kw_list[:50]) if kw_list else "see job description"
 
-    if gemini_cache_name:
-        # JD text is in the server-side cache — omit it from the prompt to save tokens
-        jd_section = "Job Description: (see cached context above)"
-    else:
-        jd_section = f"Job Description:\n{jd_text}"
-
     prompt = f"""You are a professional resume evaluator. Score this resume on 4 dimensions against the job description.
 
-{jd_section}
+Job Description:
+{jd_text}
 
 Extracted JD Keywords (for ATS scoring):
 {keywords_str}
@@ -97,7 +91,7 @@ Scoring criteria:
 
 JSON:"""
 
-    raw = await complete(prompt, MODEL_SCORER, max_tokens=1024, gemini_cache_name=gemini_cache_name)
+    raw = await complete(prompt, MODEL_SCORER, max_tokens=1024)
 
     try:
         data = json.loads(_clean_json(raw))
