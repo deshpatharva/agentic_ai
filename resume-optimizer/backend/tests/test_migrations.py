@@ -20,7 +20,7 @@ from db.session import _run_migrations
 
 
 def test_migrations_create_all_tables(tmp_path, monkeypatch):
-    """0001_initial_schema must create all 5 expected tables."""
+    """Migrations must create all 5 expected tables."""
     db_file = tmp_path / "test_migrate.db"
     monkeypatch.setattr(cfg, "DATABASE_URL", f"sqlite+aiosqlite:///{db_file}")
 
@@ -59,4 +59,4 @@ def test_migrations_stamped_after_run(tmp_path, monkeypatch):
     conn.close()
 
     assert len(rows) == 1
-    assert rows[0][0] == "0001"
+    assert rows[0][0] == "0002"
