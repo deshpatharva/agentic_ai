@@ -232,3 +232,124 @@ async def test_code_invalid(client):
         headers={"Authorization": f"Bearer {token}"}
     )
     assert r.status_code == 400
+
+
+# ── Admin helpers ─────────────────────────────────────────────────────────────
+
+async def _make_admin_token(client) -> str:
+    """Register a user, promote via DB, return admin JWT token."""
+    from sqlalchemy import update as sa_update
+    email = f"promo_admin_{uuid_module.uuid4().hex[:8]}@test.com"
+    r = await client.post("/auth/register", json={
+        "email": email, "password": "Test1234!", "full_name": "PromoAdmin"
+    })
+    user_id = r.json()["user"]["id"]
+
+    async with _TestSession() as session:
+        await session.execute(
+            sa_update(User).where(User.id == uuid_module.UUID(user_id)).values(is_admin=True)
+        )
+        await session.commit()
+
+    r = await client.post("/auth/login", json={"email": email, "password": "Test1234!"})
+    return r.json()["access_token"]
+
+
+# ── Admin Promo Code Tests ────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_admin_create_code(client):
+    """Admin creates a promo code."""
+    token = await _make_admin_token(client)
+
+    r = await client.post("/admin/promo-codes",
+        json={
+            "code": "ADMIN50",
+            "type": "discount",
+            "discount_percent": 50,
+            "max_uses": 100,
+        },
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    assert r.status_code == 201
+    data = r.json()
+    assert data["code"] == "ADMIN50"
+    assert data["discount_percent"] == 50
+
+
+@pytest.mark.asyncio
+async def test_admin_list_codes(client):
+    """Admin lists promo codes."""
+    token = await _make_admin_token(client)
+
+    # Create a code first
+    await client.post("/admin/promo-codes",
+        json={"code": "LIST1", "type": "plan_upgrade", "target_plan": "pro", "max_uses": 5},
+        headers={"Authorization": f"Bearer {token}"}
+    )
+
+    r = await client.get("/admin/promo-codes",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["total"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_admin_list_codes_filter(client):
+    """Admin can filter promo codes by status."""
+    token = await _make_admin_token(client)
+
+    await client.post("/admin/promo-codes",
+        json={"code": "ACTIVE1", "type": "plan_upgrade", "target_plan": "pro", "max_uses": 5},
+        headers={"Authorization": f"Bearer {token}"}
+    )
+
+    r = await client.get("/admin/promo-codes?status=active",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert all(c["status"] == "active" for c in data["codes"])
+
+
+@pytest.mark.asyncio
+async def test_admin_deactivate(client):
+    """Admin deactivates a code."""
+    token = await _make_admin_token(client)
+
+    r = await client.post("/admin/promo-codes",
+        json={"code": "DEACTIVATE", "type": "plan_upgrade", "target_plan": "pro", "max_uses": 5},
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    assert r.status_code == 201
+    code_id = r.json()["id"]
+
+    r = await client.patch(f"/admin/promo-codes/{code_id}",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    assert r.status_code == 200
+    assert r.json()["deactivated_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_admin_stats(client):
+    """Admin gets stats for a promo code."""
+    token = await _make_admin_token(client)
+
+    r = await client.post("/admin/promo-codes",
+        json={"code": "STATS1", "type": "discount", "discount_percent": 20, "max_uses": 50},
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    assert r.status_code == 201
+    code_id = r.json()["id"]
+
+    r = await client.get(f"/admin/promo-codes/{code_id}/stats",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["code"] == "STATS1"
+    assert data["remaining_uses"] == 50
+    assert "redeemed_by_plan" in data
