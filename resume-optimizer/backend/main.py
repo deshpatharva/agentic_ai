@@ -52,7 +52,7 @@ from delta.writer import write_daily_usage, write_job_match
 from scraper.scraper import scrape_jobs
 from db.session import get_db, init_db, AsyncSessionLocal
 from db.models import JobStatus, PipelineEvent, PipelineJob, Resume, User
-from auth.router import router as auth_router
+from auth.router import router as auth_router, user_router
 from auth.dependencies import decode_token, get_current_user, check_plan_limit
 from dashboard.router import router as dashboard_router
 from admin.router import router as admin_router
@@ -161,6 +161,7 @@ app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(LoggingMiddleware)
 
 app.include_router(auth_router)
+app.include_router(user_router)
 app.include_router(dashboard_router)
 app.include_router(admin_router)
 
