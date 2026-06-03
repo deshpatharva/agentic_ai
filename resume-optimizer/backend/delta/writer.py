@@ -18,16 +18,49 @@ import pandas as pd
 import pyarrow as pa
 from deltalake import DeltaTable, write_deltalake
 
-from config import DELTA_STORAGE_PATH
+from config import AZURE_STORAGE_ACCOUNT_NAME, DELTA_STORAGE_PATH
 
-# ── Table paths ───────────────────────────────────────────────────────────────
+# ── Path and storage helpers ──────────────────────────────────────────────────
+
+def _is_cloud_path(path: str) -> bool:
+    """Return True if path is a cloud URI (az://, abfss://, s3://, gs://)."""
+    return path.startswith(("az://", "abfss://", "s3://", "gs://"))
+
+
+def _join_path(base: str, *parts: str) -> str:
+    """Join path components. Uses string ops for cloud URIs, pathlib for local."""
+    if _is_cloud_path(base):
+        return base.rstrip("/") + "/" + "/".join(p.strip("/") for p in parts)
+    return str(Path(base, *parts))
+
 
 def _usage_path() -> str:
-    return str(Path(DELTA_STORAGE_PATH) / "daily_usage")
+    return _join_path(DELTA_STORAGE_PATH, "daily_usage")
 
 
 def _matches_path() -> str:
-    return str(Path(DELTA_STORAGE_PATH) / "job_matches")
+    return _join_path(DELTA_STORAGE_PATH, "job_matches")
+
+
+def _storage_options() -> dict:
+    """Return storage_options dict for deltalake calls. Empty dict for local dev."""
+    if AZURE_STORAGE_ACCOUNT_NAME:
+        return {
+            "account_name": AZURE_STORAGE_ACCOUNT_NAME,
+            "use_azure_managed_identity": "true",
+        }
+    return {}
+
+
+def _table_exists(path: str) -> bool:
+    """Return True if a Delta table exists at path (local or cloud)."""
+    if _is_cloud_path(path):
+        try:
+            DeltaTable.from_uri(path, storage_options=_storage_options())
+            return True
+        except Exception:
+            return False
+    return Path(path).exists() and (Path(path) / "_delta_log").exists()
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -82,6 +115,7 @@ def write_daily_usage(record: dict) -> None:
         schema=_USAGE_SCHEMA,
         partition_by=["date"],
         mode="append",
+        storage_options=_storage_options(),
     )
 
 
@@ -122,6 +156,7 @@ def write_job_match(record: dict) -> None:
         schema=_MATCHES_SCHEMA,
         partition_by=["year", "month"],
         mode="append",
+        storage_options=_storage_options(),
     )
 
 
@@ -133,11 +168,11 @@ def read_usage_last_n_days(user_id: str, days: int = 30) -> pd.DataFrame:
     Columns: date, pipeline_runs, uploads, tokens_used
     """
     path = _usage_path()
-    if not Path(path).exists() or not (Path(path) / "_delta_log").exists():
+    if not _table_exists(path):
         return pd.DataFrame(columns=["date", "pipeline_runs", "uploads", "tokens_used"])
 
     cutoff = (date.today() - timedelta(days=days)).isoformat()
-    dt = DeltaTable.from_uri(path)
+    dt = DeltaTable.from_uri(path, storage_options=_storage_options())
     df = dt.to_pandas(
         filters=[("user_id", "=", user_id), ("date", ">=", cutoff)]
     )
@@ -168,11 +203,11 @@ def read_job_matches(
     Returns: {total, page, per_page, results: list[dict]}
     """
     path = _matches_path()
-    if not Path(path).exists() or not (Path(path) / "_delta_log").exists():
+    if not _table_exists(path):
         return {"total": 0, "page": page, "per_page": per_page, "results": []}
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    dt = DeltaTable.from_uri(path)
+    dt = DeltaTable.from_uri(path, storage_options=_storage_options())
     df = dt.to_pandas(
         filters=[("user_id", "=", user_id), ("scraped_at", ">=", cutoff)]
     )
@@ -196,13 +231,13 @@ def vacuum_old_matches(retention_days: int = 90) -> None:
     Run weekly via APScheduler.
     """
     path = _matches_path()
-    if not Path(path).exists() or not (Path(path) / "_delta_log").exists():
+    if not _table_exists(path):
         return
 
     cutoff_dt = datetime.now(timezone.utc) - timedelta(days=retention_days)
     cutoff_str = cutoff_dt.isoformat()
 
-    dt = DeltaTable.from_uri(path)
+    dt = DeltaTable.from_uri(path, storage_options=_storage_options())
     df = dt.to_pandas()
 
     # Keep only recent rows — rewrite the table
@@ -214,6 +249,7 @@ def vacuum_old_matches(retention_days: int = 90) -> None:
             schema=_MATCHES_SCHEMA,
             partition_by=["year", "month"],
             mode="overwrite",
+            storage_options=_storage_options(),
         )
-        dt = DeltaTable.from_uri(path)
+        dt = DeltaTable.from_uri(path, storage_options=_storage_options())
         dt.vacuum(retention_hours=0, enforce_retention_duration=False, dry_run=False)
