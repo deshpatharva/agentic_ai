@@ -1,6 +1,8 @@
 """Admin API routes. All endpoints (except /bootstrap) require get_admin_user."""
+import asyncio
 import uuid
-from datetime import datetime, timedelta, timezone
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone, date, time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -12,8 +14,7 @@ from admin.schemas import AdminStats, BootstrapRequest, UserUpdate, ProviderCost
 from config import STUCK_JOB_TIMEOUT_MINUTES
 from db.models import JobStatus, PipelineJob, PlanType, Resume, User, ProviderCost
 from db.session import get_db
-from delta.writer import read_usage_last_n_days
-import asyncio
+from delta.writer import read_usage_last_n_days, read_job_matches
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -99,7 +100,6 @@ async def get_stats(
     _: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
-    from datetime import date
     today_start = datetime.now(timezone.utc).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
@@ -199,9 +199,6 @@ async def get_analytics(
     days: int = Query(30, ge=1, le=90),
 ):
     """Get system-wide analytics with user growth, costs, sources, and pipeline health."""
-    from datetime import date
-    from collections import defaultdict
-
     today_dt = datetime.now(timezone.utc)
     today = today_dt.date()
     start_date = today - timedelta(days=days - 1)
@@ -212,7 +209,6 @@ async def get_analytics(
     cumulative_users = 0
 
     # Query all users created in the range
-    from datetime import time
     start_datetime = datetime.combine(start_date, time.min).replace(tzinfo=timezone.utc)
     users_in_range = (
         await db.execute(
@@ -270,6 +266,14 @@ async def get_analytics(
     # ── 3. Daily costs: from Delta usage + ProviderCost rates ────────────────
 
     daily_costs_data = []
+
+    # Pre-populate with zeros for all days in range
+    daily_costs_by_date = {}
+    for current_date in (start_date + timedelta(days=d) for d in range(days)):
+        if current_date > today:
+            break
+        daily_costs_by_date[current_date.isoformat()] = 0
+
     try:
         # Fetch active anthropic provider costs
         cost_result = await db.execute(
@@ -284,39 +288,25 @@ async def get_analytics(
             df_usage = await asyncio.to_thread(read_usage_last_n_days, "", days)
 
             if not df_usage.empty:
-                # Group by date and calculate costs
-                for current_date in (start_date + timedelta(days=d) for d in range(days)):
-                    if current_date > today:
-                        break
-                    date_str = current_date.isoformat()
-                    df_day = df_usage[df_usage["date"] == date_str]
+                # Group by date once and calculate costs
+                grouped = df_usage.groupby("date")
+                for date_str, df_day in grouped:
+                    day_input = int(df_day["input_tokens"].sum())
+                    day_output = int(df_day["output_tokens"].sum())
+                    input_cost = (day_input / 1_000_000) * cost_row.input_cost_per_1m_tokens
+                    output_cost = (day_output / 1_000_000) * cost_row.output_cost_per_1m_tokens
+                    cost_cents = int((input_cost + output_cost) * 100)
+                    daily_costs_by_date[date_str] = cost_cents
+    except (ValueError, KeyError, AttributeError):
+        # If Delta read fails, use zeros (already populated above)
+        pass
 
-                    if not df_day.empty:
-                        day_input = int(df_day["input_tokens"].sum())
-                        day_output = int(df_day["output_tokens"].sum())
-                        input_cost = (day_input / 1_000_000) * cost_row.input_cost_per_1m_tokens
-                        output_cost = (day_output / 1_000_000) * cost_row.output_cost_per_1m_tokens
-                        cost_cents = int((input_cost + output_cost) * 100)
-
-                        daily_costs_data.append({
-                            "date": date_str,
-                            "cost_cents": cost_cents,
-                        })
-                    else:
-                        # No data for this day - add 0 cost
-                        daily_costs_data.append({
-                            "date": date_str,
-                            "cost_cents": 0,
-                        })
-    except Exception:
-        # If Delta read fails, return empty costs
-        for current_date in (start_date + timedelta(days=d) for d in range(days)):
-            if current_date > today:
-                break
-            daily_costs_data.append({
-                "date": current_date.isoformat(),
-                "cost_cents": 0,
-            })
+    # Build final list from daily_costs_by_date
+    for date_str, cost_cents in daily_costs_by_date.items():
+        daily_costs_data.append({
+            "date": date_str,
+            "cost_cents": cost_cents,
+        })
 
     # ── 4. Source counts: from job matches (placeholder for now) ────────────
 
@@ -328,14 +318,13 @@ async def get_analytics(
 
     try:
         # Try to read job_matches from Delta
-        from delta.writer import read_job_matches
         matches_df = await asyncio.to_thread(read_job_matches, "", 1, 1000)
         if not matches_df.empty and "source" in matches_df.columns:
             source_counts["linkedin"] = int((matches_df["source"] == "linkedin").sum())
             source_counts["indeed"] = int((matches_df["source"] == "indeed").sum())
             source_counts["other"] = int(len(matches_df) - source_counts["linkedin"] - source_counts["indeed"])
-    except Exception:
-        # If Delta read fails, use placeholder
+    except (ValueError, KeyError, AttributeError):
+        # If Delta read fails, use placeholder defaults
         pass
 
     # ── 5. Pipeline health: successful/failed runs per day ──────────────────
@@ -351,6 +340,7 @@ async def get_analytics(
             )
             .where(
                 PipelineJob.created_at >= start_datetime,
+                func.date(PipelineJob.created_at).isnot(None),
             )
             .group_by(func.date(PipelineJob.created_at), PipelineJob.status)
             .order_by(func.date(PipelineJob.created_at).desc())
@@ -360,8 +350,6 @@ async def get_analytics(
     # Build pipeline counts by date
     pipeline_by_date = defaultdict(lambda: {"successful": 0, "failed": 0})
     for job_date, status, count in pipeline_rows:
-        if job_date is None:
-            continue
         date_str = job_date.isoformat()
         if status == JobStatus.done:
             pipeline_by_date[date_str]["successful"] += count
