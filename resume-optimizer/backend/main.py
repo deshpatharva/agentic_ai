@@ -95,10 +95,13 @@ async def _reap_stuck_jobs():
     """Periodically mark stuck running jobs as error (every 5 minutes)."""
     while True:
         await asyncio.sleep(300)
-        async with AsyncSessionLocal() as db:
-            ids = await _reap_once(db)
-            if ids:
-                _logger.warning("Reaped %d stuck jobs: %s", len(ids), ids)
+        try:
+            async with AsyncSessionLocal() as db:
+                ids = await _reap_once(db)
+                if ids:
+                    _logger.warning("Reaped %d stuck jobs: %s", len(ids), ids)
+        except Exception:
+            _logger.exception("Reaper cycle failed — will retry in 5 minutes")
 
 
 @asynccontextmanager

@@ -17,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from httpx import AsyncClient, ASGITransport
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
@@ -56,6 +56,14 @@ async def setup_db():
 async def client():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def clean_jobs():
+    async with _TestSession() as db:
+        await db.execute(delete(PipelineJob))
+        await db.commit()
+    yield
 
 
 # ── Reaper tests ──────────────────────────────────────────────────────────────
