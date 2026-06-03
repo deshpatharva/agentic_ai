@@ -9,7 +9,7 @@ from enum import Enum as PyEnum
 
 from sqlalchemy import (
     Boolean, Column, DateTime, Enum, Float, ForeignKey,
-    Integer, JSON, String, Text, Uuid,
+    Integer, JSON, String, Text, Uuid, UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -106,3 +106,32 @@ class PipelineEvent(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     job = relationship("PipelineJob", back_populates="events")
+
+
+class PromoCode(Base):
+    __tablename__ = "promo_codes"
+
+    id                = Column(Uuid(), primary_key=True, default=uuid.uuid4)
+    code              = Column(String(50), unique=True, nullable=False, index=True)
+    type              = Column(String(50), nullable=False)  # plan_upgrade, trial_extension, discount
+    target_plan       = Column(String(20), nullable=True)
+    days_to_add       = Column(Integer(), nullable=True)
+    discount_percent  = Column(Integer(), nullable=True)
+    max_uses          = Column(Integer(), nullable=False)
+    current_uses      = Column(Integer(), default=0, nullable=False)
+    expires_at        = Column(DateTime, nullable=True)
+    created_at        = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    deactivated_at    = Column(DateTime, nullable=True)
+
+
+class UserPromoRedemption(Base):
+    __tablename__ = "user_promo_redemptions"
+
+    id              = Column(Integer(), primary_key=True, autoincrement=True)
+    user_id         = Column(Uuid(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    promo_code_id   = Column(Uuid(), ForeignKey("promo_codes.id", ondelete="CASCADE"), nullable=False, index=True)
+    redeemed_at     = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "promo_code_id", name="uq_user_code"),
+    )
