@@ -75,6 +75,9 @@ OUTPUTS_CONTAINER          = os.environ.get("OUTPUTS_CONTAINER", "outputs")
 # ── Rate limiting ─────────────────────────────────────────────────────────────
 RATE_LIMIT_AUTH = os.environ.get("RATE_LIMIT_AUTH", "5/minute")
 
+# ── Observability ─────────────────────────────────────────────────────────────
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+
 # ── Pipeline recovery ─────────────────────────────────────────────────────────
 STUCK_JOB_TIMEOUT_MINUTES = int(os.environ.get("STUCK_JOB_TIMEOUT_MINUTES", "30"))
 

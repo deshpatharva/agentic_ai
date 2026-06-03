@@ -10,6 +10,7 @@ import logging
 import os
 import sys
 import tempfile
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import date as date_type
@@ -18,6 +19,8 @@ from pathlib import Path
 
 # Ensure backend/ is on the path regardless of where uvicorn is launched from
 sys.path.insert(0, str(Path(__file__).parent))
+from logging_config import setup_logging
+setup_logging()
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +29,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from limiter import limiter
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy import delete, select, func, text, update
@@ -118,6 +122,28 @@ async def lifespan(app: FastAPI):
     reap_task.cancel()
 
 
+class LoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path == "/health":
+            return await call_next(request)
+        request_id = str(uuid.uuid4())
+        start = time.perf_counter()
+        response = await call_next(request)
+        latency_ms = round((time.perf_counter() - start) * 1000, 1)
+        _logger.info(
+            "request",
+            extra={
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code,
+                "latency_ms": latency_ms,
+            },
+        )
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+
 app = FastAPI(title="Resume Optimizer API", version="1.0.0", lifespan=lifespan)
 
 _ALLOWED_ORIGINS = list({FRONTEND_URL, "http://localhost:5173", "http://localhost:5174"})
@@ -132,6 +158,7 @@ app.add_middleware(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
+app.add_middleware(LoggingMiddleware)
 
 app.include_router(auth_router)
 app.include_router(dashboard_router)
