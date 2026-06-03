@@ -13,6 +13,7 @@ class UserListItem(BaseModel):
     plan: str
     is_active: bool
     is_admin: bool
+    trial_expires_at: Optional[str] = None
     created_at: str
     resume_count: int
 

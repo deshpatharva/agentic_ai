@@ -20,14 +20,15 @@ _VALID_PLANS = {"free", "pro", "enterprise"}
 
 def _user_dict(user: User, resume_count: int) -> dict:
     return {
-        "id":           str(user.id),
-        "email":        user.email,
-        "full_name":    user.full_name or "",
-        "plan":         user.plan.value,
-        "is_active":    user.is_active,
-        "is_admin":     user.is_admin,
-        "created_at":   user.created_at.isoformat(),
-        "resume_count": resume_count,
+        "id":               str(user.id),
+        "email":            user.email,
+        "full_name":        user.full_name or "",
+        "plan":             user.plan.value,
+        "is_active":        user.is_active,
+        "is_admin":         user.is_admin,
+        "trial_expires_at": user.trial_expires_at.isoformat() if user.trial_expires_at else None,
+        "created_at":       user.created_at.isoformat(),
+        "resume_count":     resume_count,
     }
 
 
