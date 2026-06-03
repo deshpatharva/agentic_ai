@@ -11,8 +11,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import JWT_ALGORITHM, JWT_EXPIRE_DAYS, JWT_SECRET
-from config import RATE_LIMIT_AUTH
+from config import JWT_ALGORITHM, JWT_EXPIRE_DAYS, JWT_SECRET, RATE_LIMIT_AUTH, TRIAL_DAYS
 from limiter import limiter
 from db.models import PlanLimit, User
 from db.session import get_db
@@ -60,8 +59,9 @@ def _user_dict(user: User, limits: PlanLimit = None) -> dict:
         "full_name":   user.full_name or "",
         "plan":        user.plan.value,
         "is_active":   user.is_active,
-        "is_admin":    user.is_admin,
-        "created_at":  user.created_at.isoformat(),
+        "is_admin":         user.is_admin,
+        "trial_expires_at": user.trial_expires_at.isoformat() if user.trial_expires_at else None,
+        "created_at":       user.created_at.isoformat(),
     }
     if limits:
         d["limits"] = {
@@ -89,6 +89,7 @@ async def register(request: Request, body: RegisterRequest, db: AsyncSession = D
         email=body.email,
         password_hash=pwd_context.hash(body.password),
         full_name=body.full_name,
+        trial_expires_at=datetime.now(timezone.utc) + timedelta(days=TRIAL_DAYS),
     )
     db.add(user)
     await db.commit()

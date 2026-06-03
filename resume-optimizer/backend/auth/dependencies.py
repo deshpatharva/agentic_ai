@@ -4,7 +4,7 @@ Auth dependencies — JWT decoding, user fetching, plan limit checking.
 
 import asyncio
 import uuid as _uuid_module
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -64,12 +64,23 @@ async def get_current_user(
     return user
 
 
+def _effective_plan(user: User) -> str:
+    """Return the user's effective plan, honouring an active free trial.
+
+    trial_expires_at is stored as naive UTC (DateTime column). Compare
+    against datetime.utcnow() — also naive UTC — to avoid TypeError.
+    """
+    if user.trial_expires_at and user.trial_expires_at > datetime.utcnow():
+        return "pro"
+    return user.plan.value
+
+
 async def check_plan_limit(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """Raise HTTP 429 if user has hit their daily upload limit."""
-    result = await db.execute(select(PlanLimit).where(PlanLimit.plan == user.plan.value))
+    result = await db.execute(select(PlanLimit).where(PlanLimit.plan == _effective_plan(user)))
     limits = result.scalar_one_or_none()
     if not limits:
         return user
