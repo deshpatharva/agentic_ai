@@ -89,7 +89,7 @@ async def register(request: Request, body: RegisterRequest, db: AsyncSession = D
         email=body.email,
         password_hash=pwd_context.hash(body.password),
         full_name=body.full_name,
-        trial_expires_at=datetime.now(timezone.utc) + timedelta(days=TRIAL_DAYS),
+        trial_expires_at=datetime.utcnow() + timedelta(days=TRIAL_DAYS),
     )
     db.add(user)
     await db.commit()

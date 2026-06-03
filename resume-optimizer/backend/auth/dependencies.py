@@ -104,7 +104,7 @@ async def check_plan_limit(
                 "limit": limits.daily_uploads,
                 "used": used,
                 "plan": user.plan.value,
-                "upgrade_message": f"Upgrade to Pro for 20 uploads/day",
+                "upgrade_message": "Upgrade to Pro for 20 uploads/day",
             },
         )
     return user
