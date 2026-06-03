@@ -14,7 +14,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote
 
+from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import (
     BlobSasPermissions,
@@ -76,7 +78,7 @@ def generate_download_url(blob_name: str, ttl_minutes: int = 15) -> str:
     # start_time is set 1 minute in the past to absorb clock skew.
     delegation_key = client.get_user_delegation_key(
         key_start_time=now - timedelta(minutes=1),
-        key_expiry_time=now + timedelta(minutes=ttl_minutes),
+        key_expiry_time=now + timedelta(minutes=ttl_minutes + 5),
     )
     sas_token = generate_blob_sas(
         account_name=AZURE_STORAGE_ACCOUNT_NAME,
@@ -88,7 +90,7 @@ def generate_download_url(blob_name: str, ttl_minutes: int = 15) -> str:
     )
     return (
         f"https://{AZURE_STORAGE_ACCOUNT_NAME}.blob.core.windows.net"
-        f"/{OUTPUTS_CONTAINER}/{blob_name}?{sas_token}"
+        f"/{OUTPUTS_CONTAINER}/{quote(blob_name, safe='/')}?{sas_token}"
     )
 
 
@@ -102,4 +104,7 @@ def delete_output(blob_name: str) -> None:
 
     client = _blob_service_client()
     blob = client.get_blob_client(container=OUTPUTS_CONTAINER, blob=blob_name)
-    blob.delete_blob(delete_snapshots="include")
+    try:
+        blob.delete_blob(delete_snapshots="include")
+    except ResourceNotFoundError:
+        pass
