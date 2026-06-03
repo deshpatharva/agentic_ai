@@ -58,6 +58,7 @@ def _user_dict(user: User, limits: PlanLimit = None) -> dict:
         "full_name":   user.full_name or "",
         "plan":        user.plan.value,
         "is_active":   user.is_active,
+        "is_admin":    user.is_admin,
         "created_at":  user.created_at.isoformat(),
     }
     if limits:

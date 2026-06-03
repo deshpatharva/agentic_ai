@@ -42,6 +42,7 @@ class User(Base):
     stripe_customer_id     = Column(String(255), nullable=True)
     stripe_subscription_id = Column(String(255), nullable=True)
     is_active              = Column(Boolean, default=True, nullable=False)
+    is_admin               = Column(Boolean, default=False, nullable=False)
     created_at             = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     resumes = relationship("Resume", back_populates="user", cascade="all, delete-orphan")
