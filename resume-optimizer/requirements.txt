@@ -31,5 +31,6 @@ bcrypt<4.0.0
 python-jose[cryptography]
 # Job scraper
 httpx
+slowapi>=0.1.9
 # Optional: boto3 for S3 Delta storage in prod
 # boto3

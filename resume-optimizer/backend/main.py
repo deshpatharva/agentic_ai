@@ -22,6 +22,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from limiter import limiter
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy import delete, select, func, text, update
@@ -125,6 +129,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 app.include_router(auth_router)
 app.include_router(dashboard_router)
