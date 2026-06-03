@@ -588,14 +588,16 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             # ── Step 5: Generate .docx ──────────────────────────────────────
             await emit({"type": "stage", "message": "Generating optimized .docx file...", "stage": "generate"})
             blob_name = f"{job_id}.docx"
-            with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as _f:
-                tmp_docx = _f.name
+            tmp_docx = None
             try:
+                with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as _f:
+                    tmp_docx = _f.name
                 await asyncio.to_thread(generate_docx, current_resume, tmp_docx)
                 docx_bytes = await asyncio.to_thread(Path(tmp_docx).read_bytes)
                 await asyncio.to_thread(_storage.upload_output, docx_bytes, blob_name)
             finally:
-                os.unlink(tmp_docx)
+                if tmp_docx is not None:
+                    os.unlink(tmp_docx)
 
             # ── Persist Resume record ───────────────────────────────────────
             resume_record = None
