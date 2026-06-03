@@ -8,7 +8,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.dependencies import get_admin_user
-from admin.schemas import AdminStats, BootstrapRequest, UserUpdate
+from admin.schemas import AdminStats, BootstrapRequest, UserUpdate, ProviderCostCreate, ProviderCostsResponse
 from config import STUCK_JOB_TIMEOUT_MINUTES
 from db.models import JobStatus, PipelineJob, PlanType, Resume, User, ProviderCost
 from db.session import get_db
@@ -509,3 +509,77 @@ async def promo_code_stats(
         "last_redeemed_at": last_redeemed.isoformat() if last_redeemed else None,
         "first_redeemed_at": first_redeemed.isoformat() if first_redeemed else None,
     }
+
+
+# ── Provider costs ────────────────────────────────────────────────────────────
+
+@router.post("/provider-costs", status_code=201)
+async def create_provider_cost(
+    body: ProviderCostCreate,
+    user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create or update provider pricing. Marks previous active rate as inactive."""
+    if body.provider not in ["anthropic", "google", "groq"]:
+        raise HTTPException(status_code=400, detail="provider must be one of: anthropic, google, groq")
+    if body.input_cost_per_1m_tokens < 0 or body.output_cost_per_1m_tokens < 0:
+        raise HTTPException(status_code=400, detail="costs must be non-negative")
+
+    # Mark existing active row as inactive
+    result = await db.execute(
+        select(ProviderCost).where(
+            (ProviderCost.provider == body.provider) & (ProviderCost.active == True)
+        )
+    )
+    existing = result.scalar_one_or_none()
+    if existing:
+        existing.active = False
+
+    # Create new active row
+    new_cost = ProviderCost(
+        id=uuid.uuid4(),
+        provider=body.provider,
+        input_cost_per_1m_tokens=body.input_cost_per_1m_tokens,
+        output_cost_per_1m_tokens=body.output_cost_per_1m_tokens,
+        active=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    db.add(new_cost)
+    await db.commit()
+    await db.refresh(new_cost)
+
+    return {
+        "id": str(new_cost.id),
+        "provider": new_cost.provider,
+        "input_cost_per_1m_tokens": new_cost.input_cost_per_1m_tokens,
+        "output_cost_per_1m_tokens": new_cost.output_cost_per_1m_tokens,
+        "active": new_cost.active,
+        "created_at": new_cost.created_at.isoformat(),
+        "updated_at": new_cost.updated_at.isoformat(),
+    }
+
+
+@router.get("/provider-costs", response_model=ProviderCostsResponse)
+async def list_provider_costs(
+    _: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all provider pricing rows (active and inactive)."""
+    result = await db.execute(
+        select(ProviderCost).order_by(ProviderCost.provider, ProviderCost.active.desc(), ProviderCost.created_at.desc())
+    )
+    costs = result.scalars().all()
+
+    return ProviderCostsResponse(
+        providers=[
+            {
+                "provider": cost.provider,
+                "input_cost_per_1m_tokens": cost.input_cost_per_1m_tokens,
+                "output_cost_per_1m_tokens": cost.output_cost_per_1m_tokens,
+                "active": cost.active,
+                "updated_at": cost.updated_at.isoformat(),
+            }
+            for cost in costs
+        ]
+    )

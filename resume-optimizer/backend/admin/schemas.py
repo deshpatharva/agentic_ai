@@ -77,3 +77,21 @@ class PromoCodeStats(BaseModel):
     redeemed_by_plan: dict  # {free: N, pro: N, enterprise: N}
     last_redeemed_at: Optional[str] = None
     first_redeemed_at: Optional[str] = None
+
+
+class ProviderCostCreate(BaseModel):
+    provider: str  # anthropic, google, groq
+    input_cost_per_1m_tokens: float
+    output_cost_per_1m_tokens: float
+
+
+class ProviderCostItem(BaseModel):
+    provider: str
+    input_cost_per_1m_tokens: float
+    output_cost_per_1m_tokens: float
+    active: bool
+    updated_at: str
+
+
+class ProviderCostsResponse(BaseModel):
+    providers: list[ProviderCostItem]
