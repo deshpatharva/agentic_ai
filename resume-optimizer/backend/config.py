@@ -78,6 +78,9 @@ RATE_LIMIT_AUTH = os.environ.get("RATE_LIMIT_AUTH", "5/minute")
 # ── Observability ─────────────────────────────────────────────────────────────
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
+# ── Free trial ────────────────────────────────────────────────────────────────
+TRIAL_DAYS = int(os.environ.get("TRIAL_DAYS", "7"))
+
 # ── Pipeline recovery ─────────────────────────────────────────────────────────
 STUCK_JOB_TIMEOUT_MINUTES = int(os.environ.get("STUCK_JOB_TIMEOUT_MINUTES", "30"))
 

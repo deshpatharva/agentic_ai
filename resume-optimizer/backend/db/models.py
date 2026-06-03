@@ -44,6 +44,7 @@ class User(Base):
     is_active              = Column(Boolean, default=True, nullable=False)
     is_admin               = Column(Boolean, default=False, nullable=False)
     created_at             = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    trial_expires_at       = Column(DateTime, nullable=True)
 
     resumes = relationship("Resume", back_populates="user", cascade="all, delete-orphan")
 
