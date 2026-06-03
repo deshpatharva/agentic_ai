@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import sys
+import tempfile
 import uuid
 from contextlib import asynccontextmanager
 from datetime import date as date_type
@@ -86,10 +87,6 @@ app.include_router(dashboard_router)
 
 # ── Directory setup ──────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent
-UPLOADS_DIR = BASE_DIR / "uploads"
-OUTPUTS_DIR = BASE_DIR / "outputs"
-UPLOADS_DIR.mkdir(exist_ok=True)
-OUTPUTS_DIR.mkdir(exist_ok=True)
 
 # ── Request/response models ──────────────────────────────────────────────────
 
@@ -131,7 +128,6 @@ async def upload_resume(
         raise HTTPException(status_code=400, detail="Only .pdf and .docx files are supported.")
 
     job_id = str(uuid.uuid4())
-    save_path = UPLOADS_DIR / f"{job_id}{ext}"
 
     contents = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(contents) > MAX_UPLOAD_BYTES:
@@ -139,18 +135,23 @@ async def upload_resume(
             status_code=413,
             detail=f"File too large. Maximum upload size is {MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
         )
-    await asyncio.to_thread(save_path.write_bytes, contents)
+
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
+        f.write(contents)
+        tmp_path = f.name
 
     try:
         parser = parse_pdf if ext == ".pdf" else parse_docx
         parsed = await asyncio.wait_for(
-            asyncio.to_thread(parser, str(save_path)),
+            asyncio.to_thread(parser, tmp_path),
             timeout=30,
         )
     except asyncio.TimeoutError:
         raise HTTPException(status_code=408, detail="Resume parsing timed out. Try a simpler PDF or convert to .docx.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to parse file: {str(e)}")
+    finally:
+        os.unlink(tmp_path)
 
     job = PipelineJob(
         id=uuid.UUID(job_id),
