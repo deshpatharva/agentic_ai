@@ -13,7 +13,6 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir \
         asyncpg \
         sqlalchemy[asyncio] \
-        alembic \
         python-jose[cryptography] \
         bcrypt \
         passlib
