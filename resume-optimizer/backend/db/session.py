@@ -1,13 +1,14 @@
 """
-Async SQLAlchemy session factory and database initialization.
+Async SQLAlchemy session factory and database initialization via Alembic.
 """
+import asyncio
+from pathlib import Path
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from config import DATABASE_URL
-from db.models import Base, PlanLimit
-
+from db.models import PlanLimit
 
 engine = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
 AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -25,20 +26,51 @@ async def get_db():
             await session.close()
 
 
-async def init_db():
-    """Create all tables and seed plan_limits on first run."""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+def _run_migrations() -> None:
+    """
+    Run pending Alembic migrations synchronously.
+    Called via asyncio.to_thread from init_db() so it does not block the event loop.
+    Any exception propagates and prevents the app from starting.
+    """
+    from alembic import command
+    from alembic.config import Config
+
+    backend_dir = Path(__file__).parent.parent
+    cfg = Config(str(backend_dir / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
+    command.upgrade(cfg, "head")
+
+
+async def init_db() -> None:
+    """Run pending migrations then seed plan_limits on first run."""
+    await asyncio.to_thread(_run_migrations)
 
     async with AsyncSessionLocal() as session:
-        # Seed plan_limits only if empty
         result = await session.execute(text("SELECT COUNT(*) FROM plan_limits"))
         count = result.scalar()
         if count == 0:
             plans = [
-                PlanLimit(plan="free",       daily_uploads=2,   max_stored_resumes=1,   job_scraping_enabled=False, price_cents=0),
-                PlanLimit(plan="pro",        daily_uploads=20,  max_stored_resumes=10,  job_scraping_enabled=True,  price_cents=900),
-                PlanLimit(plan="enterprise", daily_uploads=999, max_stored_resumes=999, job_scraping_enabled=True,  price_cents=2900),
+                PlanLimit(
+                    plan="free",
+                    daily_uploads=2,
+                    max_stored_resumes=1,
+                    job_scraping_enabled=False,
+                    price_cents=0,
+                ),
+                PlanLimit(
+                    plan="pro",
+                    daily_uploads=20,
+                    max_stored_resumes=10,
+                    job_scraping_enabled=True,
+                    price_cents=900,
+                ),
+                PlanLimit(
+                    plan="enterprise",
+                    daily_uploads=999,
+                    max_stored_resumes=999,
+                    job_scraping_enabled=True,
+                    price_cents=2900,
+                ),
             ]
             session.add_all(plans)
             await session.commit()
