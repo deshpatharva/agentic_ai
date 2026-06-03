@@ -20,7 +20,12 @@ def _clean_json(text: str) -> str:
     return text.strip()
 
 
-async def humanize_resume(resume_text: str) -> str:
+async def humanize_resume(resume_text: str) -> dict:
+    """
+    Humanize resume text by polishing language, removing buzzwords, and improving readability.
+    Returns a dict with "text" (the humanized resume) and "tokens" (accumulated token counts).
+    """
+    accumulated = {"input_tokens": 0, "output_tokens": 0}
 
     # ── Step 1: Humanize ─────────────────────────────────────────────────────
     response = await complete(f"""You are an expert resume editor. Polish this resume so it:
@@ -39,6 +44,8 @@ Resume:
 
 Return ONLY the polished resume text.""", MODEL_HUMANIZER)
     humanized_v1 = response["text"]
+    accumulated["input_tokens"] += response.get("input_tokens", 0)
+    accumulated["output_tokens"] += response.get("output_tokens", 0)
 
     # ── Step 2: Critic ───────────────────────────────────────────────────────
     response = await complete(f"""Review this resume and return ONLY a JSON object with issues.
@@ -50,11 +57,16 @@ Resume:
 
 JSON:""", MODEL_CRITIC, max_tokens=1024)
     raw_critic = response["text"]
+    accumulated["input_tokens"] += response.get("input_tokens", 0)
+    accumulated["output_tokens"] += response.get("output_tokens", 0)
 
     try:
         feedback = json.loads(_clean_json(raw_critic))
     except (json.JSONDecodeError, ValueError):
-        return humanized_v1
+        return {
+            "text": humanized_v1,
+            "tokens": accumulated,
+        }
 
     # ── Step 3: Incorporate feedback ─────────────────────────────────────────
     feedback_lines = []
@@ -66,7 +78,10 @@ JSON:""", MODEL_CRITIC, max_tokens=1024)
         feedback_lines.append(f"- Apply improvements: {'; '.join(feedback['improvements'][:3])}")
 
     if not feedback_lines:
-        return humanized_v1
+        return {
+            "text": humanized_v1,
+            "tokens": accumulated,
+        }
 
     response = await complete(f"""Apply the following critic feedback to this resume.
 
@@ -82,4 +97,11 @@ Resume:
 - Do NOT change names, dates, companies, or metrics
 - Keep plain-text structure
 Return ONLY the final resume text.""", MODEL_HUMANIZER)
-    return response["text"]
+    final_text = response["text"]
+    accumulated["input_tokens"] += response.get("input_tokens", 0)
+    accumulated["output_tokens"] += response.get("output_tokens", 0)
+
+    return {
+        "text": final_text,
+        "tokens": accumulated,
+    }

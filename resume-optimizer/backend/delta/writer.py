@@ -71,6 +71,8 @@ _USAGE_SCHEMA = pa.schema([
     pa.field("date",           pa.string(),    nullable=False),   # ISO date YYYY-MM-DD
     pa.field("pipeline_runs",  pa.int32(),     nullable=False),
     pa.field("uploads",        pa.int32(),     nullable=False),
+    pa.field("input_tokens",   pa.int64(),     nullable=False),
+    pa.field("output_tokens",  pa.int64(),     nullable=False),
     pa.field("tokens_used",    pa.int64(),     nullable=False),
     pa.field("written_at",     pa.string(),    nullable=False),   # ISO datetime
 ])
@@ -98,7 +100,7 @@ def write_daily_usage(record: dict) -> None:
     Append a usage record to the daily_usage Delta table.
 
     Expected keys: user_id, date (str YYYY-MM-DD or date obj),
-                   pipeline_runs, uploads, tokens_used
+                   pipeline_runs, uploads, input_tokens, output_tokens, tokens_used
     """
     now = datetime.now(timezone.utc).isoformat()
     row = {
@@ -106,6 +108,8 @@ def write_daily_usage(record: dict) -> None:
         "date":          str(record.get("date", date.today().isoformat())),
         "pipeline_runs": int(record.get("pipeline_runs", 0)),
         "uploads":       int(record.get("uploads", 0)),
+        "input_tokens":  int(record.get("input_tokens", 0)),
+        "output_tokens": int(record.get("output_tokens", 0)),
         "tokens_used":   int(record.get("tokens_used", 0)),
         "written_at":    now,
     }
@@ -166,11 +170,11 @@ def write_job_match(record: dict) -> None:
 def read_usage_last_n_days(user_id: str, days: int = 30) -> pd.DataFrame:
     """
     Return aggregated daily usage totals for user_id over the last N days.
-    Columns: date, pipeline_runs, uploads, tokens_used
+    Columns: date, pipeline_runs, uploads, input_tokens, output_tokens, tokens_used
     """
     path = _usage_path()
     if not _table_exists(path):
-        return pd.DataFrame(columns=["date", "pipeline_runs", "uploads", "tokens_used"])
+        return pd.DataFrame(columns=["date", "pipeline_runs", "uploads", "input_tokens", "output_tokens", "tokens_used"])
 
     cutoff = (date.today() - timedelta(days=days)).isoformat()
     dt = DeltaTable.from_uri(path, storage_options=_storage_options())
@@ -180,12 +184,14 @@ def read_usage_last_n_days(user_id: str, days: int = 30) -> pd.DataFrame:
 
     df = df[(df["user_id"] == user_id) & (df["date"] >= cutoff)]
     if df.empty:
-        return pd.DataFrame(columns=["date", "pipeline_runs", "uploads", "tokens_used"])
+        return pd.DataFrame(columns=["date", "pipeline_runs", "uploads", "input_tokens", "output_tokens", "tokens_used"])
 
     agg = (
         df.groupby("date")
         .agg(pipeline_runs=("pipeline_runs", "sum"),
              uploads=("uploads", "sum"),
+             input_tokens=("input_tokens", "sum"),
+             output_tokens=("output_tokens", "sum"),
              tokens_used=("tokens_used", "sum"))
         .reset_index()
         .sort_values("date")

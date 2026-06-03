@@ -31,9 +31,15 @@ def _clean_json(text: str) -> str:
 
 
 async def analyze_jd(jd_text: str) -> dict:
+    """
+    Analyze job description and extract keywords, requirements, and skills.
+    Returns a dict with "text" (the analysis result) and "tokens" (accumulated token counts).
+    """
     cached = result_cache.get("jd_analysis", jd_text)
     if cached is not None:
         return cached
+
+    accumulated = {"input_tokens": 0, "output_tokens": 0}
 
     # ── spaCy + TF-IDF extraction ────────────────────────────────────────────
     doc = nlp(jd_text)
@@ -69,6 +75,8 @@ JSON:"""
 
     response = await complete(prompt, MODEL_JD_ANALYZER)
     raw = response["text"]
+    accumulated["input_tokens"] += response.get("input_tokens", 0)
+    accumulated["output_tokens"] += response.get("output_tokens", 0)
 
     try:
         llm_data = json.loads(_clean_json(raw))
@@ -84,5 +92,12 @@ JSON:"""
         "requirements": llm_data.get("requirements", []),
         "skills": llm_data.get("skills", []),
     }
+
+    # Cache the result without tokens for direct access
     result_cache.set("jd_analysis", jd_text, value=result)
-    return result
+
+    # Return with tokens wrapped
+    return {
+        "text": result,
+        "tokens": accumulated,
+    }

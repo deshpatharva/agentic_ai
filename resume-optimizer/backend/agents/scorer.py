@@ -55,9 +55,15 @@ async def score_combined(
     jd_text: str,
     jd_keywords: list = None,
 ) -> dict:
+    """
+    Score resume on 4 dimensions: ATS, Impact, Skills Gap, Readability.
+    Returns a dict with "text" (the scores) and "tokens" (accumulated token counts).
+    """
     cached = result_cache.get("combined", resume_text, jd_text)
     if cached is not None:
         return cached
+
+    accumulated = {"input_tokens": 0, "output_tokens": 0}
 
     # Build keyword list for ATS scoring context
     kw_list = _extract_jd_keywords(jd_text, jd_keywords or [])
@@ -93,6 +99,8 @@ JSON:"""
 
     response = await complete(prompt, MODEL_SCORER, max_tokens=1024)
     raw = response["text"]
+    accumulated["input_tokens"] += response.get("input_tokens", 0)
+    accumulated["output_tokens"] += response.get("output_tokens", 0)
 
     try:
         data = json.loads(_clean_json(raw))
@@ -116,4 +124,7 @@ JSON:"""
         }
 
     result_cache.set("combined", resume_text, jd_text, value=data)
-    return data
+    return {
+        "text": data,
+        "tokens": accumulated,
+    }

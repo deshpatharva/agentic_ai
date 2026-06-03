@@ -14,7 +14,12 @@ async def rewrite_resume(
     jd_keywords: list,
     consolidated_feedback: dict = None,
     claims_ledger: Optional[ClaimsLedger] = None,
-) -> str:
+) -> dict:
+    """
+    Rewrite resume to align with JD keywords and feedback.
+    Returns a dict with "text" (the rewritten resume) and "tokens" (accumulated token counts).
+    """
+    accumulated = {"input_tokens": 0, "output_tokens": 0}
     keywords_str = ", ".join(jd_keywords[:40]) if jd_keywords else "None provided"
 
     # Inject the claims ledger when available so the model knows which
@@ -73,4 +78,11 @@ Current Resume:
 
     model = MODEL_REWRITER_FAST if consolidated_feedback else MODEL_REWRITER
     response = await complete(prompt, model)
-    return response["text"]
+    final_text = response["text"]
+    accumulated["input_tokens"] += response.get("input_tokens", 0)
+    accumulated["output_tokens"] += response.get("output_tokens", 0)
+
+    return {
+        "text": final_text,
+        "tokens": accumulated,
+    }

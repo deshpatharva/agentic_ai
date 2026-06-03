@@ -36,6 +36,9 @@ class AdminStats(BaseModel):
     pipeline_runs_today: int
     total_resumes: int
     stuck_jobs: int
+    total_cost_cents_today: int = 0
+    total_cost_cents_month: int = 0
+    avg_cost_per_run: float = 0.0
 
 
 class PromoCodeDetail(BaseModel):

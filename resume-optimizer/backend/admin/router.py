@@ -10,8 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from admin.dependencies import get_admin_user
 from admin.schemas import AdminStats, BootstrapRequest, UserUpdate
 from config import STUCK_JOB_TIMEOUT_MINUTES
-from db.models import JobStatus, PipelineJob, PlanType, Resume, User
+from db.models import JobStatus, PipelineJob, PlanType, Resume, User, ProviderCost
 from db.session import get_db
+from delta.writer import read_usage_last_n_days
+import asyncio
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -97,32 +99,94 @@ async def get_stats(
     _: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
+    from datetime import date
     today_start = datetime.now(timezone.utc).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
+    month_start = datetime.now(timezone.utc).replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0
+    )
     stuck_cutoff = datetime.now(timezone.utc) - timedelta(minutes=STUCK_JOB_TIMEOUT_MINUTES)
+
+    total_users = (await db.execute(select(func.count(User.id)))).scalar() or 0
+    active_users = (
+        await db.execute(select(func.count(User.id)).where(User.is_active == True))
+    ).scalar() or 0
+    total_resumes = (await db.execute(select(func.count(Resume.id)))).scalar() or 0
+    pipeline_runs_today = (
+        await db.execute(
+            select(func.count(PipelineJob.id)).where(
+                PipelineJob.created_at >= today_start,
+                PipelineJob.status == JobStatus.done,
+            )
+        )
+    ).scalar() or 0
+    stuck_jobs = (
+        await db.execute(
+            select(func.count(PipelineJob.id)).where(
+                PipelineJob.status == JobStatus.running,
+                PipelineJob.updated_at < stuck_cutoff,
+            )
+        )
+    ).scalar() or 0
+
+    # Calculate costs from Delta usage data
+    total_cost_cents_today = 0
+    total_cost_cents_month = 0
+    avg_cost_per_run = 0.0
+
+    try:
+        # Fetch active provider costs
+        cost_result = await db.execute(
+            select(ProviderCost).where(
+                (ProviderCost.provider == "anthropic") & (ProviderCost.active == True)
+            )
+        )
+        cost_row = cost_result.scalar_one_or_none()
+
+        if cost_row:
+            # Read all usage data from Delta for today and this month
+            df_today = await asyncio.to_thread(read_usage_last_n_days, "", 1)
+            df_month = await asyncio.to_thread(read_usage_last_n_days, "", 30)
+
+            today_str = date.today().isoformat()
+            month_start_str = month_start.date().isoformat()
+
+            # Calculate today's cost
+            df_today_filtered = df_today[df_today["date"] == today_str] if not df_today.empty else None
+            if df_today_filtered is not None and not df_today_filtered.empty:
+                today_input = int(df_today_filtered["input_tokens"].sum())
+                today_output = int(df_today_filtered["output_tokens"].sum())
+                input_cost = (today_input / 1_000_000) * cost_row.input_cost_per_1m_tokens
+                output_cost = (today_output / 1_000_000) * cost_row.output_cost_per_1m_tokens
+                total_cost_cents_today = int((input_cost + output_cost) * 100)
+
+            # Calculate month's cost
+            if not df_month.empty:
+                df_month_filtered = df_month[df_month["date"] >= month_start_str]
+                if not df_month_filtered.empty:
+                    month_input = int(df_month_filtered["input_tokens"].sum())
+                    month_output = int(df_month_filtered["output_tokens"].sum())
+                    input_cost = (month_input / 1_000_000) * cost_row.input_cost_per_1m_tokens
+                    output_cost = (month_output / 1_000_000) * cost_row.output_cost_per_1m_tokens
+                    total_cost_cents_month = int((input_cost + output_cost) * 100)
+
+                    # Calculate average cost per run
+                    if pipeline_runs_today > 0:
+                        avg_cost_per_run = (total_cost_cents_month / 100) / pipeline_runs_today if pipeline_runs_today > 0 else 0
+    except Exception:
+        # If Delta read fails, just return 0 costs
+        pass
+
     return AdminStats(
-        total_users=(await db.execute(select(func.count(User.id)))).scalar() or 0,
-        active_users=(
-            await db.execute(select(func.count(User.id)).where(User.is_active == True))
-        ).scalar() or 0,
-        total_resumes=(await db.execute(select(func.count(Resume.id)))).scalar() or 0,
-        pipeline_runs_today=(
-            await db.execute(
-                select(func.count(PipelineJob.id)).where(
-                    PipelineJob.created_at >= today_start,
-                    PipelineJob.status == JobStatus.done,
-                )
-            )
-        ).scalar() or 0,
-        stuck_jobs=(
-            await db.execute(
-                select(func.count(PipelineJob.id)).where(
-                    PipelineJob.status == JobStatus.running,
-                    PipelineJob.updated_at < stuck_cutoff,
-                )
-            )
-        ).scalar() or 0,
+        total_users=total_users,
+        active_users=active_users,
+        total_resumes=total_resumes,
+        pipeline_runs_today=pipeline_runs_today,
+        stuck_jobs=stuck_jobs,
+        total_cost_cents_today=total_cost_cents_today,
+        total_cost_cents_month=total_cost_cents_month,
+        avg_cost_per_run=round(avg_cost_per_run, 2),
     )
 
 

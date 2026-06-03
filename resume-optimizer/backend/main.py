@@ -51,7 +51,7 @@ import storage as _storage
 from delta.writer import write_daily_usage, write_job_match
 from scraper.scraper import scrape_jobs
 from db.session import get_db, init_db, AsyncSessionLocal
-from db.models import JobStatus, PipelineEvent, PipelineJob, Resume, User
+from db.models import JobStatus, PipelineEvent, PipelineJob, Resume, User, ProviderCost
 from auth.router import router as auth_router, user_router
 from auth.dependencies import decode_token, get_current_user, check_plan_limit
 from dashboard.router import router as dashboard_router
@@ -305,7 +305,8 @@ async def analyze_jd_endpoint(
         raise HTTPException(status_code=400, detail="jd_text cannot be empty.")
 
     try:
-        result = await analyze_jd(request.jd_text[:MAX_JD_CHARS])
+        result_dict = await analyze_jd(request.jd_text[:MAX_JD_CHARS])
+        result = result_dict.get("text", result_dict)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"JD analysis failed: {str(e)}")
 
@@ -566,7 +567,9 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
 
             # ── Step 1: Analyze JD ──────────────────────────────────────────
             await emit({"type": "stage", "message": "Analyzing Job Description...", "stage": "jd_analysis"})
-            jd_result = await analyze_jd(jd_text)
+            jd_result_dict = await analyze_jd(jd_text)
+            jd_result = jd_result_dict.get("text", jd_result_dict)
+            jd_tokens = jd_result_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
             jd_keywords: list[str] = jd_result.get("keywords", [])
             await emit({
                 "type": "stage",
@@ -580,9 +583,17 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             iteration = 0
             prev_average = 0
 
+            # Accumulate tokens from all LLM calls
+            total_input_tokens = jd_tokens["input_tokens"]
+            total_output_tokens = jd_tokens["output_tokens"]
+
             # ── Initial score ───────────────────────────────────────────────
             await emit({"type": "stage", "message": "Scoring original resume...", "stage": "score"})
-            initial_combined = await score_combined(current_resume, jd_text, jd_keywords)
+            initial_combined_dict = await score_combined(current_resume, jd_text, jd_keywords)
+            initial_combined = initial_combined_dict.get("text", initial_combined_dict)
+            score_tokens = initial_combined_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
+            total_input_tokens += score_tokens["input_tokens"]
+            total_output_tokens += score_tokens["output_tokens"]
             initial_avg = round(sum(initial_combined[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")) / 4)
             await emit({
                 "type": "average",
@@ -623,12 +634,16 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
 
                 # ── Step 2: Rewrite ─────────────────────────────────────────
                 await emit({"type": "stage", "message": "Rewriting resume to align with JD...", "stage": "rewrite"})
-                current_resume = await rewrite_resume(
+                rewrite_dict = await rewrite_resume(
                     resume_text=current_resume,
                     jd_keywords=jd_keywords,
                     consolidated_feedback=consolidated_feedback,
                     claims_ledger=ledger,
                 )
+                current_resume = rewrite_dict.get("text", rewrite_dict)
+                rewrite_tokens = rewrite_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
+                total_input_tokens += rewrite_tokens["input_tokens"]
+                total_output_tokens += rewrite_tokens["output_tokens"]
 
                 # ── Fabrication guard — verify the rewrite ──────────────────
                 guard = await asyncio.to_thread(fabrication_guard, current_resume, ledger, resume_text)
@@ -646,12 +661,20 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                 # ── Step 3: Humanize ────────────────────────────────────────
                 if not is_fast_iter:
                     await emit({"type": "stage", "message": "Humanizing resume language...", "stage": "humanize"})
-                    current_resume = await humanize_resume(current_resume)
+                    humanize_dict = await humanize_resume(current_resume)
+                    current_resume = humanize_dict.get("text", humanize_dict)
+                    humanize_tokens = humanize_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
+                    total_input_tokens += humanize_tokens["input_tokens"]
+                    total_output_tokens += humanize_tokens["output_tokens"]
                     await emit({"type": "stage", "message": "Humanization complete.", "stage": "humanize"})
 
                 # ── Step 4: Score ───────────────────────────────────────────
                 await emit({"type": "stage", "message": "Running all 4 scorers...", "stage": "score"})
-                combined = await score_combined(current_resume, jd_text, jd_keywords)
+                combined_dict = await score_combined(current_resume, jd_text, jd_keywords)
+                combined = combined_dict.get("text", combined_dict)
+                score_tokens = combined_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
+                total_input_tokens += score_tokens["input_tokens"]
+                total_output_tokens += score_tokens["output_tokens"]
 
                 ats_result         = combined["ats"]
                 impact_result      = combined["impact"]
@@ -766,6 +789,25 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                 iteration=iteration,
             )
 
+            # ── Calculate cost from token usage ──────────────────────────────
+            cost_cents = 0
+            try:
+                # Fetch active provider costs (Anthropic is default)
+                cost_result = await db.execute(
+                    select(ProviderCost).where(
+                        (ProviderCost.provider == "anthropic") & (ProviderCost.active == True)
+                    )
+                )
+                cost_row = cost_result.scalar_one_or_none()
+                if cost_row:
+                    # Calculate cost in cents
+                    # cost_row.input_cost_per_1m_tokens and output_cost_per_1m_tokens are in dollars per 1M tokens
+                    input_cost_dollars = (total_input_tokens / 1_000_000) * cost_row.input_cost_per_1m_tokens
+                    output_cost_dollars = (total_output_tokens / 1_000_000) * cost_row.output_cost_per_1m_tokens
+                    cost_cents = int((input_cost_dollars + output_cost_dollars) * 100)
+            except Exception:
+                pass
+
             # ── Write Delta usage ───────────────────────────────────────────
             if user_id:
                 try:
@@ -774,7 +816,9 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                         "date":          date_type.today().isoformat(),
                         "pipeline_runs": 1,
                         "uploads":       1,
-                        "tokens_used":   0,
+                        "input_tokens":  total_input_tokens,
+                        "output_tokens": total_output_tokens,
+                        "tokens_used":   total_input_tokens + total_output_tokens,
                     })
                 except Exception:
                     pass
@@ -789,6 +833,11 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                 "download_url": download_url,
                 "final_score": scores.get("average", 0),
                 "iterations": iteration,
+                "cost_cents": cost_cents,
+                "tokens": {
+                    "input": total_input_tokens,
+                    "output": total_output_tokens,
+                },
             })
 
         except Exception as e:
