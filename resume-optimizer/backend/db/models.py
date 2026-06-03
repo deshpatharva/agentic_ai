@@ -9,9 +9,8 @@ from enum import Enum as PyEnum
 
 from sqlalchemy import (
     Boolean, Column, DateTime, Enum, Float, ForeignKey,
-    Integer, JSON, String, Text,
+    Integer, JSON, String, Text, Uuid,
 )
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
 
 
@@ -35,7 +34,7 @@ class JobStatus(str, PyEnum):
 class User(Base):
     __tablename__ = "users"
 
-    id                     = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id                     = Column(Uuid(), primary_key=True, default=uuid.uuid4)
     email                  = Column(String(255), unique=True, nullable=False, index=True)
     password_hash          = Column(String(255), nullable=False)
     full_name              = Column(String(255), nullable=True)
@@ -61,8 +60,8 @@ class PlanLimit(Base):
 class Resume(Base):
     __tablename__ = "resumes"
 
-    id                = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id           = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    id                = Column(Uuid(), primary_key=True, default=uuid.uuid4)
+    user_id           = Column(Uuid(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     original_filename = Column(String(500), nullable=False)
     file_path         = Column(String(1000), nullable=True)
     jd_text           = Column(Text, nullable=True)
@@ -79,8 +78,8 @@ class PipelineJob(Base):
     """Persistent job state — replaces the in-memory jobs: dict."""
     __tablename__ = "pipeline_jobs"
 
-    id                = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id           = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    id                = Column(Uuid(), primary_key=True, default=uuid.uuid4)
+    user_id           = Column(Uuid(), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     status            = Column(Enum(JobStatus), default=JobStatus.pending, nullable=False, index=True)
     original_filename = Column(String(500), nullable=False, default="resume")
     resume_text       = Column(Text, nullable=False)
@@ -100,7 +99,7 @@ class PipelineEvent(Base):
     __tablename__ = "pipeline_events"
 
     id         = Column(Integer, primary_key=True, autoincrement=True)  # sequential ordering
-    job_id     = Column(UUID(as_uuid=True), ForeignKey("pipeline_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    job_id     = Column(Uuid(), ForeignKey("pipeline_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
     event_json = Column(JSON, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
