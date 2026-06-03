@@ -68,5 +68,9 @@ if not JWT_SECRET or JWT_SECRET == _JWT_SECRET_DEFAULT:
 JWT_ALGORITHM   = os.environ.get("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_DAYS = int(os.environ.get("JWT_EXPIRE_DAYS", "7"))
 
+# ── Azure Storage ─────────────────────────────────────────────────────────────
+AZURE_STORAGE_ACCOUNT_NAME = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME", "")
+OUTPUTS_CONTAINER          = os.environ.get("OUTPUTS_CONTAINER", "outputs")
+
 # ── Stripe (optional) ─────────────────────────────────────────────────────────
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
