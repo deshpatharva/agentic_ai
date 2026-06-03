@@ -46,6 +46,7 @@ from db.models import JobStatus, PipelineEvent, PipelineJob, Resume, User
 from auth.router import router as auth_router
 from auth.dependencies import decode_token, get_current_user, check_plan_limit
 from dashboard.router import router as dashboard_router
+from admin.router import router as admin_router
 
 
 # ── App setup ────────────────────────────────────────────────────────────────
@@ -85,6 +86,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(dashboard_router)
+app.include_router(admin_router)
 
 # ── Directory setup ──────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent
