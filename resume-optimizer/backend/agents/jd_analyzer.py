@@ -67,7 +67,8 @@ Job Description:
 
 JSON:"""
 
-    raw = await complete(prompt, MODEL_JD_ANALYZER)
+    response = await complete(prompt, MODEL_JD_ANALYZER)
+    raw = response["text"]
 
     try:
         llm_data = json.loads(_clean_json(raw))

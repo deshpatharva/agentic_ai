@@ -72,4 +72,5 @@ Current Resume:
     prompt += "\nReturn ONLY the rewritten resume text. No commentary, no explanations, no markdown — just the plain resume text."
 
     model = MODEL_REWRITER_FAST if consolidated_feedback else MODEL_REWRITER
-    return await complete(prompt, model)
+    response = await complete(prompt, model)
+    return response["text"]

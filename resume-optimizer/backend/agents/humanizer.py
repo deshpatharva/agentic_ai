@@ -23,7 +23,7 @@ def _clean_json(text: str) -> str:
 async def humanize_resume(resume_text: str) -> str:
 
     # ── Step 1: Humanize ─────────────────────────────────────────────────────
-    humanized_v1 = await complete(f"""You are an expert resume editor. Polish this resume so it:
+    response = await complete(f"""You are an expert resume editor. Polish this resume so it:
 1. Sounds natural and conversational — eliminate robotic or AI-sounding phrases
 2. Removes hollow buzzwords (e.g., "dynamic", "synergize", "leverage" used gratuitously)
 3. Uses varied sentence structures and strong action verbs
@@ -38,9 +38,10 @@ Resume:
 \"\"\"
 
 Return ONLY the polished resume text.""", MODEL_HUMANIZER)
+    humanized_v1 = response["text"]
 
     # ── Step 2: Critic ───────────────────────────────────────────────────────
-    raw_critic = await complete(f"""Review this resume and return ONLY a JSON object with issues.
+    response = await complete(f"""Review this resume and return ONLY a JSON object with issues.
 No explanation, no markdown. Max 3 items per list.
 Example: {{"robotic_phrases": ["responsible for"], "weak_bullets": ["helped team"], "improvements": ["add metrics"]}}
 
@@ -48,6 +49,7 @@ Resume:
 {humanized_v1}
 
 JSON:""", MODEL_CRITIC, max_tokens=1024)
+    raw_critic = response["text"]
 
     try:
         feedback = json.loads(_clean_json(raw_critic))
@@ -66,7 +68,7 @@ JSON:""", MODEL_CRITIC, max_tokens=1024)
     if not feedback_lines:
         return humanized_v1
 
-    return await complete(f"""Apply the following critic feedback to this resume.
+    response = await complete(f"""Apply the following critic feedback to this resume.
 
 Feedback:
 {chr(10).join(feedback_lines)}
@@ -80,3 +82,4 @@ Resume:
 - Do NOT change names, dates, companies, or metrics
 - Keep plain-text structure
 Return ONLY the final resume text.""", MODEL_HUMANIZER)
+    return response["text"]

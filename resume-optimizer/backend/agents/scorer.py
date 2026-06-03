@@ -91,7 +91,8 @@ Scoring criteria:
 
 JSON:"""
 
-    raw = await complete(prompt, MODEL_SCORER, max_tokens=1024)
+    response = await complete(prompt, MODEL_SCORER, max_tokens=1024)
+    raw = response["text"]
 
     try:
         data = json.loads(_clean_json(raw))
