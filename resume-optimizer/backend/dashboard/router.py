@@ -199,3 +199,72 @@ async def job_matches(
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read job matches: {str(e)}")
+
+
+@router.get("/match-analytics")
+async def match_analytics(
+    user: User = Depends(get_current_user),
+    days: int = Query(30, ge=1, le=90),
+):
+    """
+    Return job match analytics grouped by date.
+
+    Each day includes:
+    - match_count: number of job matches that day
+    - avg_similarity_score: average similarity score (0.0-1.0)
+    - source_breakdown: dict of match counts by source
+
+    Results sorted by date descending (most recent first).
+    """
+    try:
+        user_id = str(user.id)
+        # Read all matches for the specified period
+        result = await asyncio.to_thread(read_job_matches, user_id, days, 1, 10000)
+        matches = result["results"]
+
+        if not matches:
+            return {"analytics": []}
+
+        # Group matches by date (from scraped_at)
+        from datetime import date
+        daily_groups = {}
+
+        for match in matches:
+            # Extract date from scraped_at ISO datetime string
+            scraped_at_str = match.get("scraped_at", "")
+            if scraped_at_str:
+                # Parse ISO datetime and extract date portion
+                date_str = scraped_at_str[:10]  # YYYY-MM-DD from ISO string
+            else:
+                continue
+
+            if date_str not in daily_groups:
+                daily_groups[date_str] = []
+            daily_groups[date_str].append(match)
+
+        # Aggregate metrics for each day
+        analytics = []
+        for date_str in sorted(daily_groups.keys(), reverse=True):
+            day_matches = daily_groups[date_str]
+            match_count = len(day_matches)
+
+            # Calculate average similarity score
+            scores = [m.get("similarity_score") for m in day_matches if m.get("similarity_score") is not None]
+            avg_score = sum(scores) / len(scores) if scores else 0.0
+
+            # Build source breakdown
+            source_breakdown = {}
+            for match in day_matches:
+                source = match.get("source", "unknown")
+                source_breakdown[source] = source_breakdown.get(source, 0) + 1
+
+            analytics.append({
+                "date": date_str,
+                "match_count": match_count,
+                "avg_similarity_score": round(avg_score, 2),
+                "source_breakdown": source_breakdown,
+            })
+
+        return {"analytics": analytics}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read match analytics: {str(e)}")
