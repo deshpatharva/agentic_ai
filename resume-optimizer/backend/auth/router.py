@@ -4,7 +4,7 @@ Auth endpoints — register, login, me.
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from jose import jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
@@ -12,6 +12,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import JWT_ALGORITHM, JWT_EXPIRE_DAYS, JWT_SECRET
+from config import RATE_LIMIT_AUTH
+from limiter import limiter
 from db.models import PlanLimit, User
 from db.session import get_db
 from auth.dependencies import get_current_user
@@ -74,18 +76,19 @@ def _user_dict(user: User, limits: PlanLimit = None) -> dict:
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.post("/register", response_model=TokenResponse)
-async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db)):
-    existing = await db.execute(select(User).where(User.email == request.email))
+@limiter.limit(RATE_LIMIT_AUTH)
+async def register(request: Request, body: RegisterRequest, db: AsyncSession = Depends(get_db)):
+    existing = await db.execute(select(User).where(User.email == body.email))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered.")
 
-    if len(request.password) < 8:
+    if len(body.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
 
     user = User(
-        email=request.email,
-        password_hash=pwd_context.hash(request.password),
-        full_name=request.full_name,
+        email=body.email,
+        password_hash=pwd_context.hash(body.password),
+        full_name=body.full_name,
     )
     db.add(user)
     await db.commit()
@@ -96,11 +99,12 @@ async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db))
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.email == request.email, User.is_active == True))
+@limiter.limit(RATE_LIMIT_AUTH)
+async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.email == body.email, User.is_active == True))
     user = result.scalar_one_or_none()
 
-    if not user or not pwd_context.verify(request.password, user.password_hash):
+    if not user or not pwd_context.verify(body.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password.",
