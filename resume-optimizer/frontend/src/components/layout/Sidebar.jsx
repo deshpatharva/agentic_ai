@@ -3,6 +3,7 @@ import { LayoutDashboard, FileText, Briefcase, BarChart2, Settings, LogOut, Zap 
 import { clsx } from 'clsx';
 import useAuthStore from '../../store/authStore';
 import Badge from '../ui/Badge';
+import TrialBanner from '../TrialBanner';
 
 const nav = [
   { to: '/dashboard',         icon: LayoutDashboard, label: 'Overview' },
@@ -49,6 +50,7 @@ export default function Sidebar() {
       </nav>
 
       <div className="px-4 py-4 border-t border-gray-800">
+        <TrialBanner />
         {user?.plan === 'free' && (
           <Link to="/dashboard/settings"
             className="flex items-center gap-2 w-full bg-primary/10 hover:bg-primary/20 text-primary px-3 py-2.5 rounded-lg text-sm font-medium mb-3 transition-colors">
