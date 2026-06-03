@@ -3,10 +3,13 @@ Unified LLM client — single entry point for all model calls.
 
 Agents call:
     from llm import complete
-    text = await complete(prompt, MODEL_REWRITER)
+    result = await complete(prompt, MODEL_REWRITER)
+    text = result["text"]
+    input_tokens = result["input_tokens"]
+    output_tokens = result["output_tokens"]
 
     # With Anthropic prompt caching on a large prefix block:
-    text = await complete(prompt, MODEL_HUMANIZER, cached_prefix="<large text>")
+    result = await complete(prompt, MODEL_HUMANIZER, cached_prefix="<large text>")
 
 To switch a model tomorrow, change config.py only.
 To add a new provider, add a branch here only.
@@ -53,7 +56,7 @@ async def complete(
     model: str,
     max_tokens: int = 8096,
     cached_prefix: str = None,
-) -> str:
+) -> dict:
     """
     Send a prompt to the appropriate provider.
 
@@ -64,6 +67,12 @@ async def complete(
         cached_prefix: (Anthropic only) Large text block to send with
                        cache_control=ephemeral before the main prompt.
                        Saves ~90% of input token cost on cache hits.
+
+    Returns:
+        dict with keys:
+            - text (str): Generated response text
+            - input_tokens (int): Input token count
+            - output_tokens (int): Output token count
     """
     model_lower = model.lower()
 
@@ -96,7 +105,11 @@ async def complete(
             messages=messages,
             extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
         )
-        return response.content[0].text.strip()
+        return {
+            "text": response.content[0].text.strip(),
+            "input_tokens": response.usage.input_tokens,
+            "output_tokens": response.usage.output_tokens,
+        }
 
     # ── Google Gemini ─────────────────────────────────────────────────────────
     if model_lower.startswith("gemini"):
@@ -106,7 +119,11 @@ async def complete(
             model=model,
             contents=prompt,
         )
-        return response.text.strip()
+        return {
+            "text": response.text.strip(),
+            "input_tokens": 0,  # Google SDK doesn't expose token counts
+            "output_tokens": 0,
+        }
 
     # ── Groq ──────────────────────────────────────────────────────────────────
     if any(model_lower.startswith(p) for p in ("llama", "mixtral", "gemma", "qwen", "deepseek")):
@@ -116,7 +133,11 @@ async def complete(
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}],
         )
-        return response.choices[0].message.content.strip()
+        return {
+            "text": response.choices[0].message.content.strip(),
+            "input_tokens": response.usage.prompt_tokens,  # Groq uses prompt_tokens
+            "output_tokens": response.usage.completion_tokens,  # Groq uses completion_tokens
+        }
 
     raise ValueError(
         f"Unknown model '{model}'. Add routing for this provider in llm.py."
