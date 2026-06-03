@@ -17,6 +17,7 @@ from pathlib import Path
 import pandas as pd
 import pyarrow as pa
 from deltalake import DeltaTable, write_deltalake
+from deltalake.exceptions import TableNotFoundError
 
 from config import AZURE_STORAGE_ACCOUNT_NAME, DELTA_STORAGE_PATH
 
@@ -58,7 +59,7 @@ def _table_exists(path: str) -> bool:
         try:
             DeltaTable.from_uri(path, storage_options=_storage_options())
             return True
-        except Exception:
+        except TableNotFoundError:
             return False
     return Path(path).exists() and (Path(path) / "_delta_log").exists()
 
