@@ -24,9 +24,10 @@ from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
-from db.models import Base
+from db.models import Base, Resume
 from db.session import get_db
 from main import app
+import storage as _s
 
 # ── In-memory test DB ────────────────────────────────────────────────────────
 
@@ -175,3 +176,77 @@ async def test_download_requires_auth(client):
     import uuid
     r = await client.get(f"/download/{uuid.uuid4()}")
     assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_download_returns_file_in_local_mode(client, monkeypatch, tmp_path):
+    """In local dev mode (no AZURE_STORAGE_ACCOUNT_NAME), download returns 200 FileResponse."""
+    import uuid as _uuid
+    r = await client.post("/auth/register", json={
+        "email": "dl_local@test.com", "password": "Test1234!"})
+    assert r.status_code == 200
+    token = r.json()["access_token"]
+    user_id = _uuid.UUID(r.json()["user"]["id"])
+
+    blob_name = "test-job-id.docx"
+    output_dir = tmp_path / "outputs"
+    output_dir.mkdir()
+    (output_dir / blob_name).write_bytes(b"PK fake docx")
+
+    monkeypatch.setattr(_s, "AZURE_STORAGE_ACCOUNT_NAME", "")
+    monkeypatch.setattr(_s, "_LOCAL_OUTPUTS_DIR", output_dir)
+
+    async with _TestSession() as session:
+        resume = Resume(
+            user_id=user_id,
+            original_filename="original.pdf",
+            file_path=blob_name,
+        )
+        session.add(resume)
+        await session.commit()
+        await session.refresh(resume)
+        resume_id = str(resume.id)
+
+    r2 = await client.get(
+        f"/download/{resume_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r2.status_code == 200
+    assert r2.content == b"PK fake docx"
+
+
+@pytest.mark.asyncio
+async def test_download_redirects_in_cloud_mode(client, monkeypatch, tmp_path):
+    """In cloud mode (AZURE_STORAGE_ACCOUNT_NAME set), download returns 302."""
+    import uuid as _uuid
+    r = await client.post("/auth/register", json={
+        "email": "dl_cloud@test.com", "password": "Test1234!"})
+    assert r.status_code == 200
+    token = r.json()["access_token"]
+    user_id = _uuid.UUID(r.json()["user"]["id"])
+
+    blob_name = "cloud-job-id.docx"
+
+    monkeypatch.setattr(
+        _s, "generate_download_url",
+        lambda bn, ttl_minutes=15: f"https://myaccount.blob.core.windows.net/outputs/{bn}?sas=xyz",
+    )
+
+    async with _TestSession() as session:
+        resume = Resume(
+            user_id=user_id,
+            original_filename="original.pdf",
+            file_path=blob_name,
+        )
+        session.add(resume)
+        await session.commit()
+        await session.refresh(resume)
+        resume_id = str(resume.id)
+
+    r2 = await client.get(
+        f"/download/{resume_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        follow_redirects=False,
+    )
+    assert r2.status_code == 302
+    assert "myaccount.blob.core.windows.net" in r2.headers["location"]

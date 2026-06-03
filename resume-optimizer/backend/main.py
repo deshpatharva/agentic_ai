@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy import delete, select, func, update
@@ -38,6 +38,7 @@ from agents.fabrication_guard import fabrication_guard
 from parsers.pdf_parser import parse_pdf
 from parsers.docx_parser import parse_docx
 from generators.docx_generator import generate_docx
+import storage as _storage
 from delta.writer import write_daily_usage, write_job_match
 from scraper.scraper import scrape_jobs
 from db.session import get_db, init_db, AsyncSessionLocal
@@ -311,11 +312,14 @@ async def download_resume(
     if not resume or str(resume.user_id) != str(current_user.id):
         raise HTTPException(status_code=404, detail="Resume not found.")
 
-    if not resume.file_path or not Path(resume.file_path).exists():
+    if not resume.file_path:
         raise HTTPException(status_code=404, detail="Output file not found.")
 
+    url = await asyncio.to_thread(_storage.generate_download_url, resume.file_path)
+    if url.startswith("http"):
+        return RedirectResponse(url, status_code=302)
     return FileResponse(
-        path=resume.file_path,
+        path=url,
         filename=f"optimized_{resume.original_filename or 'resume'}.docx",
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
@@ -583,8 +587,15 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
 
             # ── Step 5: Generate .docx ──────────────────────────────────────
             await emit({"type": "stage", "message": "Generating optimized .docx file...", "stage": "generate"})
-            output_path = str(OUTPUTS_DIR / f"{job_id}.docx")
-            generate_docx(current_resume, output_path)
+            blob_name = f"{job_id}.docx"
+            with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as _f:
+                tmp_docx = _f.name
+            try:
+                await asyncio.to_thread(generate_docx, current_resume, tmp_docx)
+                docx_bytes = await asyncio.to_thread(Path(tmp_docx).read_bytes)
+                await asyncio.to_thread(_storage.upload_output, docx_bytes, blob_name)
+            finally:
+                os.unlink(tmp_docx)
 
             # ── Persist Resume record ───────────────────────────────────────
             resume_record = None
@@ -599,7 +610,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                     resume_record = Resume(
                         user_id=user_id,
                         original_filename=job_row.original_filename,
-                        file_path=output_path,
+                        file_path=blob_name,
                         jd_text=jd_text,
                         final_score=float(scores.get("average", 0)),
                         scores_json=scores,
@@ -615,7 +626,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             # ── Update PipelineJob ──────────────────────────────────────────
             await update_job(
                 status=JobStatus.done,
-                download_path=output_path,
+                download_path=blob_name,
                 scores_json=scores,
                 iteration=iteration,
             )
