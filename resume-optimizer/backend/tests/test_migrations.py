@@ -20,7 +20,7 @@ from db.session import _run_migrations
 
 
 def test_migrations_create_all_tables(tmp_path, monkeypatch):
-    """Migrations must create all 7 expected tables."""
+    """Migrations must create all 8 expected tables."""
     db_file = tmp_path / "test_migrate.db"
     monkeypatch.setattr(cfg, "DATABASE_URL", f"sqlite+aiosqlite:///{db_file}")
 
@@ -35,7 +35,7 @@ def test_migrations_create_all_tables(tmp_path, monkeypatch):
     }
     conn.close()
 
-    assert tables == {"users", "resumes", "pipeline_jobs", "pipeline_events", "plan_limits", "promo_codes", "user_promo_redemptions"}
+    assert tables == {"users", "resumes", "pipeline_jobs", "pipeline_events", "plan_limits", "promo_codes", "user_promo_redemptions", "provider_costs"}
 
 
 def test_migrations_idempotent(tmp_path, monkeypatch):
@@ -59,4 +59,4 @@ def test_migrations_stamped_after_run(tmp_path, monkeypatch):
     conn.close()
 
     assert len(rows) == 1
-    assert rows[0][0] == "0004"
+    assert rows[0][0] == "0005"
