@@ -108,3 +108,14 @@ def delete_output(blob_name: str) -> None:
         blob.delete_blob(delete_snapshots="include")
     except ResourceNotFoundError:
         pass
+
+
+def ping_storage() -> str:
+    """Check storage connectivity. Returns 'ok', 'error', or 'skipped'."""
+    if not AZURE_STORAGE_ACCOUNT_NAME:
+        return "skipped"
+    try:
+        _blob_service_client().get_account_information()
+        return "ok"
+    except Exception:
+        return "error"

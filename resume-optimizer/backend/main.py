@@ -6,6 +6,7 @@ and optimized resume download.
 
 import asyncio
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -20,16 +21,16 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
-from sqlalchemy import delete, select, func, update
+from sqlalchemy import delete, select, func, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── Agent & utility imports ──────────────────────────────────────────────────
 from agents.jd_analyzer import analyze_jd
 from utils import cache as result_cache
-from config import MAX_ITERATIONS, SCORE_TARGET, BACKEND_URL, FRONTEND_URL, MODEL_SCORER, MAX_UPLOAD_BYTES, MAX_RESUME_CHARS, MAX_JD_CHARS
+from config import MAX_ITERATIONS, SCORE_TARGET, BACKEND_URL, FRONTEND_URL, MODEL_SCORER, MAX_UPLOAD_BYTES, MAX_RESUME_CHARS, MAX_JD_CHARS, STUCK_JOB_TIMEOUT_MINUTES
 from agents.rewriter import rewrite_resume
 from agents.humanizer import humanize_resume
 from agents.scorer import score_combined
@@ -64,12 +65,50 @@ async def _cleanup_events():
             await db.commit()
 
 
+_logger = logging.getLogger(__name__)
+
+
+async def _reap_once(db: AsyncSession) -> list[str]:
+    """Find stuck running jobs and mark them error. Returns list of reaped IDs."""
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=STUCK_JOB_TIMEOUT_MINUTES)
+    result = await db.execute(
+        select(PipelineJob).where(
+            PipelineJob.status == JobStatus.running,
+            PipelineJob.updated_at < cutoff,
+        )
+    )
+    stuck = result.scalars().all()
+    if not stuck:
+        return []
+    now = datetime.now(timezone.utc)
+    ids = []
+    for job in stuck:
+        job.status = JobStatus.error
+        job.error_message = "Job timed out — worker may have restarted."
+        job.updated_at = now
+        ids.append(str(job.id))
+    await db.commit()
+    return ids
+
+
+async def _reap_stuck_jobs():
+    """Periodically mark stuck running jobs as error (every 5 minutes)."""
+    while True:
+        await asyncio.sleep(300)
+        async with AsyncSessionLocal() as db:
+            ids = await _reap_once(db)
+            if ids:
+                _logger.warning("Reaped %d stuck jobs: %s", len(ids), ids)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
     cleanup_task = asyncio.create_task(_cleanup_events())
+    reap_task = asyncio.create_task(_reap_stuck_jobs())
     yield
     cleanup_task.cancel()
+    reap_task.cancel()
 
 
 app = FastAPI(title="Resume Optimizer API", version="1.0.0", lifespan=lifespan)
@@ -87,6 +126,49 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(dashboard_router)
 app.include_router(admin_router)
+
+
+@app.get("/health")
+async def health(db: AsyncSession = Depends(get_db)):
+    """Liveness probe — no auth required."""
+    db_ok = True
+    try:
+        await db.execute(text("SELECT 1"))
+    except Exception:
+        db_ok = False
+
+    storage_status = await asyncio.to_thread(_storage.ping_storage)
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=STUCK_JOB_TIMEOUT_MINUTES)
+    stuck_count = (
+        await db.execute(
+            select(func.count(PipelineJob.id)).where(
+                PipelineJob.status == JobStatus.running,
+                PipelineJob.updated_at < cutoff,
+            )
+        )
+    ).scalar() or 0
+
+    pending_count = (
+        await db.execute(
+            select(func.count(PipelineJob.id)).where(
+                PipelineJob.status == JobStatus.pending,
+            )
+        )
+    ).scalar() or 0
+
+    overall_status = "ok" if (db_ok and storage_status != "error") else "degraded"
+    return JSONResponse(
+        status_code=200 if db_ok else 503,
+        content={
+            "status": overall_status,
+            "db": "ok" if db_ok else "error",
+            "storage": storage_status,
+            "stuck_jobs": stuck_count,
+            "pending_jobs": pending_count,
+        },
+    )
+
 
 # ── Directory setup ──────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent

@@ -72,5 +72,8 @@ JWT_EXPIRE_DAYS = int(os.environ.get("JWT_EXPIRE_DAYS", "7"))
 AZURE_STORAGE_ACCOUNT_NAME = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME", "")
 OUTPUTS_CONTAINER          = os.environ.get("OUTPUTS_CONTAINER", "outputs")
 
+# ── Pipeline recovery ─────────────────────────────────────────────────────────
+STUCK_JOB_TIMEOUT_MINUTES = int(os.environ.get("STUCK_JOB_TIMEOUT_MINUTES", "30"))
+
 # ── Stripe (optional) ─────────────────────────────────────────────────────────
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
