@@ -341,15 +341,26 @@ async def generate_doc_endpoint(
         raise HTTPException(status_code=400, detail="resume_text cannot be empty.")
 
     doc_id = str(uuid.uuid4())
-    output_path = str(OUTPUTS_DIR / f"gen_{doc_id}.docx")
+    blob_name = f"gen_{doc_id}.docx"
 
+    tmp_docx = None
     try:
-        await asyncio.to_thread(generate_docx, request.resume_text, output_path)
+        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as _f:
+            tmp_docx = _f.name
+        await asyncio.to_thread(generate_docx, request.resume_text, tmp_docx)
+        docx_bytes = await asyncio.to_thread(Path(tmp_docx).read_bytes)
+        await asyncio.to_thread(_storage.upload_output, docx_bytes, blob_name)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate document: {str(e)}")
+    finally:
+        if tmp_docx is not None:
+            os.unlink(tmp_docx)
 
+    url = await asyncio.to_thread(_storage.generate_download_url, blob_name)
+    if url.startswith("http"):
+        return RedirectResponse(url, status_code=302)
     return FileResponse(
-        path=output_path,
+        path=url,
         filename="resume.docx",
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
