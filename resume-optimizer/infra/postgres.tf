@@ -11,6 +11,9 @@ resource "azurerm_postgresql_flexible_server" "main" {
   storage_mb             = var.postgres_storage_mb # 32 GB minimum
   zone                   = "1"
 
+  delegated_subnet_id = azurerm_subnet.postgres.id
+  private_dns_zone_id = azurerm_private_dns_zone.postgres.id
+
   # Backups: 7 days, geo-redundant off (reduces cost on student account)
   backup_retention_days        = 7
   geo_redundant_backup_enabled = false
@@ -27,40 +30,12 @@ resource "azurerm_postgresql_flexible_server_database" "app" {
   collation = "en_US.utf8"
 }
 
-# ── Firewall — allow Azure services (App Service) ─────────────────────────────
-# SECURITY NOTE — prod tightening required:
-#
-# The 0.0.0.0/0.0.0.0 rule is Azure's magic sentinel for "Allow access to Azure
-# services", but it opens the server to EVERY resource in Azure across ALL
-# tenants and subscriptions — not just our App Service.  Any other Azure customer
-# can attempt a connection from their IP if they know the hostname and credentials.
-#
-# For dev this is acceptable; for staging/prod replace with one of:
-#   a) VNet Integration: add the App Service to a VNet subnet, replace this rule
-#      with azurerm_postgresql_flexible_server_virtual_network_rule pointing at
-#      that subnet, and enable the service endpoint "Microsoft.Sql" on the subnet.
-#   b) Private Endpoint: provision azurerm_private_endpoint for the Postgres
-#      server inside a VNet subnet; disable public network access entirely
-#      (public_network_access_enabled = false on the server).
-#
-# Both options require an azurerm_virtual_network and at least one subnet, which
-# are not provisioned here.  Track as a prod prerequisite before going live.
-
-resource "azurerm_postgresql_flexible_server_firewall_rule" "allow_azure_services" {
-  name             = "AllowAzureServices"
-  server_id        = azurerm_postgresql_flexible_server.main.id
-  start_ip_address = "0.0.0.0"
-  end_ip_address   = "0.0.0.0"
-}
-
-# ── Firewall — allow your local dev machine ───────────────────────────────────
-# Uncomment and set your local IP to connect from your laptop
-# resource "azurerm_postgresql_flexible_server_firewall_rule" "allow_local" {
-#   name             = "AllowLocalDev"
-#   server_id        = azurerm_postgresql_flexible_server.main.id
-#   start_ip_address = "YOUR.LOCAL.IP.ADDRESS"
-#   end_ip_address   = "YOUR.LOCAL.IP.ADDRESS"
-# }
+# ── Firewall — Private access mode (delegated subnet) ─────────────────────────
+# With delegated_subnet_id configured above, the server is in private-access mode:
+# no public IP is assigned, and no firewall rules (IP-based) apply.
+# The App Service connects via private VNet integration (app_service.tf).
+# To access Postgres from outside the VNet (e.g. local dev psql), use the
+# bastion pattern or SSH tunnel to a jump host inside the VNet.
 
 # ── PostgreSQL extensions ─────────────────────────────────────────────────────
 

@@ -20,6 +20,8 @@ resource "azurerm_linux_web_app" "backend" {
 
   https_only = true
 
+  virtual_network_subnet_id = azurerm_subnet.app_service.id
+
   # System-Assigned Managed Identity — the app's credential for KV and Storage.
   # No client secret is injected into the environment.
   identity {
