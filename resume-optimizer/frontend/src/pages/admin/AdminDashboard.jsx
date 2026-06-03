@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Users, Activity, FileText, Zap } from 'lucide-react';
+import { Users, Activity, FileText, Zap, AlertTriangle } from 'lucide-react';
 import client from '../../api/client';
 
 function StatCard({ label, value, icon: Icon, color }) {
@@ -31,10 +31,16 @@ export default function AdminDashboard() {
   }, []);
 
   const cards = [
-    { label: 'Total Users',          key: 'total_users',          icon: Users,    color: 'bg-blue-600' },
-    { label: 'Active Users',          key: 'active_users',         icon: Activity, color: 'bg-green-600' },
-    { label: 'Pipeline Runs Today',   key: 'pipeline_runs_today',  icon: Zap,      color: 'bg-purple-600' },
-    { label: 'Total Resumes Stored',  key: 'total_resumes',        icon: FileText, color: 'bg-orange-600' },
+    { label: 'Total Users',         key: 'total_users',         icon: Users,         color: 'bg-blue-600' },
+    { label: 'Active Users',         key: 'active_users',        icon: Activity,      color: 'bg-green-600' },
+    { label: 'Pipeline Runs Today',  key: 'pipeline_runs_today', icon: Zap,           color: 'bg-purple-600' },
+    { label: 'Total Resumes Stored', key: 'total_resumes',       icon: FileText,      color: 'bg-orange-600' },
+    {
+      label: 'Stuck Jobs',
+      key: 'stuck_jobs',
+      icon: AlertTriangle,
+      color: stats?.stuck_jobs > 0 ? 'bg-amber-500' : 'bg-gray-600',
+    },
   ];
 
   return (
@@ -42,7 +48,7 @@ export default function AdminDashboard() {
       <h1 className="text-xl font-bold text-white mb-6">Dashboard</h1>
       {loading ? (
         <div className="grid grid-cols-2 gap-4">
-          {[...Array(4)].map((_, i) => (
+          {[...Array(5)].map((_, i) => (
             <div key={i} className="h-24 bg-gray-900 border border-gray-800 rounded-xl animate-pulse" />
           ))}
         </div>
