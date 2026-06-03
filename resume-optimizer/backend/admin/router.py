@@ -8,7 +8,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.dependencies import get_admin_user
-from admin.schemas import AdminStats, BootstrapRequest, UserUpdate, ProviderCostCreate, ProviderCostsResponse
+from admin.schemas import AdminStats, BootstrapRequest, UserUpdate, ProviderCostCreate, ProviderCostsResponse, AnalyticsResponse
 from config import STUCK_JOB_TIMEOUT_MINUTES
 from db.models import JobStatus, PipelineJob, PlanType, Resume, User, ProviderCost
 from db.session import get_db
@@ -187,6 +187,210 @@ async def get_stats(
         total_cost_cents_today=total_cost_cents_today,
         total_cost_cents_month=total_cost_cents_month,
         avg_cost_per_run=round(avg_cost_per_run, 2),
+    )
+
+
+# ── Analytics ─────────────────────────────────────────────────────────────────
+
+@router.get("/analytics", response_model=AnalyticsResponse)
+async def get_analytics(
+    _: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+    days: int = Query(30, ge=1, le=90),
+):
+    """Get system-wide analytics with user growth, costs, sources, and pipeline health."""
+    from datetime import date
+    from collections import defaultdict
+
+    today_dt = datetime.now(timezone.utc)
+    today = today_dt.date()
+    start_date = today - timedelta(days=days - 1)
+
+    # ── 1. User growth: daily signups + cumulative users ────────────────────
+
+    user_growth_data = []
+    cumulative_users = 0
+
+    # Query all users created in the range
+    from datetime import time
+    start_datetime = datetime.combine(start_date, time.min).replace(tzinfo=timezone.utc)
+    users_in_range = (
+        await db.execute(
+            select(User.created_at)
+            .where(User.created_at >= start_datetime)
+            .order_by(User.created_at.asc())
+        )
+    ).scalars().all()
+
+    # Build user counts by date
+    daily_signups_by_date = defaultdict(int)
+    for user_created_at in users_in_range:
+        date_str = user_created_at.date().isoformat()
+        daily_signups_by_date[date_str] += 1
+
+    # Get total users before start_date for cumulative calculation
+    total_before = (
+        await db.execute(
+            select(func.count(User.id)).where(
+                User.created_at < start_datetime
+            )
+        )
+    ).scalar() or 0
+
+    cumulative_users = total_before
+    for current_date in (start_date + timedelta(days=d) for d in range(days)):
+        if current_date > today:
+            break
+        date_str = current_date.isoformat()
+        daily_signups = daily_signups_by_date.get(date_str, 0)
+        cumulative_users += daily_signups
+        user_growth_data.append({
+            "date": date_str,
+            "cumulative_users": cumulative_users,
+            "daily_signups": daily_signups,
+        })
+
+    # ── 2. Plan distribution: current counts by plan ─────────────────────────
+
+    plan_rows = (
+        await db.execute(
+            select(User.plan, func.count(User.id))
+            .group_by(User.plan)
+        )
+    ).all()
+
+    plan_distribution = {
+        "free": 0,
+        "pro": 0,
+        "enterprise": 0,
+    }
+    for plan_type, count in plan_rows:
+        plan_distribution[plan_type.value] = count
+
+    # ── 3. Daily costs: from Delta usage + ProviderCost rates ────────────────
+
+    daily_costs_data = []
+    try:
+        # Fetch active anthropic provider costs
+        cost_result = await db.execute(
+            select(ProviderCost).where(
+                (ProviderCost.provider == "anthropic") & (ProviderCost.active == True)
+            )
+        )
+        cost_row = cost_result.scalar_one_or_none()
+
+        if cost_row:
+            # Read Delta usage for the requested period
+            df_usage = await asyncio.to_thread(read_usage_last_n_days, "", days)
+
+            if not df_usage.empty:
+                # Group by date and calculate costs
+                for current_date in (start_date + timedelta(days=d) for d in range(days)):
+                    if current_date > today:
+                        break
+                    date_str = current_date.isoformat()
+                    df_day = df_usage[df_usage["date"] == date_str]
+
+                    if not df_day.empty:
+                        day_input = int(df_day["input_tokens"].sum())
+                        day_output = int(df_day["output_tokens"].sum())
+                        input_cost = (day_input / 1_000_000) * cost_row.input_cost_per_1m_tokens
+                        output_cost = (day_output / 1_000_000) * cost_row.output_cost_per_1m_tokens
+                        cost_cents = int((input_cost + output_cost) * 100)
+
+                        daily_costs_data.append({
+                            "date": date_str,
+                            "cost_cents": cost_cents,
+                        })
+                    else:
+                        # No data for this day - add 0 cost
+                        daily_costs_data.append({
+                            "date": date_str,
+                            "cost_cents": 0,
+                        })
+    except Exception:
+        # If Delta read fails, return empty costs
+        for current_date in (start_date + timedelta(days=d) for d in range(days)):
+            if current_date > today:
+                break
+            daily_costs_data.append({
+                "date": current_date.isoformat(),
+                "cost_cents": 0,
+            })
+
+    # ── 4. Source counts: from job matches (placeholder for now) ────────────
+
+    source_counts = {
+        "linkedin": 0,
+        "indeed": 0,
+        "other": 0,
+    }
+
+    try:
+        # Try to read job_matches from Delta
+        from delta.writer import read_job_matches
+        matches_df = await asyncio.to_thread(read_job_matches, "", 1, 1000)
+        if not matches_df.empty and "source" in matches_df.columns:
+            source_counts["linkedin"] = int((matches_df["source"] == "linkedin").sum())
+            source_counts["indeed"] = int((matches_df["source"] == "indeed").sum())
+            source_counts["other"] = int(len(matches_df) - source_counts["linkedin"] - source_counts["indeed"])
+    except Exception:
+        # If Delta read fails, use placeholder
+        pass
+
+    # ── 5. Pipeline health: successful/failed runs per day ──────────────────
+
+    pipeline_health_data = []
+
+    pipeline_rows = (
+        await db.execute(
+            select(
+                func.date(PipelineJob.created_at).label("job_date"),
+                PipelineJob.status,
+                func.count(PipelineJob.id),
+            )
+            .where(
+                PipelineJob.created_at >= start_datetime,
+            )
+            .group_by(func.date(PipelineJob.created_at), PipelineJob.status)
+            .order_by(func.date(PipelineJob.created_at).desc())
+        )
+    ).all()
+
+    # Build pipeline counts by date
+    pipeline_by_date = defaultdict(lambda: {"successful": 0, "failed": 0})
+    for job_date, status, count in pipeline_rows:
+        if job_date is None:
+            continue
+        date_str = job_date.isoformat()
+        if status == JobStatus.done:
+            pipeline_by_date[date_str]["successful"] += count
+        elif status == JobStatus.error:
+            pipeline_by_date[date_str]["failed"] += count
+
+    # Add data for each day in range
+    for current_date in (start_date + timedelta(days=d) for d in range(days)):
+        if current_date > today:
+            break
+        date_str = current_date.isoformat()
+        counts = pipeline_by_date.get(date_str, {"successful": 0, "failed": 0})
+        pipeline_health_data.append({
+            "date": date_str,
+            "successful": counts["successful"],
+            "failed": counts["failed"],
+        })
+
+    # Reverse lists to sort by date ascending (oldest first)
+    user_growth_data.reverse()
+    daily_costs_data.reverse()
+    pipeline_health_data.reverse()
+
+    return AnalyticsResponse(
+        user_growth=user_growth_data,
+        plan_distribution=plan_distribution,
+        daily_costs=daily_costs_data,
+        source_counts=source_counts,
+        pipeline_health=pipeline_health_data,
     )
 
 

@@ -95,3 +95,30 @@ class ProviderCostItem(BaseModel):
 
 class ProviderCostsResponse(BaseModel):
     providers: list[ProviderCostItem]
+
+
+# ── Analytics schemas ────────────────────────────────────────────────────────
+
+class UserGrowthItem(BaseModel):
+    date: str
+    cumulative_users: int
+    daily_signups: int
+
+
+class DailyCostItem(BaseModel):
+    date: str
+    cost_cents: int
+
+
+class PipelineHealthItem(BaseModel):
+    date: str
+    successful: int
+    failed: int
+
+
+class AnalyticsResponse(BaseModel):
+    user_growth: list[UserGrowthItem]
+    plan_distribution: dict  # {free: int, pro: int, enterprise: int}
+    daily_costs: list[DailyCostItem]
+    source_counts: dict  # {linkedin: int, indeed: int, ...}
+    pipeline_health: list[PipelineHealthItem]
