@@ -81,16 +81,21 @@ output "tfstate_resource_group_name" {
   value       = azurerm_resource_group.main.name
 }
 
-# ── Local .env snippet ────────────────────────────────────────────────────────
-# No client secret — local dev authenticates via `az login` (DefaultAzureCredential
-# picks up the CLI session).  AZURE_CLIENT_ID and AZURE_TENANT_ID are non-secret
-# GUIDs that config.py needs to resolve the correct identity.
-
 output "local_env_snippet" {
-  description = "Copy these 3 lines into resume-optimizer/.env for local development"
+  description = "Seed for resume-optimizer/.env local development. Fill in actual secret values — no Key Vault lookup needed locally."
   value       = <<-EOT
-    AZURE_TENANT_ID=${data.azurerm_client_config.current.tenant_id}
-    AZURE_CLIENT_ID=${azuread_application.app.client_id}
-    KEY_VAULT_URL=${azurerm_key_vault.main.vault_uri}
+    # Copy to resume-optimizer/.env and fill in real values.
+    # On App Service, all secrets are injected automatically from Key Vault.
+    #
+    # Generate JWT_SECRET with:
+    #   python -c "import secrets; print(secrets.token_hex(32))"
+    JWT_SECRET=<your-32-char-hex-secret>
+    DATABASE_URL=postgresql+asyncpg://postgres:password@localhost:5432/resumeopt
+    ANTHROPIC_API_KEY=sk-ant-...
+    google_ai_studio_api_key=AIza...
+    groq_api_key=gsk_...
+    # Leave these unset locally to use local-disk fallback:
+    # AZURE_STORAGE_ACCOUNT_NAME=
+    # DELTA_STORAGE_PATH=   (defaults to ./delta_store)
   EOT
 }

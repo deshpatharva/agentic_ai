@@ -41,16 +41,24 @@ resource "azurerm_linux_web_app" "backend" {
     }
   }
 
-  # Only non-secret bootstrap values.  The MI authenticates to Key Vault at
-  # runtime; config.py fetches every other secret from there.
-  # AZURE_CLIENT_ID and AZURE_TENANT_ID are kept so config.py can fall back to
-  # ClientSecretCredential on local dev (where MI is unavailable); on App
-  # Service, DefaultAzureCredential will prefer the MI automatically.
+  # ── Secrets resolved by App Service from Key Vault at startup ──────────────
+  # App Service resolves @Microsoft.KeyVault(...) references before injecting
+  # into the process environment. config.py sees plain os.environ values.
   app_settings = {
-    AZURE_TENANT_ID = data.azurerm_client_config.current.tenant_id
-    AZURE_CLIENT_ID = azuread_application.app.client_id
-    KEY_VAULT_URL   = azurerm_key_vault.main.vault_uri
+    JWT_SECRET                 = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.jwt_secret.versionless_id})"
+    DATABASE_URL               = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.database_url.versionless_id})"
+    ANTHROPIC_API_KEY          = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.anthropic_api_key.versionless_id})"
+    google_ai_studio_api_key   = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.google_ai_api_key.versionless_id})"
+    groq_api_key               = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.groq_api_key.versionless_id})"
+    STRIPE_SECRET_KEY          = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.stripe_secret_key.versionless_id})"
+    ADZUNA_APP_ID              = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.adzuna_app_id.versionless_id})"
+    ADZUNA_APP_KEY             = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.adzuna_app_key.versionless_id})"
+    THE_MUSE_API_KEY           = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.the_muse_api_key.versionless_id})"
+    APIFY_TOKEN                = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.apify_token.versionless_id})"
+    DELTA_STORAGE_PATH         = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.delta_storage_path.versionless_id})"
+    AZURE_STORAGE_ACCOUNT_NAME = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.azure_storage_account_name.versionless_id})"
 
+    # ── Non-secret bootstrap values ────────────────────────────────────────────
     SCM_DO_BUILD_DURING_DEPLOYMENT     = "true"
     WEBSITES_PORT                      = "8000"
     WEBSITE_HTTPLOGGING_RETENTION_DAYS = "3"
@@ -74,5 +82,16 @@ resource "azurerm_role_assignment" "mi_kv_secrets_user" {
 resource "azurerm_role_assignment" "mi_storage_contributor" {
   scope                = azurerm_storage_account.main.id
   role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azurerm_linux_web_app.backend.identity[0].principal_id
+}
+
+# ── Managed Identity → Storage Blob Delegator ────────────────────────────────
+# Required to call get_user_delegation_key() for generating SAS tokens.
+# shared_access_key_enabled = false on the storage account means account-key
+# SAS is not available; user delegation SAS is the only option.
+
+resource "azurerm_role_assignment" "mi_storage_delegator" {
+  scope                = azurerm_storage_account.main.id
+  role_definition_name = "Storage Blob Delegator"
   principal_id         = azurerm_linux_web_app.backend.identity[0].principal_id
 }
