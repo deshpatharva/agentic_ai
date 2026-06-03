@@ -23,6 +23,8 @@ pandas
 azure-storage-blob>=12.19.0
 azure-identity>=1.15.0
 pyarrow
+# Database migrations
+alembic>=1.13.0
 # Auth (passlib 1.7.4 is incompatible with bcrypt>=4.0)
 passlib[bcrypt]
 bcrypt<4.0.0
