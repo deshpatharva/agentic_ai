@@ -33,5 +33,7 @@ python-jose[cryptography]
 httpx
 slowapi>=0.1.9
 python-json-logger>=2.0.7
+# LLM providers
+litellm>=1.0.0
 # Optional: boto3 for S3 Delta storage in prod
 # boto3
