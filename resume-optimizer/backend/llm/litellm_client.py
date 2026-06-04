@@ -4,9 +4,12 @@ Supports OpenAI, Anthropic, Together, Groq, Ollama with automatic fallback.
 """
 
 import asyncio
+import logging
 import litellm
 from typing import Optional, Dict, Any
 from llm.config import LLMConfig
+
+logger = logging.getLogger(__name__)
 
 class LiteLLMClient:
     """
@@ -50,7 +53,7 @@ class LiteLLMClient:
         """
         model = model or self.primary_model
         max_tokens = max_tokens or self.config.max_output_tokens
-        temperature = temperature or self.config.temperature
+        temperature = temperature if temperature is not None else self.config.temperature
 
         # Try primary provider first
         result = await self._call_provider(
@@ -91,12 +94,12 @@ class LiteLLMClient:
         temperature: float,
     ) -> Optional[Dict[str, Any]]:
         """
-        Call a specific provider with retry logic.
+        Call a specific provider with error handling.
         Returns None if provider fails, dict with response if successful.
         """
         try:
-            # Construct full model string for litellm (e.g., "claude-3-opus")
-            full_model = f"{provider}/{model}" if provider != "ollama" else f"ollama/{model}"
+            # Construct full model string for litellm (e.g., "openai/gpt-4")
+            full_model = f"{provider}/{model}"
 
             response = await asyncio.to_thread(
                 litellm.completion,
@@ -115,6 +118,5 @@ class LiteLLMClient:
 
         except Exception as e:
             # Log failure but don't raise; allow fallback to try
-            import logging
-            logging.warning(f"Provider {provider}/{model} failed: {str(e)}")
+            logger.warning(f"Provider {provider}/{model} failed: {str(e)}")
             return None

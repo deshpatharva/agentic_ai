@@ -62,3 +62,26 @@ async def test_complete_respects_max_output_tokens():
         # Verify completion was called with max_tokens
         call_kwargs = mock_completion.call_args[1]
         assert call_kwargs.get("max_tokens") == 1000
+
+@pytest.mark.asyncio
+async def test_fallback_chain_tried_on_primary_failure():
+    """LiteLLMClient tries fallback providers when primary fails."""
+    config = LLMConfig()
+    client = LiteLLMClient(config)
+
+    call_count = 0
+    def mock_completion_side_effect(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:  # First call (primary) fails
+            raise Exception("Primary provider down")
+        # Second call (first fallback) succeeds
+        return MagicMock(
+            choices=[MagicMock(message=MagicMock(content="Fallback response"))],
+            usage=MagicMock(prompt_tokens=30, completion_tokens=15),
+        )
+
+    with patch("litellm.completion", side_effect=mock_completion_side_effect):
+        result = await client.complete("Prompt")
+        assert result["text"] == "Fallback response"
+        assert call_count == 2  # Tried primary then fallback
