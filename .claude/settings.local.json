@@ -6,7 +6,10 @@
       "Bash(python -m spacy download en_core_web_sm)",
       "Bash(python -c \"from db.models import User, Resume, PlanLimit; from db.session import init_db, get_db; from auth.router import router; from dashboard.router import router as dr; print\\(''All imports OK''\\)\")",
       "Bash(npm install:*)",
-      "Bash(npx tailwindcss:*)"
+      "Bash(npx tailwindcss:*)",
+      "Bash(python -m pytest tests/test_llm.py -v)",
+      "Bash(python -m pytest tests/test_agents.py tests/test_health.py tests/test_smoke.py -v)",
+      "Bash(python -c \"import llm; print\\('llm.py imports cleanly'\\)\")"
     ]
   }
 }

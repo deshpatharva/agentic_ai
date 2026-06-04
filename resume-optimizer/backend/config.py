@@ -24,22 +24,23 @@ APIFY_TOKEN      = os.environ.get("APIFY_TOKEN", "")        # optional paid sour
 DELTA_STORAGE_PATH = os.environ.get("DELTA_STORAGE_PATH", "./delta_store")
 
 # ── Models ────────────────────────────────────────────────────────────────────
-# Rewriter — Gemini 3.1 Flash Lite (latest Google Flash-tier, stays on Gemini)
-MODEL_REWRITER      = "gemini-3.1-flash-lite"
+# All model names use LiteLLM provider prefixes — change here to swap providers.
+# Rewriter — Gemini 2.5 Flash Lite (fast, cheap, good at keyword incorporation)
+MODEL_REWRITER      = "gemini/gemini-2.5-flash-lite"
 # Rewriter iter 2+ — applying feedback diffs only, lite is sufficient
-MODEL_REWRITER_FAST = "gemini-2.5-flash-lite"
+MODEL_REWRITER_FAST = "gemini/gemini-2.5-flash-lite"
 
 # Humanizer main pass — Gemini 2.5 Flash-Lite
-MODEL_HUMANIZER     = "gemini-2.5-flash-lite"
+MODEL_HUMANIZER     = "gemini/gemini-2.5-flash-lite"
 
 # Humanizer critic — Llama 3.1 8B via Groq (structured feedback, near-free)
-MODEL_CRITIC        = "llama-3.1-8b-instant"
+MODEL_CRITIC        = "groq/llama-3.1-8b-instant"
 
-# Scorers — Gemini 2.5 Flash-Lite (direct 8B successor, ultra-cheap, all 3 in 1 call)
-MODEL_SCORER        = "gemini-2.5-flash-lite"
+# Scorers — Gemini 2.5 Flash-Lite (ultra-cheap, all 4 scores in 1 call)
+MODEL_SCORER        = "gemini/gemini-2.5-flash-lite"
 
 # JD Analyzer — Gemini 2.5 Flash-Lite (keyword extraction only)
-MODEL_JD_ANALYZER   = "gemini-2.5-flash-lite"
+MODEL_JD_ANALYZER   = "gemini/gemini-2.5-flash-lite"
 
 # ── API URLs ──────────────────────────────────────────────────────────────────
 BACKEND_URL  = os.environ.get("BACKEND_URL",  "http://localhost:8000")
