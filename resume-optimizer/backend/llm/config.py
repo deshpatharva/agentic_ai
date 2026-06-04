@@ -1,88 +1,70 @@
 """
-LLM configuration module for litellm + CrewAI integration.
-
-Defines provider settings, LLM model configurations, and optimization parameters.
-All agents and tasks import from here for consistent LLM/optimization behavior.
+LiteLLM configuration and provider routing.
+Centralizes all LLM provider settings and fallback chains.
 """
 
 from dataclasses import dataclass
-from typing import Optional
-
+from typing import List, Tuple
 
 @dataclass
 class ProviderConfig:
     """Configuration for a single LLM provider."""
-
-    provider: str          # "anthropic", "google", "groq", etc.
-    api_key: str           # API key for the provider
-    base_url: Optional[str] = None  # Optional custom base URL
-
+    name: str
+    model: str
+    max_context_tokens: int
+    temperature: float = 0.7
+    max_output_tokens: int = 2000
+    timeout_seconds: int = 60
 
 @dataclass
 class LLMConfig:
-    """Configuration for all LLM providers and model selections."""
+    """Master LLM configuration."""
 
-    # Provider configs
-    anthropic: ProviderConfig
-    google: ProviderConfig
-    groq: ProviderConfig
+    # Primary provider
+    primary_provider: str = "anthropic"
+    primary_model: str = "claude-opus-4-8"
 
-    # Model selections (provider/model format for litellm)
-    model_rewriter: str
-    model_rewriter_fast: str
-    model_humanizer: str
-    model_critic: str
-    model_scorer: str
-    model_jd_analyzer: str
+    # Provider-specific limits
+    provider_limits: dict = None
+
+    # Fallback chain: [(provider, model), (provider, model), ...]
+    fallback_chain: List[Tuple[str, str]] = None
+
+    # Generation parameters
+    temperature: float = 0.7
+    max_output_tokens: int = 2000
+    timeout_seconds: int = 60
 
     def __post_init__(self):
-        """Validate that all required API keys are present."""
-        configs = [self.anthropic, self.google, self.groq]
-        for config in configs:
-            if not config.api_key:
-                raise ValueError(f"Missing API key for provider: {config.provider}")
+        if self.provider_limits is None:
+            self.provider_limits = {
+                "anthropic": 200000,      # Claude Opus 4.8
+                "openai": 128000,         # GPT-4o
+                "together": 32000,        # Llama 3.1
+                "groq": 8000,             # Groq models
+                "ollama": 8000,           # Local Ollama
+            }
 
+        if self.fallback_chain is None:
+            self.fallback_chain = [
+                ("openai", "gpt-4o"),
+                ("together", "meta-llama/Llama-3.1-405B-Instruct-Turbo"),
+            ]
+
+    def get_max_context_tokens(self, provider: str = None) -> int:
+        """Get context token limit for a provider."""
+        provider = provider or self.primary_provider
+        return self.provider_limits.get(provider, 8000)
 
 @dataclass
 class OptimizationConfig:
-    """Configuration for resume optimization pipeline."""
+    """Resume optimization loop parameters."""
+    max_iterations: int = 3
+    quality_threshold: float = 0.85
+    persistent_gap_threshold: int = 2  # Gaps that persist across N iterations are unfixable
+    sse_enabled: bool = True
+    progress_update_interval_ms: int = 2000
 
-    max_iterations: int = 4      # Max optimization iterations
-    score_target: int = 90       # Target match score
-    max_resume_chars: int = 15_000
-    max_jd_chars: int = 8_000
-
-
-# ── Module-level instances ────────────────────────────────────────────────────
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
-
-llm_config = LLMConfig(
-    anthropic=ProviderConfig(
-        provider="anthropic",
-        api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
-    ),
-    google=ProviderConfig(
-        provider="google",
-        api_key=os.environ.get("google_ai_studio_api_key", ""),
-    ),
-    groq=ProviderConfig(
-        provider="groq",
-        api_key=os.environ.get("groq_api_key", ""),
-    ),
-    model_rewriter="gemini-3.1-flash-lite",
-    model_rewriter_fast="gemini-2.5-flash-lite",
-    model_humanizer="gemini-2.5-flash-lite",
-    model_critic="llama-3.1-8b-instant",
-    model_scorer="gemini-2.5-flash-lite",
-    model_jd_analyzer="gemini-2.5-flash-lite",
-)
-
-opt_config = OptimizationConfig(
-    max_iterations=int(os.environ.get("MAX_ITERATIONS", 4)),
-    score_target=int(os.environ.get("SCORE_TARGET", 90)),
-    max_resume_chars=int(os.environ.get("MAX_RESUME_CHARS", 15_000)),
-    max_jd_chars=int(os.environ.get("MAX_JD_CHARS", 8_000)),
-)
+# Global instances (lazy-loaded)
+llm_config = LLMConfig()
+opt_config = OptimizationConfig()

@@ -1,21 +1,5 @@
-"""
-LLM module — litellm + CrewAI integration.
+"""LLM abstraction layer using litellm."""
 
-Provides configuration, client initialization, and utility functions for LLM operations.
-"""
+from llm.config import LLMConfig, OptimizationConfig, llm_config, opt_config
 
-from llm.config import (
-    ProviderConfig,
-    LLMConfig,
-    OptimizationConfig,
-    llm_config,
-    opt_config,
-)
-
-__all__ = [
-    "ProviderConfig",
-    "LLMConfig",
-    "OptimizationConfig",
-    "llm_config",
-    "opt_config",
-]
+__all__ = ["LiteLLMClient", "llm_config", "opt_config"]
