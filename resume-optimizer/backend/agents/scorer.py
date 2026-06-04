@@ -97,7 +97,7 @@ Scoring criteria:
 
 JSON:"""
 
-    response = await complete(prompt, MODEL_SCORER, max_tokens=1024)
+    response = await complete(prompt, MODEL_SCORER)
     raw = response["text"]
     accumulated["input_tokens"] += response.get("input_tokens", 0)
     accumulated["output_tokens"] += response.get("output_tokens", 0)

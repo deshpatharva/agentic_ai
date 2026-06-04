@@ -55,7 +55,7 @@ Example: {{"robotic_phrases": ["responsible for"], "weak_bullets": ["helped team
 Resume:
 {humanized_v1}
 
-JSON:""", MODEL_CRITIC, max_tokens=1024)
+JSON:""", MODEL_CRITIC)
     raw_critic = response["text"]
     accumulated["input_tokens"] += response.get("input_tokens", 0)
     accumulated["output_tokens"] += response.get("output_tokens", 0)

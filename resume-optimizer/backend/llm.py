@@ -23,7 +23,6 @@ litellm.drop_params = True  # silently ignore unsupported provider params
 async def complete(
     prompt: str,
     model: str,
-    max_tokens: int = 8096,
     cached_prefix: str = None,
 ) -> dict:
     """
@@ -32,7 +31,6 @@ async def complete(
     Args:
         prompt:        The main prompt / instruction text.
         model:         LiteLLM model name with provider prefix (e.g. "gemini/gemini-2.5-flash-lite").
-        max_tokens:    Max output tokens.
         cached_prefix: (Anthropic only) Large text block sent with cache_control=ephemeral
                        before the main prompt. Saves ~90% of input token cost on cache hits.
 
@@ -56,7 +54,6 @@ async def complete(
     response = await litellm.acompletion(
         model=model,
         messages=messages,
-        max_tokens=max_tokens,
     )
 
     return {

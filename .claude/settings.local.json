@@ -9,7 +9,8 @@
       "Bash(npx tailwindcss:*)",
       "Bash(python -m pytest tests/test_llm.py -v)",
       "Bash(python -m pytest tests/test_agents.py tests/test_health.py tests/test_smoke.py -v)",
-      "Bash(python -c \"import llm; print\\('llm.py imports cleanly'\\)\")"
+      "Bash(python -c \"import llm; print\\('llm.py imports cleanly'\\)\")",
+      "Bash(python -m pytest tests/test_llm.py tests/test_cost_flow.py tests/test_agents.py -v)"
     ]
   }
 }

@@ -57,7 +57,7 @@ async def test_humanizer_returns_dict_with_text_and_tokens():
     responses = [mock_response_1, mock_response_2, mock_response_3]
     call_count = [0]
 
-    async def mock_complete(prompt, model, max_tokens=8096, cached_prefix=None):
+    async def mock_complete(prompt, model, cached_prefix=None):
         result = responses[call_count[0]]
         call_count[0] += 1
         return {
@@ -92,7 +92,7 @@ async def test_jd_analyzer_returns_dict_with_text_and_tokens():
     mock_response.usage.input_tokens = 150
     mock_response.usage.output_tokens = 75
 
-    async def mock_complete(prompt, model, max_tokens=8096, cached_prefix=None):
+    async def mock_complete(prompt, model, cached_prefix=None):
         return {
             "text": mock_response.content[0].text,
             "input_tokens": mock_response.usage.input_tokens,
@@ -140,7 +140,7 @@ async def test_scorer_returns_dict_with_text_and_tokens():
     mock_response.usage.input_tokens = 200
     mock_response.usage.output_tokens = 100
 
-    async def mock_complete(prompt, model, max_tokens=8096, cached_prefix=None):
+    async def mock_complete(prompt, model, cached_prefix=None):
         return {
             "text": mock_response.content[0].text,
             "input_tokens": mock_response.usage.input_tokens,
@@ -183,7 +183,7 @@ async def test_rewriter_returns_dict_with_text_and_tokens():
     mock_response.usage.input_tokens = 250
     mock_response.usage.output_tokens = 150
 
-    async def mock_complete(prompt, model, max_tokens=8096, cached_prefix=None):
+    async def mock_complete(prompt, model, cached_prefix=None):
         return {
             "text": mock_response.content[0].text,
             "input_tokens": mock_response.usage.input_tokens,
