@@ -318,7 +318,7 @@ async def get_analytics(
 
     try:
         # Try to read job_matches from Delta
-        matches_df = await asyncio.to_thread(read_job_matches, "", 1, 1000)
+        matches_df = await asyncio.to_thread(read_job_matches, "", days, 10000)
         if not matches_df.empty and "source" in matches_df.columns:
             source_counts["linkedin"] = int((matches_df["source"] == "linkedin").sum())
             source_counts["indeed"] = int((matches_df["source"] == "indeed").sum())

@@ -27,7 +27,7 @@ export default function CostTrendChart({ data, isLoading, error }) {
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="date" />
           <YAxis />
-          <Tooltip formatter={(value) => `$${value}`} />
+          <Tooltip formatter={(value) => `$${(value/100).toFixed(2)}`} />
           <Area
             type="monotone"
             dataKey="cost_cents"
