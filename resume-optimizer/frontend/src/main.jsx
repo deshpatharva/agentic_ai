@@ -17,6 +17,7 @@ import AdminLayout from './pages/admin/AdminLayout';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import UserList from './pages/admin/UserList';
 import UserDetail from './pages/admin/UserDetail';
+import AdminAnalytics from './pages/AdminAnalytics';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
@@ -42,6 +43,8 @@ ReactDOM.createRoot(document.getElementById('root')).render(
           <Route path="users" element={<UserList />} />
           <Route path="users/:id" element={<UserDetail />} />
         </Route>
+
+        <Route path="/admin/analytics" element={<AdminRoute><AdminAnalytics /></AdminRoute>} />
 
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
