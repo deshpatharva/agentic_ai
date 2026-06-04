@@ -5,6 +5,10 @@ All agents import from here instead of hardcoding values.
 
 import os
 from dotenv import load_dotenv
+from llm.config import LLMConfig, OptimizationConfig, llm_config, opt_config
+
+# Expose at module level
+__all__ = ["llm_config", "opt_config", "LLMConfig", "OptimizationConfig"]
 
 load_dotenv()
 
