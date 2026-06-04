@@ -6,7 +6,14 @@
       "Bash(python -m spacy download en_core_web_sm)",
       "Bash(python -c \"from db.models import User, Resume, PlanLimit; from db.session import init_db, get_db; from auth.router import router; from dashboard.router import router as dr; print\\(''All imports OK''\\)\")",
       "Bash(npm install:*)",
-      "Bash(npx tailwindcss:*)"
+      "Bash(npx tailwindcss:*)",
+      "Bash(ls -la \"C:\\\\Users\\\\deshp\\\\Documents\\\\github_repo\\\\agentic_ai\\\\\" | head -20)",
+      "Read(//c/Users/deshp/Documents/github_repo/**)",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\deshp\\\\Documents\\\\github_repo\\\\agentic_ai\\\\resume-optimizer\" -Recurse | Where-Object {$_.Name -eq \"requirements.txt\"})",
+      "Bash(python -m pytest backend/tests/ -v --tb=short)",
+      "PowerShell($outputFile = \"C:\\\\Users\\\\deshp\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-deshp-Documents-github-repo-agentic-ai\\\\d6aa54c9-b546-472e-8e44-420563d1c448\\\\tasks\\\\bgq5vohnx.output\"; while \\(\\(Get-Item $outputFile -ErrorAction SilentlyContinue\\).LastWriteTime -lt \\(Get-Date\\).AddSeconds\\(-2\\)\\) { Start-Sleep -Milliseconds 500 }; Write-Output \"Test run should be complete\")",
+      "Bash(git push *)",
+      "Bash(gh pr create --title 'Refactor: Multi-provider LLM + CrewAI agent orchestration with SSE streaming' --body ' *)"
     ]
   }
 }
