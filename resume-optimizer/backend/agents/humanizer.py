@@ -105,3 +105,33 @@ Return ONLY the final resume text.""", MODEL_HUMANIZER)
         "text": final_text,
         "tokens": accumulated,
     }
+
+
+# ── CrewAI Agent Integration ────────────────────────────────────────────────
+from crewai import tool
+from agents.base import create_agent
+
+
+@tool
+def humanize_tool(resume_text: str) -> dict:
+    """
+    Polish resume language to sound natural and human.
+    Returns dict with humanized_resume.
+    """
+    # Call existing humanize_resume function
+    import asyncio
+    result = asyncio.run(humanize_resume(resume_text))
+    return result
+
+
+def create_humanizer_agent():
+    """Create the Humanizer CrewAI Agent."""
+    return create_agent(
+        role="Resume Humanizer",
+        goal="Polish language to sound natural and human, not AI-generated",
+        backstory=(
+            "You are a master of natural language and tone. "
+            "You remove buzzwords, make resumes conversational, and ensure authenticity."
+        ),
+        tools=[humanize_tool],
+    )
