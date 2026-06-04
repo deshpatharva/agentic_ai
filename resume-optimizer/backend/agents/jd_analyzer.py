@@ -104,29 +104,31 @@ JSON:"""
 
 
 # ── CrewAI Agent Integration ────────────────────────────────────────────────
-from crewai import tool
-from agents.base import create_agent
+try:
+    from crewai import tool
+    from agents.base import create_agent
 
+    @tool
+    def analyze_jd_tool(jd_text: str) -> dict:
+        """
+        Analyze job description and extract keywords, requirements, and skills.
+        Returns dict with keywords, requirements, skills.
+        """
+        # Call existing analyze_jd function
+        result = analyze_jd(jd_text)
+        return result
 
-@tool
-def analyze_jd_tool(jd_text: str) -> dict:
-    """
-    Analyze job description and extract keywords, requirements, and skills.
-    Returns dict with keywords, requirements, skills.
-    """
-    # Call existing analyze_jd function
-    result = analyze_jd(jd_text)
-    return result
-
-
-def create_jd_analyzer_agent():
-    """Create the JD Analyzer CrewAI Agent."""
-    return create_agent(
-        role="Job Description Analyzer",
-        goal="Analyze job descriptions and identify key requirements and keywords",
-        backstory=(
-            "You are an expert recruiter who understands job descriptions deeply. "
-            "You extract key requirements, skills, and keywords to guide resume optimization."
-        ),
-        tools=[analyze_jd_tool],
-    )
+    def create_jd_analyzer_agent():
+        """Create the JD Analyzer CrewAI Agent."""
+        return create_agent(
+            role="Job Description Analyzer",
+            goal="Analyze job descriptions and identify key requirements and keywords",
+            backstory=(
+                "You are an expert recruiter who understands job descriptions deeply. "
+                "You extract key requirements, skills, and keywords to guide resume optimization."
+            ),
+            tools=[analyze_jd_tool],
+        )
+except ImportError:
+    # CrewAI not available (e.g., Python 3.9)
+    pass

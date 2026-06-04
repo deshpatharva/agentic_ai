@@ -136,33 +136,35 @@ def fabrication_guard(
 
 
 # ── CrewAI Agent Integration ────────────────────────────────────────────────
-from crewai import tool
-from agents.base import create_agent
+try:
+    from crewai import tool
+    from agents.base import create_agent
 
+    @tool
+    def validate_tool(generated_text: str, ledger: ClaimsLedger, source_text: str) -> dict:
+        """
+        Validate resume against claim ledger to detect fabrications.
+        Returns dict with validation_report and stripped_fabrications.
+        """
+        # Call existing fabrication_guard function
+        result = fabrication_guard(generated_text, ledger, source_text)
+        return {
+            "text": result.text,
+            "stripped": result.stripped,
+            "gaps": result.gaps,
+        }
 
-@tool
-def validate_tool(generated_text: str, ledger: ClaimsLedger, source_text: str) -> dict:
-    """
-    Validate resume against claim ledger to detect fabrications.
-    Returns dict with validation_report and stripped_fabrications.
-    """
-    # Call existing fabrication_guard function
-    result = fabrication_guard(generated_text, ledger, source_text)
-    return {
-        "text": result.text,
-        "stripped": result.stripped,
-        "gaps": result.gaps,
-    }
-
-
-def create_fabrication_guard_agent():
-    """Create the Fabrication Guard CrewAI Agent."""
-    return create_agent(
-        role="Fabrication Guard",
-        goal="Validate resume claims against source material to prevent hallucinations",
-        backstory=(
-            "You are a meticulous fact-checker who catches exaggerations and fabrications. "
-            "You ensure resume claims are grounded in reality and verifiable."
-        ),
-        tools=[validate_tool],
-    )
+    def create_fabrication_guard_agent():
+        """Create the Fabrication Guard CrewAI Agent."""
+        return create_agent(
+            role="Fabrication Guard",
+            goal="Validate resume claims against source material to prevent hallucinations",
+            backstory=(
+                "You are a meticulous fact-checker who catches exaggerations and fabrications. "
+                "You ensure resume claims are grounded in reality and verifiable."
+            ),
+            tools=[validate_tool],
+        )
+except ImportError:
+    # CrewAI not available (e.g., Python 3.9)
+    pass

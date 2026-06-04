@@ -89,29 +89,31 @@ Current Resume:
 
 
 # ── CrewAI Agent Integration ────────────────────────────────────────────────
-from crewai import tool
-from agents.base import create_agent
+try:
+    from crewai import tool
+    from agents.base import create_agent
 
+    @tool
+    def rewrite_tool(resume_text: str, jd_keywords: list) -> dict:
+        """
+        Rewrite resume to align with JD keywords.
+        Returns dict with rewritten_resume.
+        """
+        # Call existing rewrite_resume function
+        result = rewrite_resume(resume_text, jd_keywords)
+        return result
 
-@tool
-def rewrite_tool(resume_text: str, jd_keywords: list) -> dict:
-    """
-    Rewrite resume to align with JD keywords.
-    Returns dict with rewritten_resume.
-    """
-    # Call existing rewrite_resume function
-    result = rewrite_resume(resume_text, jd_keywords)
-    return result
-
-
-def create_rewriter_agent():
-    """Create the Rewriter CrewAI Agent."""
-    return create_agent(
-        role="Resume Rewriter",
-        goal="Improve resume bullets with stronger action verbs and structure",
-        backstory=(
-            "You are an expert resume writer with decades of experience. "
-            "You strengthen weak bullets, add action verbs, and improve overall readability."
-        ),
-        tools=[rewrite_tool],
-    )
+    def create_rewriter_agent():
+        """Create the Rewriter CrewAI Agent."""
+        return create_agent(
+            role="Resume Rewriter",
+            goal="Improve resume bullets with stronger action verbs and structure",
+            backstory=(
+                "You are an expert resume writer with decades of experience. "
+                "You strengthen weak bullets, add action verbs, and improve overall readability."
+            ),
+            tools=[rewrite_tool],
+        )
+except ImportError:
+    # CrewAI not available (e.g., Python 3.9)
+    pass

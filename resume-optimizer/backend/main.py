@@ -56,6 +56,7 @@ from auth.router import router as auth_router, user_router
 from auth.dependencies import decode_token, get_current_user, check_plan_limit
 from dashboard.router import router as dashboard_router
 from admin.router import router as admin_router
+from routes.optimize import router as optimize_router
 
 
 # ── App setup ────────────────────────────────────────────────────────────────
@@ -164,6 +165,7 @@ app.include_router(auth_router)
 app.include_router(user_router)
 app.include_router(dashboard_router)
 app.include_router(admin_router)
+app.include_router(optimize_router)
 
 
 @app.get("/health")

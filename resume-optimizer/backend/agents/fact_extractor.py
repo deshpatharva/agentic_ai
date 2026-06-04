@@ -89,36 +89,38 @@ def extract_claims(resume_text: str) -> ClaimsLedger:
 
 
 # ── CrewAI Agent Integration ────────────────────────────────────────────────
-from crewai import tool
-from agents.base import create_agent
+try:
+    from crewai import tool
+    from agents.base import create_agent
 
+    @tool
+    def extract_claims_tool(resume_text: str) -> dict:
+        """
+        Extract claims ledger from resume text.
+        Wraps the existing extract_claims() function as a CrewAI tool.
 
-@tool
-def extract_claims_tool(resume_text: str) -> dict:
-    """
-    Extract claims ledger from resume text.
-    Wraps the existing extract_claims() function as a CrewAI tool.
+        Returns:
+            dict with keys: companies (list), metrics (list), raw_bullets (tuple)
+        """
+        ledger = extract_claims(resume_text)
+        return {
+            "companies": list(ledger.companies),
+            "metrics": list(ledger.metrics),
+            "raw_bullets": list(ledger.raw_bullets),
+        }
 
-    Returns:
-        dict with keys: companies (list), metrics (list), raw_bullets (tuple)
-    """
-    ledger = extract_claims(resume_text)
-    return {
-        "companies": list(ledger.companies),
-        "metrics": list(ledger.metrics),
-        "raw_bullets": list(ledger.raw_bullets),
-    }
-
-
-def create_fact_extractor_agent():
-    """Create the Fact Extractor CrewAI Agent."""
-    return create_agent(
-        role="Fact Extractor",
-        goal="Extract and validate all claims, metrics, companies from resume",
-        backstory=(
-            "You are an expert at identifying and cataloging factual content. "
-            "Your job is to extract verifiable claims, quantified metrics, and company names "
-            "from resume text. You ensure accuracy and completeness."
-        ),
-        tools=[extract_claims_tool],
-    )
+    def create_fact_extractor_agent():
+        """Create the Fact Extractor CrewAI Agent."""
+        return create_agent(
+            role="Fact Extractor",
+            goal="Extract and validate all claims, metrics, companies from resume",
+            backstory=(
+                "You are an expert at identifying and cataloging factual content. "
+                "Your job is to extract verifiable claims, quantified metrics, and company names "
+                "from resume text. You ensure accuracy and completeness."
+            ),
+            tools=[extract_claims_tool],
+        )
+except ImportError:
+    # CrewAI not available (e.g., Python 3.9)
+    pass

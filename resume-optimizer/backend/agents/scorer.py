@@ -131,30 +131,32 @@ JSON:"""
 
 
 # ── CrewAI Agent Integration ────────────────────────────────────────────────
-from crewai import tool
-from agents.base import create_agent
+try:
+    from crewai import tool
+    from agents.base import create_agent
 
+    @tool
+    def score_tool(resume_text: str, jd_text: str, jd_keywords: list = None) -> dict:
+        """
+        Score resume quality across multiple dimensions.
+        Returns dict with quality scores.
+        """
+        # Call existing score_combined function
+        import asyncio
+        result = asyncio.run(score_combined(resume_text, jd_text, jd_keywords))
+        return result
 
-@tool
-def score_tool(resume_text: str, jd_text: str, jd_keywords: list = None) -> dict:
-    """
-    Score resume quality across multiple dimensions.
-    Returns dict with quality scores.
-    """
-    # Call existing score_combined function
-    import asyncio
-    result = asyncio.run(score_combined(resume_text, jd_text, jd_keywords))
-    return result
-
-
-def create_scorer_agent():
-    """Create the Scorer CrewAI Agent."""
-    return create_agent(
-        role="Resume Quality Scorer",
-        goal="Evaluate resume quality across metrics_presence, action_verbs, jd_alignment, readability",
-        backstory=(
-            "You are an expert hiring manager who can instantly assess resume quality. "
-            "You provide detailed scoring and actionable feedback for improvement."
-        ),
-        tools=[score_tool],
-    )
+    def create_scorer_agent():
+        """Create the Scorer CrewAI Agent."""
+        return create_agent(
+            role="Resume Quality Scorer",
+            goal="Evaluate resume quality across metrics_presence, action_verbs, jd_alignment, readability",
+            backstory=(
+                "You are an expert hiring manager who can instantly assess resume quality. "
+                "You provide detailed scoring and actionable feedback for improvement."
+            ),
+            tools=[score_tool],
+        )
+except ImportError:
+    # CrewAI not available (e.g., Python 3.9)
+    pass

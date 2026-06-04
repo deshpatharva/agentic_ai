@@ -5,7 +5,12 @@ Provides a unified way to instantiate agents with consistent LLM configuration.
 """
 
 from typing import Optional, List
-from crewai import Agent
+
+try:
+    from crewai import Agent
+except ImportError:
+    Agent = None
+
 from llm import LiteLLMClient, llm_config
 
 
@@ -25,7 +30,7 @@ def create_agent(
     goal: str,
     backstory: str,
     tools: Optional[List] = None,
-) -> Agent:
+) -> Optional[object]:
     """
     Factory function to create a CrewAI Agent with standardized configuration.
 
@@ -42,7 +47,11 @@ def create_agent(
                - LiteLLMClient LLM instance
                - verbose=True for debugging/logging
                - allow_delegation=False to prevent sub-delegation
+        None if CrewAI is not available
     """
+    if Agent is None:
+        return None
+
     if tools is None:
         tools = []
 
