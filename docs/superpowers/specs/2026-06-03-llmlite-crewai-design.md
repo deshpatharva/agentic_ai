@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-Replace the current hardcoded LLM routing (llm.py) with **llmlite** for multi-provider flexibility (OpenAI, Anthropic, Together AI, Ollama), and refactor agents into a **CrewAI** framework for orchestrated sequential pipelines + iterative quality loops. Remove token limits to preserve full context across resume optimization workflows.
+Replace the current hardcoded LLM routing (llm.py) with **litellm** for multi-provider flexibility (OpenAI, Anthropic, Together AI, Ollama), and refactor agents into a **CrewAI** framework for orchestrated sequential pipelines + iterative quality loops. Remove token limits to preserve full context across resume optimization workflows.
 
 **Goals:**
 1. Support multiple LLM providers with zero agent code changes (provider switching at config level only)
@@ -29,7 +29,7 @@ Replace the current hardcoded LLM routing (llm.py) with **llmlite** for multi-pr
 └──────────────┬──────────────────────┘
                │
 ┌──────────────▼──────────────────────┐
-│  llmlite (unified LLM abstraction)   │
+│  litellm (unified LLM abstraction)   │
 │  - OpenAI, Anthropic, Together, etc  │
 │  - Token counting & cost tracking    │
 │  - Retry + fallback logic            │
@@ -65,11 +65,11 @@ Replace the current hardcoded LLM routing (llm.py) with **llmlite** for multi-pr
 
 ### Component Responsibilities
 
-**llmlite (replaces llm.py):**
+**litellm (replaces llm.py):**
 - Single config file: `LLM_PROVIDER`, `LLM_MODEL`, `MAX_CONTEXT_TOKENS`
-- Routes calls to correct provider SDK (no per-agent config)
-- Token counting, cost tracking, automatic retry/fallback
-- Async-first design
+- Unified API: converts OpenAI-format calls to any provider (Anthropic, Together, Groq, Ollama)
+- Token counting, cost tracking, automatic retry/fallback built-in
+- Async-first design with provider fallback chain
 
 **CrewAI Layer:**
 - Defines 6 agents with roles, goals, backstories
@@ -124,6 +124,227 @@ PROVIDER=ollama       → MAX_CONTEXT=8000    (local model, conservative)
 - Accumulate `input_tokens + output_tokens` across entire pipeline
 - Store in DB: `(user_id, optimization_id, total_tokens, cost_cents, timestamp)`
 - Use for billing, usage analytics, dashboard
+
+---
+
+## CrewAI Context Management & Token Efficiency
+
+### Problem: Accidental Context Duplication
+
+CrewAI automatically appends task outputs to the context window for the next task. If you also manually inject `PipelineContext.rewritten_resume` into the Humanizer prompt, the LLM receives the resume twice:
+1. Once from CrewAI's auto-context (from prior Rewriter task)
+2. Once from your explicit PipelineContext injection
+
+**This doubles input tokens and costs for that step.**
+
+### Solution: Explicit Context Isolation
+
+**Strategy:** Disable CrewAI's automatic context chaining. Instead, explicitly pass only what each task needs from PipelineContext.
+
+**Implementation:**
+
+```python
+# In orchestration/pipeline.py
+
+class PipelineExecutor:
+    async def execute_task(self, task: Task, context: PipelineContext) -> dict:
+        """
+        Execute a single task without relying on CrewAI's auto-context.
+        This prevents accidental duplication of large text blocks.
+        """
+        
+        # Only inject the specific inputs this task needs
+        task_input = self._prepare_task_input(task.name, context)
+        
+        # Execute task with isolated input
+        result = await task.execute(task_input)
+        
+        # Store output back in PipelineContext (single source of truth)
+        self._update_context(context, task.name, result)
+        
+        return result
+    
+    def _prepare_task_input(self, task_name: str, context: PipelineContext) -> str:
+        """
+        Prepare minimal task input. Only include what the task actually needs.
+        This avoids redundant context that CrewAI would also auto-append.
+        """
+        if task_name == "rewrite":
+            # Rewriter needs: resume, claims, gaps from previous iteration
+            return f"""
+Resume:
+{context.resume_text}
+
+Extracted Claims:
+{json.dumps(context.claims_ledger)}
+
+Gaps to Address:
+{json.dumps(context.improvement_history[-1]['gaps']) if context.improvement_history else 'None (first iteration)'}
+"""
+        
+        elif task_name == "humanize":
+            # Humanizer needs: ONLY the rewritten resume, not the original
+            # This prevents double-sending large text blocks
+            return context.rewritten_resume
+        
+        elif task_name == "score":
+            # Scorer needs: humanized resume, JD analysis, claims
+            return f"""
+Resume:
+{context.humanized_resume}
+
+Job Description Analysis:
+{json.dumps(context.jd_analysis)}
+
+Claims to Validate:
+{json.dumps(context.claims_ledger)}
+"""
+        
+        # ... similar for other tasks
+```
+
+**Key Rules:**
+1. Each task receives ONLY the inputs it needs (not the full context history)
+2. Task outputs are stored back in PipelineContext (centralized state)
+3. CrewAI's task ordering determines execution sequence; explicit input prevents duplication
+4. If CrewAI's auto-context feature is enabled, disable it via `task.agent.llm.context_window = None`
+
+This ensures PipelineContext is the single source of truth, and tokens are not wasted on redundant context.
+
+---
+
+## Latency & User Experience Architecture
+
+### Problem: Long-Running Optimization (2-3+ minutes)
+
+With 18 sequential LLM calls (6 agents × 3 iterations), expect:
+- **Iteration 1:** ~30-40s (6 agent calls, fresh models)
+- **Iteration 2:** ~20-30s (models warm, shorter outputs expected)
+- **Iteration 3:** ~20-30s
+- **Total:** 70-100s baseline, plus network latency, token generation delays → **2-3+ minutes**
+
+Without progress feedback, users perceive the app as frozen.
+
+### Solution: Server-Sent Events (SSE) + Real-Time Progress Streaming
+
+**Architecture:**
+
+```
+┌─────────────────┐
+│  Frontend (UI)  │
+│  - Shows spinner│
+│  - Streams      │
+│    updates from │
+│    /optimize    │
+│    endpoint     │
+└────────┬────────┘
+         │ GET /api/optimize?resume=...&jd=... (with Accept: text/event-stream)
+         │
+┌────────▼──────────────────────────────────────────────┐
+│  Backend FastAPI Endpoint                             │
+│  (/api/optimize with SSE response)                    │
+│                                                       │
+│  async def optimize(resume, jd):                      │
+│    async def event_generator():                       │
+│      context = PipelineContext(...)                   │
+│                                                       │
+│      for iteration in range(max_iterations):         │
+│        yield f"data: {iteration}\n\n"                │
+│                                                       │
+│        for task_name in task_order:                  │
+│          yield f"data: {{task: '{task_name}', ..}}\n\n" │
+│          result = await execute_task(task_name)      │
+│                                                       │
+│        yield f"data: {{iteration_complete: ..}}\n\n" │
+│                                                       │
+│      yield f"data: {{success: true, ..}}\n\n"        │
+│                                                       │
+│    return StreamingResponse(event_generator())       │
+└────────┬──────────────────────────────────────────────┘
+         │ SSE stream: "data: {progress_json}\n\n"
+         │
+┌────────▼────────────────────────────────────────────┐
+│  Frontend (with EventSource listener)               │
+│  const es = new EventSource('/api/optimize?...')    │
+│  es.onmessage = (e) => {                            │
+│    const { task, iteration, ... } = JSON.parse(e.data) │
+│    updateProgressBar(iteration, task)               │
+│  }                                                   │
+└─────────────────────────────────────────────────────┘
+```
+
+**Backend Progress Events (in order):**
+
+```python
+# At start of optimization
+{"event": "start", "optimization_id": "opt_abc123", "max_iterations": 3}
+
+# Iteration 1 starting
+{"event": "iteration_start", "iteration": 1, "total_iterations": 3}
+
+# Each task
+{"event": "task_start", "task": "fact_extractor", "iteration": 1}
+{"event": "task_complete", "task": "fact_extractor", "iteration": 1, "duration_ms": 3200}
+{"event": "task_start", "task": "jd_analyzer", "iteration": 1}
+{"event": "task_complete", "task": "jd_analyzer", "iteration": 1, "duration_ms": 2800}
+...
+
+# Iteration 1 scoring & decision
+{"event": "iteration_score", "iteration": 1, "quality_score": 0.78, "gaps": [...]}
+{"event": "iteration_decision", "iteration": 1, "action": "continue", "reason": "Below threshold, gaps changing"}
+
+# Iteration 2 starts
+{"event": "iteration_start", "iteration": 2, "total_iterations": 3}
+...
+
+# Final result
+{"event": "complete", "success": true, "result": {...}}
+```
+
+**Frontend Updates (pseudo-code):**
+
+```javascript
+const es = new EventSource('/api/optimize?resume=...&jd=...');
+
+es.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  
+  switch (msg.event) {
+    case 'iteration_start':
+      updateProgressBar(`Iteration ${msg.iteration}/${msg.total_iterations}`);
+      break;
+    
+    case 'task_start':
+      updateStatus(`${msg.task}: running...`);
+      break;
+    
+    case 'task_complete':
+      updateStatus(`${msg.task}: done (${msg.duration_ms}ms)`);
+      break;
+    
+    case 'iteration_score':
+      updateScoreDisplay(msg.quality_score);
+      updateGapsList(msg.gaps);
+      break;
+    
+    case 'complete':
+      displayFinalResult(msg.result);
+      es.close();
+      break;
+  }
+};
+
+es.onerror = () => {
+  showError('Optimization interrupted');
+  es.close();
+};
+```
+
+**Benefits:**
+- User sees live progress (task-by-task updates)
+- No perception of frozen app
+- Can cancel mid-optimization if desired
+- Telemetry: log real latencies per task for analytics
 
 ---
 
@@ -404,9 +625,9 @@ class PipelineContext:
 resume-optimizer/backend/
 ├── llm/
 │   ├── __init__.py
-│   ├── llmlite_client.py          # NEW: llmlite wrapper
-│   ├── config.py                   # MOVED: provider config
-│   └── cost_tracker.py             # NEW: token + cost tracking
+│   ├── litellm_client.py           # NEW: litellm wrapper + async routing
+│   ├── config.py                   # MOVED: provider config (litellm settings)
+│   └── cost_tracker.py             # NEW: token + cost tracking per call
 │
 ├── agents/
 │   ├── __init__.py
@@ -420,19 +641,22 @@ resume-optimizer/backend/
 │
 ├── orchestration/
 │   ├── __init__.py
-│   ├── pipeline.py                 # NEW: sequential task execution
+│   ├── pipeline.py                 # NEW: sequential task execution (context isolation)
 │   ├── loop_controller.py          # NEW: quality loop + gap detection
 │   ├── context.py                  # NEW: PipelineContext dataclass
-│   └── result.py                   # NEW: result formatting
+│   ├── result.py                   # NEW: result formatting
+│   └── progress.py                 # NEW: SSE event streaming
 │
 ├── tests/
 │   ├── test_agents.py              # EXISTING (update fixtures)
 │   ├── test_pipeline.py            # NEW: pipeline integration tests
 │   ├── test_loop_controller.py     # NEW: loop logic tests
-│   └── test_llmlite_client.py      # NEW: provider routing tests
+│   ├── test_litellm_client.py      # NEW: provider routing tests
+│   └── test_sse_streaming.py       # NEW: progress event tests
 │
 └── routes/
-    └── optimize.py                 # NEW/MODIFY: endpoint that uses pipeline
+    ├── optimize.py                 # NEW/MODIFY: SSE endpoint with progress streaming
+    └── optimize_async.py            # NEW: async job tracking (optional, for status polling)
 ```
 
 ---
@@ -442,9 +666,28 @@ resume-optimizer/backend/
 ### Dependencies
 ```
 crewai>=0.1.0
-llmlite>=0.5.0  # or llama-index if preferred
-anthropic>=0.34.0
-openai>=1.0.0
+litellm>=1.0.0           # Unified LLM routing: OpenAI, Anthropic, Together, Groq, Ollama
+anthropic>=0.34.0        # Fallback provider
+openai>=1.0.0            # Fallback provider
+together>=0.2.0          # Fallback provider
+fastapi>=0.104.0         # For SSE streaming endpoint
+```
+
+**litellm Configuration (in config.py):**
+```python
+import litellm
+
+litellm.drop_params = True  # Ignore unsupported params per provider
+litellm.set_verbose = True  # Log all API calls
+
+# Provider routing (in order of preference)
+PRIMARY_PROVIDER = "anthropic"
+PRIMARY_MODEL = "claude-opus-4-8"
+
+FALLBACK_CHAIN = [
+    ("openai", "gpt-4o"),
+    ("together", "meta-llama/Llama-3.1-405B-Instruct-Turbo"),
+]
 ```
 
 ### Backwards Compatibility
@@ -460,22 +703,44 @@ openai>=1.0.0
 - End-to-end tests (full pipeline with mock data)
 
 ### Performance Considerations
-- CrewAI's sequential execution is synchronous; agents don't run in parallel (acceptable for sequential pipeline)
-- Token counting happens per-call (negligible overhead)
-- Context dict passed by reference (no copying overhead)
-- Expect ~30-60s per optimization (3 tasks × multiple LLM calls)
+
+**Realistic End-to-End Latency:**
+- Per iteration: ~30-40s (6 agents × ~5-7s per LLM call, including network latency + token generation)
+- Full optimization (3 iterations): **90-120s baseline, often 2-3 minutes with network variance**
+- Breakdown per call:
+  - API latency: 500ms-2s
+  - Token generation: 2-5s (depending on model speed and output length)
+  - CrewAI overhead: <500ms per task
+- **Important:** This is NOT a fire-and-forget async job; SSE streaming is mandatory for UX.
+
+**Optimization Notes:**
+- Explicit context isolation (no token doubling via CrewAI's auto-context): Saves 15-20% input tokens
+- Streaming progress events: Start yielding updates ASAP (even before task completion) to signal liveness
+- Consider timeout: Set FastAPI route timeout to 5+ minutes; long-running jobs need breathing room
+
+**Scalability Constraints:**
+- Sequential execution (not parallel): Acceptable for user-initiated optimizations, not suitable for bulk processing
+- Database transaction: Store optimization_id and status so users can check progress via polling if SSE fails
+- Rate limiting: Token budgets per provider; implement backoff if cost limits are reached
 
 ---
 
 ## Success Criteria
 
+### Core Functionality
 ✓ Multi-provider support: Config change switches provider (no code change)  
 ✓ Sequential pipeline: Tasks execute in order, outputs flow through context  
 ✓ Iterative loop: Quality threshold drives iterations; gap diagnosis provided  
 ✓ Token preservation: No truncation between tasks; full context passed  
 ✓ Error recovery: Provider fallback, retry logic, graceful degradation  
 ✓ Cost tracking: Token counts and costs accumulated and logged  
-✓ Backwards compatible: Existing agent functions unchanged (wrapped, not rewritten)  
+✓ Backwards compatible: Existing agent functions unchanged (wrapped, not rewritten)
+
+### Architectural Constraints
+✓ Context isolation: PipelineContext is single source of truth; no token doubling via CrewAI auto-context  
+✓ Latency acceptable: SSE streaming provides real-time progress updates during 2-3 min optimization  
+✓ Provider routing: litellm handles OpenAI→Anthropic format translation; fallback chain functional  
+✓ Token efficiency: Explicit context injection prevents duplicate context in prompts (~15-20% savings)  
 
 ---
 
@@ -490,25 +755,96 @@ openai>=1.0.0
 
 ## Appendix: Configuration Example
 
+### Python Configuration (config.py)
+
+```python
+# config.py
+import litellm
+from dataclasses import dataclass
+
+# litellm setup
+litellm.drop_params = True
+litellm.set_verbose = True
+
+@dataclass
+class LLMConfig:
+    """LLM provider configuration using litellm."""
+    
+    # Primary provider
+    primary_provider: str = "anthropic"  # or "openai", "together", "groq"
+    primary_model: str = "claude-opus-4-8"
+    
+    # Context window limits (per provider)
+    max_context_tokens: int = 200000
+    
+    # Generation parameters
+    temperature: float = 0.7
+    max_output_tokens: int = 2000
+    timeout_seconds: int = 60
+    
+    # Fallback chain (used if primary unavailable)
+    fallback_chain: list = None
+    
+    def __post_init__(self):
+        if self.fallback_chain is None:
+            self.fallback_chain = [
+                ("openai", "gpt-4o"),
+                ("together", "meta-llama/Llama-3.1-405B-Instruct-Turbo"),
+            ]
+
+@dataclass
+class OptimizationConfig:
+    """Resume optimization loop parameters."""
+    max_iterations: int = 3
+    quality_threshold: float = 0.85
+    
+    # Gap detection: if gaps persist across N iterations, deem unreachable
+    persistent_gap_threshold: int = 2
+    
+    # SSE streaming
+    sse_enabled: bool = True
+    progress_update_interval_ms: int = 2000  # Update UI every 2 sec
+
+# Initialize
+llm_config = LLMConfig()
+opt_config = OptimizationConfig()
+```
+
+### YAML Configuration (application.yml)
+
 ```yaml
-# config.yaml
 llm:
-  provider: anthropic  # or openai, together, ollama
-  model: claude-opus-4-8
-  max_context_tokens: 200000
-  temperature: 0.7
-  timeout_seconds: 60
+  primary:
+    provider: anthropic
+    model: claude-opus-4-8
+  
+  context:
+    max_tokens: 200000
+    truncate_on_excess: true  # Fallback: truncate tail if limit exceeded
+  
+  generation:
+    temperature: 0.7
+    max_output_tokens: 2000
+    timeout_seconds: 60
+  
+  fallback_chain:
+    - provider: openai
+      model: gpt-4o
+    - provider: together
+      model: meta-llama/Llama-3.1-405B-Instruct-Turbo
 
 optimization:
   max_iterations: 3
   quality_threshold: 0.85
-  
-  # Provider-specific fallbacks
-  fallback_provider: openai
-  fallback_model: gpt-4o
+  persistent_gap_threshold: 2
+
+server:
+  sse_enabled: true
+  timeout_seconds: 300  # 5 min for long-running optimization
 
 logging:
   level: INFO
-  include_tokens: true  # log token counts
-  include_costs: true   # log cost per call
+  include_tokens: true  # Log token counts per task
+  include_costs: true   # Log cost per call
+  include_durations: true  # Log task execution time
 ```
