@@ -14,10 +14,10 @@ async def reset_rate_limits(request):
     Prevents counts from one test bleeding into another — especially important
     for test_admin.py which calls /auth/register and /auth/login in fixtures.
 
-    Skips for litellm tests which don't need the app.
+    Skips for litellm tests and pipeline tests which don't need the app.
     """
     # Skip for tests that don't need the app
-    if "litellm" in request.node.fspath.strpath:
+    if "litellm" in request.node.fspath.strpath or "pipeline" in request.node.fspath.strpath:
         yield
         return
 
