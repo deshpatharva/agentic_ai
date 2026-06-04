@@ -17,7 +17,7 @@ async def reset_rate_limits(request):
     Skips for litellm tests and pipeline tests which don't need the app.
     """
     # Skip for tests that don't need the app
-    if "litellm" in request.node.fspath.strpath or "pipeline" in request.node.fspath.strpath:
+    if "litellm" in request.node.fspath.strpath or "pipeline" in request.node.fspath.strpath or "loop_controller" in request.node.fspath.strpath:
         yield
         return
 
