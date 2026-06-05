@@ -5,7 +5,7 @@ resource "azurerm_storage_account" "main" {
   resource_group_name      = azurerm_resource_group.main.name
   location                 = azurerm_resource_group.main.location
   account_tier             = "Standard"
-  account_replication_type = "LRS"   # Locally redundant — cheapest, fine for dev
+  account_replication_type = "LRS" # Locally redundant — cheapest, fine for dev
   account_kind             = "StorageV2"
   access_tier              = "Hot"
 
@@ -33,19 +33,19 @@ resource "azurerm_storage_account" "main" {
 
 resource "azurerm_storage_container" "uploads" {
   name                  = local.uploads_container
-  storage_account_id = azurerm_storage_account.main.id
+  storage_account_id    = azurerm_storage_account.main.id
   container_access_type = "private"
 }
 
 resource "azurerm_storage_container" "outputs" {
   name                  = local.outputs_container
-  storage_account_id = azurerm_storage_account.main.id
+  storage_account_id    = azurerm_storage_account.main.id
   container_access_type = "private"
 }
 
 resource "azurerm_storage_container" "delta" {
   name                  = local.delta_container
-  storage_account_id = azurerm_storage_account.main.id
+  storage_account_id    = azurerm_storage_account.main.id
   container_access_type = "private"
 }
 
