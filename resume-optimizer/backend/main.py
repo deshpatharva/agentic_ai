@@ -39,11 +39,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agents.jd_analyzer import analyze_jd
 from utils import cache as result_cache
 from config import MAX_ITERATIONS, SCORE_TARGET, BACKEND_URL, FRONTEND_URL, MODEL_SCORER, MAX_UPLOAD_BYTES, MAX_RESUME_CHARS, MAX_JD_CHARS, STUCK_JOB_TIMEOUT_MINUTES
-from agents.rewriter import rewrite_resume
-from agents.humanizer import humanize_resume
 from agents.scorer import score_combined
 from agents.fact_extractor import extract_claims
 from agents.fabrication_guard import fabrication_guard
+from orchestration.optimizer import run_optimization_async
 from parsers.pdf_parser import parse_pdf
 from parsers.docx_parser import parse_docx
 from generators.docx_generator import generate_docx
@@ -535,8 +534,10 @@ async def scrape_jobs_endpoint(
 
 async def _run_pipeline_task(job_id: str, user_id: str = ""):
     """
-    Main optimization loop. Reads/writes state via Postgres; emits SSE events as
-    PipelineEvent rows so any worker or reconnecting client can consume them.
+    3-phase optimization pipeline.
+    Phase 1 (deterministic): claims extraction, JD analysis, baseline score.
+    Phase 2 (agentic):       CrewAI Optimization Strategist with 4 targeted tools.
+    Phase 3 (deterministic): fabrication guard, docx generation, persistence.
     """
     job_uuid = uuid.UUID(job_id)
 
@@ -552,196 +553,73 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             await db.execute(update(PipelineJob).where(PipelineJob.id == job_uuid).values(**kwargs))
             await db.commit()
 
+        # Thread-safe SSE bridge: crew tools run in a thread, emit() is async.
+        _loop = asyncio.get_event_loop()
+
+        def _on_agent_event(event: dict):
+            asyncio.run_coroutine_threadsafe(emit(event), _loop)
+
         try:
             result_cache.clear()
 
-            # Load job state from DB
             job_result = await db.execute(select(PipelineJob).where(PipelineJob.id == job_uuid))
             job_row = job_result.scalar_one()
             resume_text: str = job_row.resume_text[:MAX_RESUME_CHARS]
             jd_text: str     = job_row.jd_text[:MAX_JD_CHARS]
 
-            # Build claims ledger once from the original resume text.
-            # Used by the rewriter (constrain invented facts) and the guard (verify output).
+            total_input_tokens  = 0
+            total_output_tokens = 0
+
+            # ── Phase 1: Deterministic setup ──────────────────────────────────
             ledger = await asyncio.to_thread(extract_claims, resume_text)
 
-            # ── Step 1: Analyze JD ──────────────────────────────────────────
             await emit({"type": "stage", "message": "Analyzing Job Description...", "stage": "jd_analysis"})
             jd_result_dict = await analyze_jd(jd_text)
-            jd_result = jd_result_dict.get("text", jd_result_dict)
-            jd_tokens = jd_result_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
+            jd_result  = jd_result_dict.get("text", jd_result_dict)
+            jd_tokens  = jd_result_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
             jd_keywords: list[str] = jd_result.get("keywords", [])
-            await emit({
-                "type": "stage",
-                "message": f"JD analyzed — {len(jd_keywords)} keywords extracted.",
-                "stage": "jd_analysis",
-                "keywords": jd_keywords[:20],
-            })
+            total_input_tokens  += jd_tokens["input_tokens"]
+            total_output_tokens += jd_tokens["output_tokens"]
+            await emit({"type": "stage", "message": f"JD analyzed — {len(jd_keywords)} keywords extracted.",
+                        "stage": "jd_analysis", "keywords": jd_keywords[:20]})
 
-            current_resume = resume_text
-            consolidated_feedback = None
-            iteration = 0
-            prev_average = 0
-
-            # Accumulate tokens from all LLM calls
-            total_input_tokens = jd_tokens["input_tokens"]
-            total_output_tokens = jd_tokens["output_tokens"]
-
-            # ── Initial score ───────────────────────────────────────────────
             await emit({"type": "stage", "message": "Scoring original resume...", "stage": "score"})
-            initial_combined_dict = await score_combined(current_resume, jd_text, jd_keywords)
-            initial_combined = initial_combined_dict.get("text", initial_combined_dict)
-            score_tokens = initial_combined_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
-            total_input_tokens += score_tokens["input_tokens"]
-            total_output_tokens += score_tokens["output_tokens"]
-            initial_avg = round(sum(initial_combined[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")) / 4)
-            await emit({
-                "type": "average",
-                "score": initial_avg,
-                "iteration": 0,
-                "scores": {k: initial_combined[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")},
-                "message": f"Original resume score: {initial_avg}",
-            })
+            baseline_dict   = await score_combined(resume_text, jd_text, jd_keywords)
+            baseline_scores = baseline_dict.get("text", baseline_dict)
+            baseline_tokens = baseline_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
+            total_input_tokens  += baseline_tokens["input_tokens"]
+            total_output_tokens += baseline_tokens["output_tokens"]
 
-            if initial_avg >= SCORE_TARGET:
-                await emit({
-                    "type": "stage",
-                    "message": f"Original resume already scores {initial_avg} — no optimization needed. Finalizing...",
-                    "stage": "finalize",
-                })
+            baseline_avg = round(sum(baseline_scores[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")) / 4)
+            await emit({"type": "average", "score": baseline_avg, "iteration": 0,
+                        "scores": {k: baseline_scores[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")},
+                        "message": f"Original resume score: {baseline_avg}"})
 
-            scores = {
-                "ats": initial_combined["ats"],
-                "impact": initial_combined["impact"],
-                "skills_gap": initial_combined["skills_gap"],
-                "readability": initial_combined["readability"],
-                "average": initial_avg,
-            }
+            scores = {**baseline_scores, "average": baseline_avg}
 
-            while iteration < MAX_ITERATIONS and initial_avg < SCORE_TARGET:
-                iteration += 1
-                is_fast_iter = iteration > 1 and prev_average >= 75
-
-                await emit({
-                    "type": "iterate",
-                    "message": (
-                        f"Starting iteration {iteration} (fast mode — rewrite only)..."
-                        if is_fast_iter else
-                        f"Starting optimization iteration {iteration}..."
-                    ),
-                    "iteration": iteration,
-                })
-
-                # ── Step 2: Rewrite ─────────────────────────────────────────
-                await emit({"type": "stage", "message": "Rewriting resume to align with JD...", "stage": "rewrite"})
-                rewrite_dict = await rewrite_resume(
-                    resume_text=current_resume,
-                    jd_keywords=jd_keywords,
-                    consolidated_feedback=consolidated_feedback,
-                    claims_ledger=ledger,
-                )
-                current_resume = rewrite_dict.get("text", rewrite_dict)
-                rewrite_tokens = rewrite_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
-                total_input_tokens += rewrite_tokens["input_tokens"]
-                total_output_tokens += rewrite_tokens["output_tokens"]
-
-                # ── Fabrication guard — verify the rewrite ──────────────────
-                guard = await asyncio.to_thread(fabrication_guard, current_resume, ledger, resume_text)
-                current_resume = guard.text
-                if guard.stripped or guard.gaps:
-                    await emit({
-                        "type":    "guard",
-                        "message": f"Fabrication guard: removed {len(guard.stripped)} unverified claim(s).",
-                        "stripped": guard.stripped[:10],
-                        "gaps":     guard.gaps[:5],
-                    })
-
-                await emit({"type": "stage", "message": "Resume rewrite complete.", "stage": "rewrite"})
-
-                # ── Step 3: Humanize ────────────────────────────────────────
-                if not is_fast_iter:
-                    await emit({"type": "stage", "message": "Humanizing resume language...", "stage": "humanize"})
-                    humanize_dict = await humanize_resume(current_resume)
-                    current_resume = humanize_dict.get("text", humanize_dict)
-                    humanize_tokens = humanize_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
-                    total_input_tokens += humanize_tokens["input_tokens"]
-                    total_output_tokens += humanize_tokens["output_tokens"]
-                    await emit({"type": "stage", "message": "Humanization complete.", "stage": "humanize"})
-
-                # ── Step 4: Score ───────────────────────────────────────────
-                await emit({"type": "stage", "message": "Running all 4 scorers...", "stage": "score"})
-                combined_dict = await score_combined(current_resume, jd_text, jd_keywords)
-                combined = combined_dict.get("text", combined_dict)
-                score_tokens = combined_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
-                total_input_tokens += score_tokens["input_tokens"]
-                total_output_tokens += score_tokens["output_tokens"]
-
-                ats_result         = combined["ats"]
-                impact_result      = combined["impact"]
-                skills_result      = combined["skills_gap"]
-                readability_result = combined["readability"]
-
-                await emit({"type": "score", "platform": "ATS Match",
-                            "score": ats_result["score"],
-                            "feedback": ats_result.get("missing_keywords", [])[:3],
-                            "matched": ats_result.get("matched_keywords", [])[:3]})
-                await emit({"type": "score", "platform": "Impact Score",
-                            "score": impact_result["score"],
-                            "feedback": impact_result.get("suggestions", [])[:3],
-                            "weak_bullets": impact_result.get("weak_bullets", [])[:3]})
-                await emit({"type": "score", "platform": "Skills Gap",
-                            "score": skills_result["score"],
-                            "feedback": skills_result.get("missing_skills", [])[:3],
-                            "matched": skills_result.get("matched_skills", [])[:3]})
-                await emit({"type": "score", "platform": "Readability",
-                            "score": readability_result["score"],
-                            "feedback": readability_result.get("issues", [])[:3],
-                            "strengths": readability_result.get("strengths", [])[:3]})
-
-                average = round((
-                    ats_result.get("score", 0) +
-                    impact_result.get("score", 0) +
-                    skills_result.get("score", 0) +
-                    readability_result.get("score", 0)
-                ) / 4)
-                prev_average = average
-                scores = {
-                    "ats": ats_result, "impact": impact_result,
-                    "skills_gap": skills_result, "readability": readability_result,
-                    "average": average,
-                }
-
-                await emit({
-                    "type": "average", "score": average, "iteration": iteration,
-                    "scores": {
-                        "ats": ats_result.get("score", 0),
-                        "impact": impact_result.get("score", 0),
-                        "skills_gap": skills_result.get("score", 0),
-                        "readability": readability_result.get("score", 0),
-                    },
-                })
-
-                if average >= SCORE_TARGET:
-                    await emit({"type": "stage",
-                                "message": f"Target score {SCORE_TARGET} reached (average: {average}). Finalizing...",
-                                "stage": "finalize"})
-                    break
-
-                if iteration >= MAX_ITERATIONS:
-                    await emit({"type": "stage",
-                                "message": f"Maximum iterations ({MAX_ITERATIONS}) reached. Average score: {average}. Finalizing...",
-                                "stage": "finalize"})
-                    break
-
-                consolidated_feedback = {
-                    "ats": ats_result, "impact": impact_result,
-                    "skills_gap": skills_result, "readability": readability_result,
-                }
+            if baseline_avg >= SCORE_TARGET:
                 await emit({"type": "stage",
-                            "message": f"Score {average} < {SCORE_TARGET}. Consolidating feedback for iteration {iteration + 1}...",
-                            "stage": "consolidate"})
+                            "message": f"Original resume already scores {baseline_avg} — skipping optimization.",
+                            "stage": "agent"})
 
-            # ── Step 5: Generate .docx ──────────────────────────────────────
+            # ── Phase 2: Agentic optimization ─────────────────────────────────
+            if baseline_avg < SCORE_TARGET:
+                await emit({"type": "stage", "message": "Starting agentic optimization...", "stage": "agent"})
+                agent_result = await run_optimization_async(
+                    job_id=job_id,
+                    resume_text=resume_text,
+                    jd_keywords=jd_keywords,
+                    claims_ledger=ledger,
+                    scores=baseline_scores,
+                    on_event=_on_agent_event,
+                )
+                current_resume   = agent_result["text"]
+                total_input_tokens  += agent_result.get("input_tokens", 0)
+                total_output_tokens += agent_result.get("output_tokens", 0)
+            else:
+                current_resume = resume_text
+
+            # ── Phase 3: Generate .docx ───────────────────────────────────────
             await emit({"type": "stage", "message": "Generating optimized .docx file...", "stage": "generate"})
             blob_name = f"{job_id}.docx"
             tmp_docx = None
@@ -770,9 +648,9 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                         original_filename=job_row.original_filename,
                         file_path=blob_name,
                         jd_text=jd_text,
-                        final_score=float(scores.get("average", 0)),
+                        final_score=float(scores.get("average", baseline_avg)),
                         scores_json=scores,
-                        iterations=iteration,
+                        iterations=1,
                         version=next_version,
                     )
                     db.add(resume_record)
@@ -786,7 +664,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                 status=JobStatus.done,
                 download_path=blob_name,
                 scores_json=scores,
-                iteration=iteration,
+                iteration=1,
             )
 
             # ── Calculate cost from token usage ──────────────────────────────
@@ -831,8 +709,8 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                 "type": "done",
                 "message": "Resume optimization complete! Your optimized resume is ready.",
                 "download_url": download_url,
-                "final_score": scores.get("average", 0),
-                "iterations": iteration,
+                "final_score": scores.get("average", baseline_avg),
+                "iterations": 1,
                 "cost_cents": cost_cents,
                 "tokens": {
                     "input": total_input_tokens,

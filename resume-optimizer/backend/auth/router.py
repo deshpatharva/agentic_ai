@@ -6,6 +6,14 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from jose import jwt
+
+# passlib 1.7.4 looks for bcrypt.__about__.__version__ which bcrypt 4.x removed
+import bcrypt as _bcrypt
+if not hasattr(_bcrypt, "__about__"):
+    class _About:
+        __version__ = _bcrypt.__version__
+    _bcrypt.__about__ = _About()
+
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import select

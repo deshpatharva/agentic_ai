@@ -12,6 +12,7 @@ en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_
 scikit-learn
 anthropic
 litellm
+crewai>=1.0.0,<2.0
 python-multipart
 sse-starlette
 python-dotenv
@@ -26,9 +27,9 @@ azure-identity>=1.15.0
 pyarrow
 # Database migrations
 alembic>=1.13.0
-# Auth (passlib 1.7.4 is incompatible with bcrypt>=4.0)
+# passlib 1.7.4 + bcrypt 4.x compat shim applied in auth/router.py
 passlib[bcrypt]
-bcrypt<4.0.0
+email-validator
 python-jose[cryptography]
 # Job scraper
 httpx

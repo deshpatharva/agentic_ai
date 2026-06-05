@@ -10,7 +10,38 @@
       "Bash(python -m pytest tests/test_llm.py -v)",
       "Bash(python -m pytest tests/test_agents.py tests/test_health.py tests/test_smoke.py -v)",
       "Bash(python -c \"import llm; print\\('llm.py imports cleanly'\\)\")",
-      "Bash(python -m pytest tests/test_llm.py tests/test_cost_flow.py tests/test_agents.py -v)"
+      "Bash(python -m pytest tests/test_llm.py tests/test_cost_flow.py tests/test_agents.py -v)",
+      "Bash(mkdir -p \"c:\\\\Users\\\\deshp\\\\Documents\\\\github_repo\\\\agentic_ai\\\\resume-optimizer\\\\docs\\\\superpowers\\\\plans\")",
+      "Bash(del \"c:\\\\Users\\\\deshp\\\\Documents\\\\github_repo\\\\agentic_ai\\\\resume-optimizer\\\\docs\\\\superpowers\\\\plans\\\\2026-06-05-agentic-optimizer.md\")",
+      "Bash(pip index *)",
+      "Bash(py --list)",
+      "Bash(py -3.12 --version)",
+      "Bash(py -3.12 -m pip index versions crewai)",
+      "Bash(py -3.12 -m venv .venv)",
+      "Bash(.venv\\\\Scripts\\\\pip install *)",
+      "Bash(\".venv/Scripts/pip\" install *)",
+      "Bash(py -3.12 -c ' *)",
+      "Bash(../.venv/Scripts/python -c ' *)",
+      "Bash(\"c:\\\\Users\\\\deshp\\\\Documents\\\\github_repo\\\\agentic_ai\\\\resume-optimizer\\\\.venv\\\\Scripts\\\\python\" -c \"import spacy; print\\('spacy ok'\\)\")",
+      "Bash(\"c:\\\\Users\\\\deshp\\\\Documents\\\\github_repo\\\\agentic_ai\\\\resume-optimizer\\\\.venv\\\\Scripts\\\\pip\" install *)",
+      "Bash(\"c:\\\\Users\\\\deshp\\\\Documents\\\\github_repo\\\\agentic_ai\\\\resume-optimizer\\\\.venv\\\\Scripts\\\\python\" -c \"import crewai; print\\('crewai', crewai.__version__\\)\")",
+      "Bash(\"c:\\\\Users\\\\deshp\\\\Documents\\\\github_repo\\\\agentic_ai\\\\resume-optimizer\\\\.venv\\\\Scripts\\\\python\" -c \"import crewai, spacy, litellm; print\\('crewai', crewai.__version__\\); print\\('spacy', spacy.__version__\\); print\\('litellm', litellm.__version__\\)\")",
+      "Bash(\"c:\\\\Users\\\\deshp\\\\Documents\\\\github_repo\\\\agentic_ai\\\\resume-optimizer\\\\.venv\\\\Scripts\\\\python\" -c \"import litellm; print\\('litellm', litellm.__version__\\)\")",
+      "Bash(py -3.12 -m venv C:\\\\rv)",
+      "Bash(C:\\\\rv\\\\Scripts\\\\pip install *)",
+      "Bash(C:\\\\rv\\\\Scripts\\\\python -c \"import crewai, spacy, litellm; print\\('crewai', crewai.__version__\\); print\\('spacy', spacy.__version__\\); print\\('litellm', litellm.__version__\\)\")",
+      "Bash(\"C:/rv/Scripts/python\" -c \"import crewai, spacy, litellm; print\\('crewai', crewai.__version__\\); print\\('spacy', spacy.__version__\\); print\\('litellm', litellm.__version__\\)\")",
+      "PowerShell(& \"C:\\\\rv\\\\Scripts\\\\python.exe\" -c \"import crewai, spacy, litellm; print\\('crewai', crewai.__version__\\); print\\('spacy', spacy.__version__\\); print\\('litellm', litellm.__version__\\)\")",
+      "Read(//c/rv/**)",
+      "PowerShell(& \"C:\\\\Users\\\\deshp\\\\rv\\\\Scripts\\\\pip.exe\" install -r \"C:\\\\Users\\\\deshp\\\\Documents\\\\github_repo\\\\agentic_ai\\\\resume-optimizer\\\\requirements.txt\" 2>&1)",
+      "PowerShell(& \"C:\\\\Users\\\\deshp\\\\rv\\\\Scripts\\\\python.exe\" -c \"import crewai, spacy, litellm; print\\('crewai', crewai.__version__\\); print\\('spacy', spacy.__version__\\); print\\('litellm', litellm.__version__\\)\")",
+      "PowerShell(& \"C:\\\\Users\\\\deshp\\\\rv\\\\Scripts\\\\pip.exe\" install \"email-validator\" 2>&1)",
+      "PowerShell(& \"C:\\\\Users\\\\deshp\\\\rv\\\\Scripts\\\\python.exe\" -m pip install \"email-validator\" 2>&1)",
+      "PowerShell(& \"C:\\\\Users\\\\deshp\\\\rv\\\\Scripts\\\\python.exe\" -m pip install \"email-validator\")",
+      "PowerShell(& \"C:\\\\Users\\\\deshp\\\\rv\\\\Scripts\\\\python.exe\" -c \"import email_validator; print\\('ok', email_validator.__version__\\)\")"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\deshp\\Documents\\github_repo\\agentic_ai\\resume-optimizer\\docs\\superpowers"
     ]
   }
 }

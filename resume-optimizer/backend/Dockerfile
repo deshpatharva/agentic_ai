@@ -1,8 +1,8 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system deps needed by pdfplumber / spaCy
+# Install system deps needed by pdfplumber / spaCy / crewai
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
@@ -12,13 +12,9 @@ COPY ../requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir \
         asyncpg \
-        sqlalchemy[asyncio] \
-        python-jose[cryptography] \
-        bcrypt \
-        passlib
+        sqlalchemy[asyncio]
 
-# Download spaCy model
-RUN python -m spacy download en_core_web_sm
+# spaCy model is installed via the pinned wheel in requirements.txt — no separate download needed
 
 COPY . /app/backend
 WORKDIR /app/backend

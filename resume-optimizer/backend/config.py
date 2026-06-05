@@ -42,6 +42,17 @@ MODEL_SCORER        = "gemini/gemini-2.5-flash-lite"
 # JD Analyzer — Gemini 2.5 Flash-Lite (keyword extraction only)
 MODEL_JD_ANALYZER   = "gemini/gemini-2.5-flash-lite"
 
+# Agentic Phase 2 models
+MODEL_OPTIMIZER          = "gemini/gemini-2.5-flash"        # Strategist — needs reasoning
+MODEL_KEYWORD_INJECT     = "gemini/gemini-2.5-flash-lite"   # ATS tool — cheap, fast
+MODEL_BULLET_STRENGTHEN  = "gemini/gemini-2.5-flash-lite"   # Impact tool
+MODEL_SKILLS_REWRITE     = "gemini/gemini-2.5-flash-lite"   # Skills gap tool
+MODEL_SECTION_HUMANIZE   = "gemini/gemini-2.5-flash-lite"   # Readability tool
+
+# Phase 2 hard limits
+AGENT_MAX_ITER     = 10       # max CrewAI agent iterations before forced stop
+AGENT_TOKEN_BUDGET = 20_000   # cumulative input+output tokens across all Phase 2 tool calls
+
 # ── API URLs ──────────────────────────────────────────────────────────────────
 BACKEND_URL  = os.environ.get("BACKEND_URL",  "http://localhost:8000")
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")
