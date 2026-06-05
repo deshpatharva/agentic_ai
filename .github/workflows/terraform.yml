@@ -21,7 +21,7 @@ concurrency:
 
 permissions:
   id-token: write      # required for OIDC token exchange
-  contents: read
+  contents: write
   pull-requests: write # required to post plan as PR comment
 
 env:
@@ -58,8 +58,14 @@ jobs:
         with:
           terraform_version: "~> 1.5"
 
-      - name: Terraform Format Check
-        run: terraform fmt -check -recursive
+      - name: Terraform Format
+        run: terraform fmt -recursive
+
+      - name: Commit formatted Terraform code
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "style: auto-format terraform files"
+          file_pattern: "*.tf *.tfvars"
 
       - name: Terraform Init
         run: |
