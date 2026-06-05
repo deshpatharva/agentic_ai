@@ -30,7 +30,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from limiter import limiter
 from starlette.middleware.base import BaseHTTPMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy import delete, select, func, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -213,7 +213,7 @@ BASE_DIR = Path(__file__).parent
 # ── Request/response models ──────────────────────────────────────────────────
 
 class AnalyzeJDRequest(BaseModel):
-    jd_text: str
+    jd_text: str = Field(..., max_length=MAX_JD_CHARS)
 
 
 class RunPipelineRequest(BaseModel):
@@ -224,7 +224,7 @@ class RunPipelineRequest(BaseModel):
 class ScrapeJobsRequest(BaseModel):
     resume_id: str
     keywords: str
-    per_source: int = 20
+    per_source: int = Field(default=20, ge=1, le=50)
 
 
 class GenerateDocRequest(BaseModel):
