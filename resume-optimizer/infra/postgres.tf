@@ -11,11 +11,6 @@ resource "azurerm_postgresql_flexible_server" "main" {
   storage_mb             = var.postgres_storage_mb # 32 GB minimum
   zone                   = "1"
 
-  # High availability disabled for dev/student (adds cost)
-  high_availability {
-    mode = "Disabled"
-  }
-
   # Backups: 7 days, geo-redundant off (reduces cost on student account)
   backup_retention_days        = 7
   geo_redundant_backup_enabled = false
