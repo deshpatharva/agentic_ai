@@ -193,11 +193,17 @@ def read_usage_last_n_days(user_id: str, days: int = 30) -> pd.DataFrame:
 
     cutoff = (date.today() - timedelta(days=days)).isoformat()
     dt = DeltaTable.from_uri(path, storage_options=_storage_options())
-    df = dt.to_pandas(
-        filters=[("user_id", "=", user_id), ("date", ">=", cutoff)]
-    )
 
-    df = df[(df["user_id"] == user_id) & (df["date"] >= cutoff)]
+    filters: list = [("date", ">=", cutoff)]
+    if user_id:
+        filters.append(("user_id", "=", user_id))
+
+    df = dt.to_pandas(filters=filters)
+
+    # Safety net for partial Delta pushdown
+    df = df[df["date"] >= cutoff]
+    if user_id:
+        df = df[df["user_id"] == user_id]
     if df.empty:
         return pd.DataFrame(columns=["date", "pipeline_runs", "uploads", "input_tokens", "output_tokens", "tokens_used"])
 
@@ -230,11 +236,17 @@ def read_job_matches(
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     dt = DeltaTable.from_uri(path, storage_options=_storage_options())
-    df = dt.to_pandas(
-        filters=[("user_id", "=", user_id), ("scraped_at", ">=", cutoff)]
-    )
 
-    df = df[(df["user_id"] == user_id) & (df["scraped_at"] >= cutoff)]
+    filters: list = [("scraped_at", ">=", cutoff)]
+    if user_id:
+        filters.append(("user_id", "=", user_id))
+
+    df = dt.to_pandas(filters=filters)
+
+    # Safety net for partial Delta pushdown
+    df = df[df["scraped_at"] >= cutoff]
+    if user_id:
+        df = df[df["user_id"] == user_id]
     df = df.sort_values("scraped_at", ascending=False)
 
     total = len(df)

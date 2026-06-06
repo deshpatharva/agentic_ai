@@ -83,3 +83,50 @@ def test_table_exists_local_with_delta_log(tmp_path):
     p = tmp_path / "table"
     (p / "_delta_log").mkdir(parents=True)
     assert dw._table_exists(str(p)) is True
+
+
+# ── read_usage_last_n_days — empty user_id (admin aggregate) ──────────────────
+
+from unittest.mock import MagicMock, patch
+import pandas as pd
+
+
+def test_empty_user_id_returns_all_rows():
+    """When user_id='', no user_id filter is applied — all rows returned."""
+    mock_df = pd.DataFrame([
+        {"user_id": "user-a", "date": "2026-06-05", "pipeline_runs": 2,
+         "uploads": 2, "input_tokens": 1000, "output_tokens": 500, "tokens_used": 1500},
+        {"user_id": "user-b", "date": "2026-06-05", "pipeline_runs": 1,
+         "uploads": 1, "input_tokens": 800, "output_tokens": 300, "tokens_used": 1100},
+    ])
+    mock_dt = MagicMock()
+    mock_dt.to_pandas.return_value = mock_df
+
+    with patch("delta.writer._table_exists", return_value=True), \
+         patch("delta.writer.DeltaTable") as MockDT:
+        MockDT.from_uri.return_value = mock_dt
+        from delta.writer import read_usage_last_n_days
+        result = read_usage_last_n_days("", 30)
+
+    assert not result.empty, "Admin aggregate must return rows when user_id=''"
+    assert result["pipeline_runs"].sum() == 3
+
+
+def test_non_empty_user_id_filters_rows():
+    """When user_id is non-empty, only that user's rows are returned."""
+    mock_df = pd.DataFrame([
+        {"user_id": "user-a", "date": "2026-06-05", "pipeline_runs": 2,
+         "uploads": 2, "input_tokens": 1000, "output_tokens": 500, "tokens_used": 1500},
+        {"user_id": "user-b", "date": "2026-06-05", "pipeline_runs": 1,
+         "uploads": 1, "input_tokens": 800, "output_tokens": 300, "tokens_used": 1100},
+    ])
+    mock_dt = MagicMock()
+    mock_dt.to_pandas.return_value = mock_df
+
+    with patch("delta.writer._table_exists", return_value=True), \
+         patch("delta.writer.DeltaTable") as MockDT:
+        MockDT.from_uri.return_value = mock_dt
+        from delta.writer import read_usage_last_n_days
+        result = read_usage_last_n_days("user-a", 30)
+
+    assert result["pipeline_runs"].sum() == 2
