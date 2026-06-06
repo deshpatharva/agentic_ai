@@ -11,6 +11,7 @@ Prod: set DELTA_STORAGE_PATH=s3://your-bucket/delta/
 """
 
 import os
+import threading
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -20,6 +21,9 @@ from deltalake import DeltaTable, write_deltalake
 from deltalake.exceptions import TableNotFoundError
 
 from config import AZURE_STORAGE_ACCOUNT_NAME, DELTA_STORAGE_PATH
+
+# Threading lock to prevent concurrent first-write table corruption
+_write_lock = threading.Lock()
 
 # ── Path and storage helpers ──────────────────────────────────────────────────
 
@@ -102,26 +106,27 @@ def write_daily_usage(record: dict) -> None:
     Expected keys: user_id, date (str YYYY-MM-DD or date obj),
                    pipeline_runs, uploads, input_tokens, output_tokens, tokens_used
     """
-    now = datetime.now(timezone.utc).isoformat()
-    row = {
-        "user_id":       str(record["user_id"]),
-        "date":          str(record.get("date", date.today().isoformat())),
-        "pipeline_runs": int(record.get("pipeline_runs", 0)),
-        "uploads":       int(record.get("uploads", 0)),
-        "input_tokens":  int(record.get("input_tokens", 0)),
-        "output_tokens": int(record.get("output_tokens", 0)),
-        "tokens_used":   int(record.get("tokens_used", 0)),
-        "written_at":    now,
-    }
-    df = pd.DataFrame([row])
-    write_deltalake(
-        _usage_path(),
-        df,
-        schema=_USAGE_SCHEMA,
-        partition_by=["date"],
-        mode="append",
-        storage_options=_storage_options(),
-    )
+    with _write_lock:
+        now = datetime.now(timezone.utc).isoformat()
+        row = {
+            "user_id":       str(record["user_id"]),
+            "date":          str(record.get("date", date.today().isoformat())),
+            "pipeline_runs": int(record.get("pipeline_runs", 0)),
+            "uploads":       int(record.get("uploads", 0)),
+            "input_tokens":  int(record.get("input_tokens", 0)),
+            "output_tokens": int(record.get("output_tokens", 0)),
+            "tokens_used":   int(record.get("tokens_used", 0)),
+            "written_at":    now,
+        }
+        df = pd.DataFrame([row])
+        write_deltalake(
+            _usage_path(),
+            df,
+            schema=_USAGE_SCHEMA,
+            partition_by=["date"],
+            mode="append",
+            storage_options=_storage_options(),
+        )
 
 
 def write_job_match(record: dict) -> None:
@@ -132,37 +137,38 @@ def write_job_match(record: dict) -> None:
                    similarity_score, raw_description, scraped_at (ISO str or datetime),
                    is_read (bool, default False)
     """
-    scraped_at = record.get("scraped_at", datetime.now(timezone.utc).isoformat())
-    if isinstance(scraped_at, datetime):
-        scraped_at_str = scraped_at.isoformat()
-        dt = scraped_at
-    else:
-        scraped_at_str = str(scraped_at)
-        dt = datetime.fromisoformat(scraped_at_str[:19])
+    with _write_lock:
+        scraped_at = record.get("scraped_at", datetime.now(timezone.utc).isoformat())
+        if isinstance(scraped_at, datetime):
+            scraped_at_str = scraped_at.isoformat()
+            dt = scraped_at
+        else:
+            scraped_at_str = str(scraped_at)
+            dt = datetime.fromisoformat(scraped_at_str[:19])
 
-    row = {
-        "user_id":          str(record["user_id"]),
-        "resume_id":        str(record.get("resume_id", "")),
-        "job_title":        str(record.get("job_title", "")),
-        "company":          str(record.get("company", "")) if record.get("company") else None,
-        "url":              str(record.get("url", "")) if record.get("url") else None,
-        "source":           str(record.get("source", "unknown")),
-        "similarity_score": float(record["similarity_score"]) if record.get("similarity_score") is not None else None,
-        "raw_description":  str(record.get("raw_description", "")) if record.get("raw_description") else None,
-        "scraped_at":       scraped_at_str,
-        "is_read":          bool(record.get("is_read", False)),
-        "year":             dt.year,
-        "month":            dt.month,
-    }
-    df = pd.DataFrame([row])
-    write_deltalake(
-        _matches_path(),
-        df,
-        schema=_MATCHES_SCHEMA,
-        partition_by=["year", "month"],
-        mode="append",
-        storage_options=_storage_options(),
-    )
+        row = {
+            "user_id":          str(record["user_id"]),
+            "resume_id":        str(record.get("resume_id", "")),
+            "job_title":        str(record.get("job_title", "")),
+            "company":          str(record.get("company", "")) if record.get("company") else None,
+            "url":              str(record.get("url", "")) if record.get("url") else None,
+            "source":           str(record.get("source", "unknown")),
+            "similarity_score": float(record["similarity_score"]) if record.get("similarity_score") is not None else None,
+            "raw_description":  str(record.get("raw_description", "")) if record.get("raw_description") else None,
+            "scraped_at":       scraped_at_str,
+            "is_read":          bool(record.get("is_read", False)),
+            "year":             dt.year,
+            "month":            dt.month,
+        }
+        df = pd.DataFrame([row])
+        write_deltalake(
+            _matches_path(),
+            df,
+            schema=_MATCHES_SCHEMA,
+            partition_by=["year", "month"],
+            mode="append",
+            storage_options=_storage_options(),
+        )
 
 
 # ── Readers ───────────────────────────────────────────────────────────────────
