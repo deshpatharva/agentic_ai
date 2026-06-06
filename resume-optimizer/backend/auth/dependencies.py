@@ -33,6 +33,27 @@ def decode_token(token: str) -> str:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
 
 
+def decode_sse_token(token: str) -> str:
+    """Decode a short-lived SSE token and return user_id. Raises HTTP 401 on failure.
+
+    SSE tokens must have the 'sse': True claim — rejects regular session tokens
+    to prevent the 7-day token from being used in URLs (where it appears in logs).
+    """
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        if not payload.get("sse"):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token for SSE — use POST /auth/sse-token",
+            )
+        user_id: str = payload.get("sub")
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        return user_id
+    except JWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+
+
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),

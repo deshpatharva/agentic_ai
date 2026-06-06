@@ -52,7 +52,7 @@ from scraper.scraper import scrape_jobs
 from db.session import get_db, init_db, AsyncSessionLocal
 from db.models import JobStatus, PipelineEvent, PipelineJob, Resume, User, ProviderCost
 from auth.router import router as auth_router, user_router
-from auth.dependencies import decode_token, get_current_user, check_plan_limit
+from auth.dependencies import decode_token, decode_sse_token, get_current_user, check_plan_limit
 from dashboard.router import router as dashboard_router
 from admin.router import router as admin_router
 
@@ -361,7 +361,7 @@ async def stream_status(
     if not token:
         raise HTTPException(status_code=401, detail="Token required. Pass ?token=<jwt>.")
 
-    user_id = decode_token(token)  # raises 401 if invalid
+    user_id = decode_sse_token(token)  # raises 401 if invalid or not an SSE token
 
     try:
         job_uuid = uuid.UUID(job_id)

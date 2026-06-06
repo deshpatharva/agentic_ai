@@ -164,6 +164,25 @@ async def update_profile(
 
 # ── User routes ────────────────────────────────────────────────────────────────
 
+@user_router.post("/sse-token")
+async def get_sse_token(current_user: User = Depends(get_current_user)):
+    """Issue a 60-second token valid only for SSE connections.
+
+    EventSource cannot send Authorization headers, so tokens must go in the URL.
+    Using the 7-day session token in a URL leaks it into server logs and browser history.
+    This endpoint issues a short-lived, SSE-only token that expires before it can be abused.
+    """
+    import time
+    payload = {
+        "sub": str(current_user.id),
+        "sse": True,
+        "exp": int(time.time()) + 60,
+        "iat": int(time.time()),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    return {"sse_token": token}
+
+
 @user_router.post("/redeem-promo-code")
 async def redeem_promo_code(
     body: dict,
