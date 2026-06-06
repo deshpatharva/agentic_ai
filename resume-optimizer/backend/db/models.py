@@ -9,7 +9,7 @@ from enum import Enum as PyEnum
 
 from sqlalchemy import (
     Boolean, Column, DateTime, Enum, Float, ForeignKey,
-    Integer, JSON, String, Text, Uuid, UniqueConstraint,
+    Index, Integer, JSON, String, Text, text, Uuid, UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -148,7 +148,14 @@ class ProviderCost(Base):
     created_at                    = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at                    = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
-    __table_args__ = ()
+    __table_args__ = (
+        Index(
+            "uix_provider_active_true",
+            "provider",
+            postgresql_where=text("active = true"),
+            unique=True,
+        ),
+    )
 
 
 class DailyUsageCounter(Base):

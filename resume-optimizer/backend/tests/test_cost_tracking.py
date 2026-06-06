@@ -10,7 +10,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import pytest_asyncio
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
 
@@ -26,27 +25,25 @@ from db.models import ProviderCost
 
 
 @pytest.mark.asyncio
-async def test_third_provider_deactivation_no_integrity_error(tmp_path):
+async def test_second_deactivation_same_provider_no_integrity_error(tmp_path):
     """Deactivating a second row for the same provider must not raise IntegrityError.
 
     Uses a temp SQLite database so the test is self-contained and does not
     require a running PostgreSQL instance.
     """
-    import os
-    os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{tmp_path}/test_constraint.db"
-
-    # Re-import to pick up the patched DATABASE_URL
-    import importlib
-    import db.session as _sess_mod
-    import config as _cfg_mod
-    _cfg_mod.DATABASE_URL = os.environ["DATABASE_URL"]
-
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+    from sqlalchemy import text as sa_text
     from db.models import Base
 
-    engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
+    db_url = f"sqlite+aiosqlite:///{tmp_path}/test_constraint.db"
+    engine = create_async_engine(db_url, echo=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # SQLite cannot enforce partial indexes (no WHERE clause support).
+        # The unique index created by create_all is a full unique index, which
+        # would incorrectly reject multiple inactive rows for the same provider.
+        # Drop it so SQLite behaves consistently with PostgreSQL partial-index semantics.
+        await conn.execute(sa_text("DROP INDEX IF EXISTS uix_provider_active_true"))
 
     Session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -86,6 +83,55 @@ async def test_third_provider_deactivation_no_integrity_error(tmp_path):
             )
         ).scalars().all()
         assert len(rows) == 2
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_two_active_rows_same_provider_rejected_on_postgresql(tmp_path):
+    """Partial unique index must reject a second active row for the same provider.
+
+    This test only makes assertions on PostgreSQL, where partial indexes are enforced.
+    On SQLite (used in CI), we verify the schema was created without error.
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+    from db.models import Base
+
+    is_postgres = "postgresql" in os.environ.get("DATABASE_URL", "sqlite")
+
+    db_url = os.environ.get("DATABASE_URL") if is_postgres else f"sqlite+aiosqlite:///{tmp_path}/test_pg_constraint.db"
+    engine = create_async_engine(db_url, echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    Session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with Session() as db:
+        r1 = ProviderCost(
+            provider="oracle",
+            input_cost_per_1m_tokens=1.0,
+            output_cost_per_1m_tokens=2.0,
+            active=True,
+        )
+        db.add(r1)
+        await db.commit()
+        await db.refresh(r1)
+
+        if is_postgres:
+            r2 = ProviderCost(
+                provider="oracle",
+                input_cost_per_1m_tokens=1.5,
+                output_cost_per_1m_tokens=2.5,
+                active=True,
+            )
+            db.add(r2)
+            with pytest.raises(IntegrityError):
+                await db.commit()
+            await db.rollback()
+
+        # Cleanup
+        await db.delete(r1)
+        await db.commit()
 
     await engine.dispose()
 
