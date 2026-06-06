@@ -87,19 +87,19 @@ async def init_db() -> None:
         if count == 0:
             provider_costs = [
                 ProviderCost(
-                    provider="Anthropic",
+                    provider="anthropic",
                     input_cost_per_1m_tokens=0.003,
                     output_cost_per_1m_tokens=0.009,
                     active=True,
                 ),
                 ProviderCost(
-                    provider="Google",
+                    provider="google",
                     input_cost_per_1m_tokens=0.0005,
                     output_cost_per_1m_tokens=0.0015,
                     active=True,
                 ),
                 ProviderCost(
-                    provider="Groq",
+                    provider="groq",
                     input_cost_per_1m_tokens=0.0001,
                     output_cost_per_1m_tokens=0.0001,
                     active=True,
