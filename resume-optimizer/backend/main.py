@@ -560,8 +560,6 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             asyncio.run_coroutine_threadsafe(emit(event), _loop)
 
         try:
-            result_cache.clear()
-
             job_result = await db.execute(select(PipelineJob).where(PipelineJob.id == job_uuid))
             job_row = job_result.scalar_one()
             resume_text: str = job_row.resume_text[:MAX_RESUME_CHARS]
