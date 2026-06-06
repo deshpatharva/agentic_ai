@@ -38,7 +38,20 @@
       "PowerShell(& \"C:\\\\Users\\\\deshp\\\\rv\\\\Scripts\\\\pip.exe\" install \"email-validator\" 2>&1)",
       "PowerShell(& \"C:\\\\Users\\\\deshp\\\\rv\\\\Scripts\\\\python.exe\" -m pip install \"email-validator\" 2>&1)",
       "PowerShell(& \"C:\\\\Users\\\\deshp\\\\rv\\\\Scripts\\\\python.exe\" -m pip install \"email-validator\")",
-      "PowerShell(& \"C:\\\\Users\\\\deshp\\\\rv\\\\Scripts\\\\python.exe\" -c \"import email_validator; print\\('ok', email_validator.__version__\\)\")"
+      "PowerShell(& \"C:\\\\Users\\\\deshp\\\\rv\\\\Scripts\\\\python.exe\" -c \"import email_validator; print\\('ok', email_validator.__version__\\)\")",
+      "PowerShell(C:\\\\Users\\\\deshp\\\\rv\\\\Scripts\\\\python.exe -m pytest \"c:\\\\Users\\\\deshp\\\\Documents\\\\github_repo\\\\agentic_ai\\\\resume-optimizer\\\\backend\\\\tests\\\\test_prod_fixes.py::test_scrape_jobs_rejects_oversized_per_source\" -v 2>&1)",
+      "PowerShell(C:\\\\Users\\\\deshp\\\\rv\\\\Scripts\\\\python.exe -m pip list)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(python -c ' *)",
+      "Bash(python patch_pipeline.py)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('main.py', encoding='utf-8'\\).read\\(\\)\\); print\\('Syntax OK'\\)\")",
+      "Bash(powershell -Command \"Select-String -Path 'backend\\\\auth\\\\dependencies.py' -Pattern 'read_usage_last_n_days'\")",
+      "Bash(powershell -Command \"Select-String -Path 'backend\\\\auth\\\\dependencies.py' -Pattern 'DailyUsageCounter'\")",
+      "Bash(powershell -Command \"Select-String -Path 'backend\\\\db\\\\models.py' -Pattern 'DailyUsageCounter'\")",
+      "Bash(Test-Path \"C:\\\\Users\\\\deshp\\\\Documents\\\\github_repo\\\\agentic_ai\\\\resume-optimizer\\\\backend\\\\alembic\\\\versions\\\\0006_add_daily_usage_counter.py\")",
+      "Bash(Select-String -Path \"backend\\\\auth\\\\router.py\",\"backend\\\\auth\\\\dependencies.py\",\"backend\\\\admin\\\\router.py\",\"backend\\\\scraper\\\\scraper.py\" -Pattern \"datetime\\\\.utcnow\\\\\\(\\\\\\)\")",
+      "Read(//c/Users/deshp/Documents/github_repo/agentic_ai/resume-optimizer/backend/parsers/**)"
     ],
     "additionalDirectories": [
       "c:\\Users\\deshp\\Documents\\github_repo\\agentic_ai\\resume-optimizer\\docs\\superpowers"
