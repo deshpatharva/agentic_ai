@@ -535,116 +535,122 @@ async def scrape_jobs_endpoint(
 
 async def _run_pipeline_task(job_id: str, user_id: str = ""):
     """
-    3-phase optimization pipeline.
+    3-phase optimization pipeline — each DB operation uses its own short-lived session.
+    LLM calls happen entirely outside any DB context to avoid holding connections for minutes.
     Phase 1 (deterministic): claims extraction, JD analysis, baseline score.
     Phase 2 (agentic):       CrewAI Optimization Strategist with 4 targeted tools.
     Phase 3 (deterministic): fabrication guard, docx generation, persistence.
     """
     job_uuid = uuid.UUID(job_id)
+    _loop = asyncio.get_event_loop()
 
-    async with AsyncSessionLocal() as db:
-
-        async def emit(event: dict):
+    async def emit(event: dict):
+        """Each SSE event gets its own short-lived DB connection."""
+        async with AsyncSessionLocal() as db:
             evt = PipelineEvent(job_id=job_uuid, event_json=event)
             db.add(evt)
             await db.commit()
 
-        async def update_job(**kwargs):
+    async def update_job(**kwargs):
+        """Each status update gets its own short-lived DB connection."""
+        async with AsyncSessionLocal() as db:
             kwargs["updated_at"] = datetime.now(timezone.utc)
-            await db.execute(update(PipelineJob).where(PipelineJob.id == job_uuid).values(**kwargs))
+            await db.execute(
+                update(PipelineJob).where(PipelineJob.id == job_uuid).values(**kwargs)
+            )
             await db.commit()
 
-        # Thread-safe SSE bridge: crew tools run in a thread, emit() is async.
-        _loop = asyncio.get_event_loop()
+    def _on_agent_event(event: dict):
+        asyncio.run_coroutine_threadsafe(emit(event), _loop)
 
-        def _on_agent_event(event: dict):
-            asyncio.run_coroutine_threadsafe(emit(event), _loop)
-
-        try:
+    try:
+        # ── Load job (short-lived session, closed before any LLM call) ─────
+        async with AsyncSessionLocal() as db:
             job_result = await db.execute(select(PipelineJob).where(PipelineJob.id == job_uuid))
             job_row = job_result.scalar_one()
             resume_text: str = job_row.resume_text[:MAX_RESUME_CHARS]
             jd_text: str     = job_row.jd_text[:MAX_JD_CHARS]
+            original_filename = job_row.original_filename
 
-            total_input_tokens  = 0
-            total_output_tokens = 0
+        total_input_tokens  = 0
+        total_output_tokens = 0
 
-            # ── Phase 1: Deterministic setup ──────────────────────────────────
-            ledger = await asyncio.to_thread(extract_claims, resume_text)
+        # ── Phase 1: Deterministic setup (no DB held) ──────────────────
+        ledger = await asyncio.to_thread(extract_claims, resume_text)
 
-            await emit({"type": "stage", "message": "Analyzing Job Description...", "stage": "jd_analysis"})
-            jd_result_dict = await analyze_jd(jd_text)
-            jd_result  = jd_result_dict.get("text", jd_result_dict)
-            jd_tokens  = jd_result_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
-            jd_keywords: list[str] = jd_result.get("keywords", [])
-            total_input_tokens  += jd_tokens["input_tokens"]
-            total_output_tokens += jd_tokens["output_tokens"]
-            await emit({"type": "stage", "message": f"JD analyzed — {len(jd_keywords)} keywords extracted.",
-                        "stage": "jd_analysis", "keywords": jd_keywords[:20]})
+        await emit({"type": "stage", "message": "Analyzing Job Description...", "stage": "jd_analysis"})
+        jd_result_dict = await analyze_jd(jd_text)
+        jd_result  = jd_result_dict.get("text", jd_result_dict)
+        jd_tokens  = jd_result_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
+        jd_keywords: list[str] = jd_result.get("keywords", [])
+        total_input_tokens  += jd_tokens["input_tokens"]
+        total_output_tokens += jd_tokens["output_tokens"]
+        await emit({"type": "stage", "message": f"JD analyzed — {len(jd_keywords)} keywords extracted.",
+                    "stage": "jd_analysis", "keywords": jd_keywords[:20]})
 
-            await emit({"type": "stage", "message": "Scoring original resume...", "stage": "score"})
-            baseline_dict   = await score_combined(resume_text, jd_text, jd_keywords)
-            baseline_scores = baseline_dict.get("text", baseline_dict)
-            baseline_tokens = baseline_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
-            total_input_tokens  += baseline_tokens["input_tokens"]
-            total_output_tokens += baseline_tokens["output_tokens"]
+        await emit({"type": "stage", "message": "Scoring original resume...", "stage": "score"})
+        baseline_dict   = await score_combined(resume_text, jd_text, jd_keywords)
+        baseline_scores = baseline_dict.get("text", baseline_dict)
+        baseline_tokens = baseline_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
+        total_input_tokens  += baseline_tokens["input_tokens"]
+        total_output_tokens += baseline_tokens["output_tokens"]
 
-            baseline_avg = round(sum(baseline_scores[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")) / 4)
-            await emit({"type": "average", "score": baseline_avg, "iteration": 0,
-                        "scores": {k: baseline_scores[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")},
-                        "message": f"Original resume score: {baseline_avg}"})
+        baseline_avg = round(sum(baseline_scores[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")) / 4)
+        await emit({"type": "average", "score": baseline_avg, "iteration": 0,
+                    "scores": {k: baseline_scores[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")},
+                    "message": f"Original resume score: {baseline_avg}"})
 
-            scores = {**baseline_scores, "average": baseline_avg}
+        scores = {**baseline_scores, "average": baseline_avg}
 
-            if baseline_avg >= SCORE_TARGET:
-                await emit({"type": "stage",
-                            "message": f"Original resume already scores {baseline_avg} — skipping optimization.",
-                            "stage": "agent"})
+        if baseline_avg >= SCORE_TARGET:
+            await emit({"type": "stage",
+                        "message": f"Original resume already scores {baseline_avg} — skipping optimization.",
+                        "stage": "agent"})
 
-            # ── Phase 2: Agentic optimization ─────────────────────────────────
-            if baseline_avg < SCORE_TARGET:
-                await emit({"type": "stage", "message": "Starting agentic optimization...", "stage": "agent"})
-                agent_result = await run_optimization_async(
-                    job_id=job_id,
-                    resume_text=resume_text,
-                    jd_keywords=jd_keywords,
-                    claims_ledger=ledger,
-                    scores=baseline_scores,
-                    on_event=_on_agent_event,
-                )
-                current_resume   = agent_result["text"]
-                total_input_tokens  += agent_result.get("input_tokens", 0)
-                total_output_tokens += agent_result.get("output_tokens", 0)
-            else:
-                current_resume = resume_text
+        # ── Phase 2: Agentic optimization (no DB held) ─────────────────
+        if baseline_avg < SCORE_TARGET:
+            await emit({"type": "stage", "message": "Starting agentic optimization...", "stage": "agent"})
+            agent_result = await run_optimization_async(
+                job_id=job_id,
+                resume_text=resume_text,
+                jd_keywords=jd_keywords,
+                claims_ledger=ledger,
+                scores=baseline_scores,
+                on_event=_on_agent_event,
+            )
+            current_resume      = agent_result["text"]
+            total_input_tokens  += agent_result.get("input_tokens", 0)
+            total_output_tokens += agent_result.get("output_tokens", 0)
+        else:
+            current_resume = resume_text
 
-            # ── Phase 3: Generate .docx ───────────────────────────────────────
-            await emit({"type": "stage", "message": "Generating optimized .docx file...", "stage": "generate"})
-            blob_name = f"{job_id}.docx"
-            tmp_docx = None
+        # ── Phase 3: Generate .docx (no DB held during file I/O) ───────────
+        await emit({"type": "stage", "message": "Generating optimized .docx file...", "stage": "generate"})
+        blob_name = f"{job_id}.docx"
+        tmp_docx = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as _f:
+                tmp_docx = _f.name
+            await asyncio.to_thread(generate_docx, current_resume, tmp_docx)
+            docx_bytes = await asyncio.to_thread(Path(tmp_docx).read_bytes)
+            await asyncio.to_thread(_storage.upload_output, docx_bytes, blob_name)
+        finally:
+            if tmp_docx is not None:
+                os.unlink(tmp_docx)
+
+        # ── Persist Resume record (short-lived session) ────────────────
+        resume_record = None
+        if user_id:
             try:
-                with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as _f:
-                    tmp_docx = _f.name
-                await asyncio.to_thread(generate_docx, current_resume, tmp_docx)
-                docx_bytes = await asyncio.to_thread(Path(tmp_docx).read_bytes)
-                await asyncio.to_thread(_storage.upload_output, docx_bytes, blob_name)
-            finally:
-                if tmp_docx is not None:
-                    os.unlink(tmp_docx)
-
-            # ── Persist Resume record ───────────────────────────────────────
-            resume_record = None
-            if user_id:
-                try:
+                async with AsyncSessionLocal() as db:
                     ver_q = await db.execute(
                         select(func.coalesce(func.max(Resume.version), 0) + 1)
                         .where(Resume.user_id == user_id)
                     )
                     next_version = ver_q.scalar() or 1
-
                     resume_record = Resume(
                         user_id=user_id,
-                        original_filename=job_row.original_filename,
+                        original_filename=original_filename,
                         file_path=blob_name,
                         jd_text=jd_text,
                         final_score=float(scores.get("average", baseline_avg)),
@@ -655,24 +661,23 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                     db.add(resume_record)
                     await db.commit()
                     await db.refresh(resume_record)
-                except Exception:
-                    _logger.exception(
-                        "job=%s: Resume record save failed — download URL will use job_id fallback",
-                        job_id,
-                    )
+            except Exception:
+                _logger.exception(
+                    "job=%s: Resume record save failed — download URL will use job_id fallback",
+                    job_id,
+                )
 
-            # ── Update PipelineJob ──────────────────────────────────────────
-            await update_job(
-                status=JobStatus.done,
-                download_path=blob_name,
-                scores_json=scores,
-                iteration=1,
-            )
+        await update_job(
+            status=JobStatus.done,
+            download_path=blob_name,
+            scores_json=scores,
+            iteration=1,
+        )
 
-            # ── Calculate cost from token usage ──────────────────────────────
-            cost_cents = 0
-            try:
-                # Fetch active provider costs (Google Gemini is primary model)
+        # ── Calculate cost (short-lived session) ─────────────────────
+        cost_cents = 0
+        try:
+            async with AsyncSessionLocal() as db:
                 cost_result = await db.execute(
                     select(ProviderCost).where(
                         (ProviderCost.provider == "Google") & (ProviderCost.active == True)
@@ -680,46 +685,40 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                 )
                 cost_row = cost_result.scalar_one_or_none()
                 if cost_row:
-                    # Calculate cost in cents
-                    # cost_row.input_cost_per_1m_tokens and output_cost_per_1m_tokens are in dollars per 1M tokens
-                    input_cost_dollars = (total_input_tokens / 1_000_000) * cost_row.input_cost_per_1m_tokens
+                    input_cost_dollars  = (total_input_tokens  / 1_000_000) * cost_row.input_cost_per_1m_tokens
                     output_cost_dollars = (total_output_tokens / 1_000_000) * cost_row.output_cost_per_1m_tokens
                     cost_cents = int((input_cost_dollars + output_cost_dollars) * 100)
+        except Exception:
+            pass
+
+        # ── Write Delta analytics (fire-and-forget, not rate limiting) ─────
+        if user_id:
+            try:
+                await asyncio.to_thread(write_daily_usage, {
+                    "user_id":       user_id,
+                    "date":          date_type.today().isoformat(),
+                    "pipeline_runs": 1,
+                    "uploads":       1,
+                    "input_tokens":  total_input_tokens,
+                    "output_tokens": total_output_tokens,
+                    "tokens_used":   total_input_tokens + total_output_tokens,
+                })
             except Exception:
                 pass
 
-            # ── Write Delta usage ───────────────────────────────────────────
-            if user_id:
-                try:
-                    await asyncio.to_thread(write_daily_usage, {
-                        "user_id":       user_id,
-                        "date":          date_type.today().isoformat(),
-                        "pipeline_runs": 1,
-                        "uploads":       1,
-                        "input_tokens":  total_input_tokens,
-                        "output_tokens": total_output_tokens,
-                        "tokens_used":   total_input_tokens + total_output_tokens,
-                    })
-                except Exception:
-                    pass
+        download_url = (
+            f"/download/{resume_record.id}" if resume_record else f"/download/{job_id}"
+        )
+        await emit({
+            "type":         "done",
+            "message":      "Resume optimization complete! Your optimized resume is ready.",
+            "download_url": download_url,
+            "final_score":  scores.get("average", baseline_avg),
+            "iterations":   1,
+            "cost_cents":   cost_cents,
+            "tokens":       {"input": total_input_tokens, "output": total_output_tokens},
+        })
 
-            # download_url points to the persisted Resume so it's durable across restarts
-            download_url = (
-                f"/download/{resume_record.id}" if resume_record else f"/download/{job_id}"
-            )
-            await emit({
-                "type": "done",
-                "message": "Resume optimization complete! Your optimized resume is ready.",
-                "download_url": download_url,
-                "final_score": scores.get("average", baseline_avg),
-                "iterations": 1,
-                "cost_cents": cost_cents,
-                "tokens": {
-                    "input": total_input_tokens,
-                    "output": total_output_tokens,
-                },
-            })
-
-        except Exception as e:
-            await update_job(status=JobStatus.error, error_message=str(e))
-            await emit({"type": "error", "message": f"Pipeline error: {str(e)}"})
+    except Exception as e:
+        await update_job(status=JobStatus.error, error_message=str(e))
+        await emit({"type": "error", "message": f"Pipeline error: {str(e)}"})
