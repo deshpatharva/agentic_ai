@@ -206,8 +206,7 @@ async def redeem_promo_code(
         user.trial_expires_at = user.trial_expires_at + timedelta(days=promo.days_to_add)
         message = f"Trial extended {promo.days_to_add} days"
     elif promo.type == "discount":
-        # For now, just record it; discount handling deferred to Stripe phase
-        message = "Discount applied"
+        message = "Discount code recorded — your discount will apply at your next billing cycle when Stripe billing is enabled."
 
     # Atomic increment — only succeeds if current_uses < max_uses (prevents double-redemption race)
     result_inc = await db.execute(
