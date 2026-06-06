@@ -63,12 +63,8 @@ async def get_current_user(
 
 
 def _effective_plan(user: User) -> str:
-    """Return the user's effective plan, honouring an active free trial.
-
-    trial_expires_at is still a naive UTC column (until migration 0007 runs).
-    Strip timezone from the aware datetime before comparing to avoid TypeError.
-    """
-    if user.trial_expires_at and user.trial_expires_at > datetime.now(timezone.utc).replace(tzinfo=None):
+    """Return the user's effective plan, honouring an active free trial."""
+    if user.trial_expires_at and user.trial_expires_at > datetime.now(timezone.utc):
         return "pro"
     return user.plan.value
 
