@@ -24,4 +24,12 @@ RUN mkdir -p uploads outputs
 
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# 2 workers: one serves requests while the other runs a pipeline in asyncio.to_thread.
+# --timeout 300: SSE streams and 5-min pipelines exceed the default 30s worker timeout.
+CMD ["gunicorn", "main:app", \
+     "-k", "uvicorn.workers.UvicornWorker", \
+     "-w", "2", \
+     "--bind", "0.0.0.0:8000", \
+     "--timeout", "300", \
+     "--graceful-timeout", "30", \
+     "--access-logfile", "-"]
