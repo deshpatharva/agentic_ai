@@ -183,8 +183,6 @@ async def redeem_promo_code(
         raise HTTPException(status_code=409, detail="Code deactivated")
     if promo.expires_at and promo.expires_at <= datetime.utcnow():
         raise HTTPException(status_code=409, detail="Code expired")
-    if promo.current_uses >= promo.max_uses:
-        raise HTTPException(status_code=409, detail="Code exhausted")
 
     # Check already redeemed
     result = await db.execute(
@@ -211,12 +209,19 @@ async def redeem_promo_code(
         # For now, just record it; discount handling deferred to Stripe phase
         message = "Discount applied"
 
+    # Atomic increment — only succeeds if current_uses < max_uses (prevents double-redemption race)
+    result_inc = await db.execute(
+        update(PromoCode)
+        .where(PromoCode.id == promo.id, PromoCode.current_uses < PromoCode.max_uses)
+        .values(current_uses=PromoCode.current_uses + 1)
+    )
+    await db.flush()
+    if result_inc.rowcount == 0:
+        raise HTTPException(status_code=409, detail="Code exhausted")
+
     # Record redemption
     redemption = UserPromoRedemption(user_id=user.id, promo_code_id=promo.id)
     db.add(redemption)
-
-    # Increment counter
-    promo.current_uses += 1
 
     await db.commit()
 
