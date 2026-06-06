@@ -202,40 +202,19 @@ async def test_complete_groq_returns_prompt_completion_tokens():
         assert result["output_tokens"] == 25
 
 
-@pytest.mark.asyncio
-async def test_provider_seed_uses_lowercase():
-    """Seeded provider names must be lowercase to match admin query strings."""
-    import os, importlib
-    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-    from sqlalchemy import text as sa_text
-    from db.models import Base, ProviderCost
+def test_provider_seed_uses_lowercase():
+    """Verify session.py seeds lowercase provider names.
+    Uses inspect.getsource to catch any regression where capitalized names are reintroduced.
+    """
+    import inspect
+    import db.session as _sess
 
-    db_url = os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
-    engine = create_async_engine(db_url, echo=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
-
-    # Re-run the seed logic from session.py
-    from db import session as _sess_mod
-    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    async with session_factory() as db:
-        from sqlalchemy import text as t
-        result = await db.execute(t("SELECT COUNT(*) FROM provider_costs"))
-        count = result.scalar()
-        if count == 0:
-            costs = [
-                ProviderCost(provider="anthropic", input_cost_per_1m_tokens=0.003, output_cost_per_1m_tokens=0.009, active=True),
-                ProviderCost(provider="google",    input_cost_per_1m_tokens=0.0005, output_cost_per_1m_tokens=0.0015, active=True),
-                ProviderCost(provider="groq",      input_cost_per_1m_tokens=0.0001, output_cost_per_1m_tokens=0.0001, active=True),
-            ]
-            db.add_all(costs)
-            await db.commit()
-
-        result = await db.execute(t("SELECT provider FROM provider_costs WHERE active = true"))
-        providers = {row[0] for row in result.fetchall()}
-
-    await engine.dispose()
-    assert providers == {"anthropic", "google", "groq"}, (
-        f"Seed data uses capitalized names; expected lowercase. Got: {providers}"
-    )
+    source = inspect.getsource(_sess.init_db)
+    for bad in ('"Anthropic"', '"Google"', '"Groq"'):
+        assert bad not in source, (
+            f"session.py contains {bad} — provider names must be lowercase"
+        )
+    for good in ('"anthropic"', '"google"', '"groq"'):
+        assert good in source, (
+            f"session.py must contain {good} in init_db seed"
+        )
