@@ -16,7 +16,8 @@ if not hasattr(_bcrypt, "__about__"):
 
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import JWT_ALGORITHM, JWT_EXPIRE_DAYS, JWT_SECRET, RATE_LIMIT_AUTH, TRIAL_DAYS
@@ -149,8 +150,12 @@ async def update_profile(
 
     user.full_name = request.full_name
     user.email = request.email
-    await db.commit()
-    await db.refresh(user)
+    try:
+        await db.commit()
+        await db.refresh(user)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="Email already in use.")
 
     result = await db.execute(select(PlanLimit).where(PlanLimit.plan == user.plan.value))
     limits = result.scalar_one_or_none()
