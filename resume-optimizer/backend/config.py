@@ -19,6 +19,12 @@ ADZUNA_APP_KEY   = os.environ.get("ADZUNA_APP_KEY", "")
 THE_MUSE_API_KEY = os.environ.get("THE_MUSE_API_KEY", "")   # optional for The Muse
 APIFY_TOKEN      = os.environ.get("APIFY_TOKEN", "")        # optional paid source
 
+# ── Bootstrap ─────────────────────────────────────────────────────────────────
+BOOTSTRAP_SECRET = os.environ.get("BOOTSTRAP_SECRET", "")
+if not BOOTSTRAP_SECRET:
+    import warnings
+    warnings.warn("BOOTSTRAP_SECRET not set — /admin/bootstrap endpoint will reject all requests")
+
 # ── Delta Lake ────────────────────────────────────────────────────────────────
 # Local dev: ./delta_store    Prod: s3://your-bucket/delta/
 DELTA_STORAGE_PATH = os.environ.get("DELTA_STORAGE_PATH", "./delta_store")

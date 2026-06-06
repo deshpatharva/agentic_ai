@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 class BootstrapRequest(BaseModel):
     email: str
+    secret: str
 
 
 class UserListItem(BaseModel):

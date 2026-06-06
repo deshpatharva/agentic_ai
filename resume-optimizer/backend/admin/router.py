@@ -5,13 +5,14 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone, date, time
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.dependencies import get_admin_user
 from admin.schemas import AdminStats, BootstrapRequest, UserUpdate, ProviderCostCreate, ProviderCostsResponse, AnalyticsResponse
-from config import STUCK_JOB_TIMEOUT_MINUTES
+from limiter import limiter
+from config import STUCK_JOB_TIMEOUT_MINUTES, BOOTSTRAP_SECRET
 from db.models import JobStatus, PipelineJob, PlanType, Resume, User, ProviderCost
 from db.session import get_db
 from delta.writer import read_usage_last_n_days, read_job_matches
@@ -71,11 +72,16 @@ async def _user_detail(user: User, db: AsyncSession) -> dict:
 # ── Bootstrap ─────────────────────────────────────────────────────────────────
 
 @router.post("/bootstrap")
+@limiter.limit("3/minute")
 async def bootstrap(
+    request: Request,
     body: BootstrapRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Promote a user to admin. Self-disables once any admin exists."""
+    """Promote first user to admin. Requires BOOTSTRAP_SECRET env var."""
+    if not BOOTSTRAP_SECRET or body.secret != BOOTSTRAP_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid bootstrap secret.")
+
     admin_count = (
         await db.execute(select(func.count(User.id)).where(User.is_admin == True))
     ).scalar()
