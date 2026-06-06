@@ -2,7 +2,6 @@
 Auth dependencies — JWT decoding, user fetching, plan limit checking.
 """
 
-import asyncio
 import uuid as _uuid_module
 from datetime import date, datetime
 
@@ -13,9 +12,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import JWT_ALGORITHM, JWT_SECRET
-from db.models import PlanLimit, User
+from db.models import DailyUsageCounter, PlanLimit, User
 from db.session import get_db
-from delta.writer import read_usage_last_n_days
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
@@ -79,22 +77,24 @@ async def check_plan_limit(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """Raise HTTP 429 if user has hit their daily upload limit."""
+    """Raise HTTP 429 if user has hit their daily upload limit.
+    Uses PostgreSQL DailyUsageCounter — transactional, accurate under concurrent load.
+    Delta Lake reads are too slow (200-2000ms) and writes are fire-and-forget,
+    allowing free users to bypass limits with concurrent requests.
+    """
     result = await db.execute(select(PlanLimit).where(PlanLimit.plan == _effective_plan(user)))
     limits = result.scalar_one_or_none()
     if not limits:
         return user
 
     today_str = date.today().isoformat()
-    try:
-        df = await asyncio.to_thread(read_usage_last_n_days, str(user.id), 1)
-        today_df = df[df["date"] == today_str]
-        used = int(today_df["pipeline_runs"].sum()) if not today_df.empty else 0
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Usage tracking temporarily unavailable. Please try again in a moment.",
-        ) from exc
+    counter_result = await db.execute(
+        select(DailyUsageCounter.runs).where(
+            DailyUsageCounter.user_id == user.id,
+            DailyUsageCounter.date == today_str,
+        )
+    )
+    used = counter_result.scalar() or 0
 
     if used >= limits.daily_uploads:
         raise HTTPException(

@@ -572,6 +572,26 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             jd_text: str     = job_row.jd_text[:MAX_JD_CHARS]
             original_filename = job_row.original_filename
 
+        # ── Increment rate-limit counter at job START (transactional) ──────
+        # Upsert so the first run of the day creates the row atomically.
+        # Counter is read in check_plan_limit before this runs, so incrementing
+        # at start (not end) prevents concurrent bypass of daily limits.
+        if user_id:
+            try:
+                async with AsyncSessionLocal() as db:
+                    await db.execute(
+                        text(
+                            "INSERT INTO daily_usage_counters (user_id, date, runs) "
+                            "VALUES (:uid, :date, 1) "
+                            "ON CONFLICT (user_id, date) DO UPDATE "
+                            "SET runs = daily_usage_counters.runs + 1"
+                        ),
+                        {"uid": user_id, "date": date_type.today().isoformat()},
+                    )
+                    await db.commit()
+            except Exception:
+                _logger.warning("job=%s: failed to increment daily usage counter", job_id)
+
         total_input_tokens  = 0
         total_output_tokens = 0
 

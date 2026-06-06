@@ -151,3 +151,18 @@ class ProviderCost(Base):
     __table_args__ = (
         UniqueConstraint("provider", "active", name="uq_provider_active"),
     )
+
+
+class DailyUsageCounter(Base):
+    """Transactional daily pipeline run counter per user. Used for rate limiting.
+    Delta Lake is for analytics only — not fast enough for real-time rate limits.
+    """
+    __tablename__ = "daily_usage_counters"
+    __table_args__ = (
+        UniqueConstraint("user_id", "date", name="uq_user_date"),
+    )
+
+    id      = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Uuid(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    date    = Column(String(10), nullable=False)   # ISO date "YYYY-MM-DD"
+    runs    = Column(Integer, nullable=False, default=0)
