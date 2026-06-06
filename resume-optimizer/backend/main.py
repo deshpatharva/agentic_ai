@@ -668,10 +668,10 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             # ── Calculate cost from token usage ──────────────────────────────
             cost_cents = 0
             try:
-                # Fetch active provider costs (Anthropic is default)
+                # Fetch active provider costs (Google Gemini is primary model)
                 cost_result = await db.execute(
                     select(ProviderCost).where(
-                        (ProviderCost.provider == "anthropic") & (ProviderCost.active == True)
+                        (ProviderCost.provider == "Google") & (ProviderCost.active == True)
                     )
                 )
                 cost_row = cost_result.scalar_one_or_none()
