@@ -101,7 +101,7 @@ async def register(request: Request, body: RegisterRequest, db: AsyncSession = D
         email=body.email,
         password_hash=pwd_context.hash(body.password),
         full_name=body.full_name,
-        trial_expires_at=datetime.utcnow() + timedelta(days=TRIAL_DAYS),
+        trial_expires_at=datetime.now(timezone.utc) + timedelta(days=TRIAL_DAYS),
     )
     db.add(user)
     await db.commit()
@@ -186,7 +186,7 @@ async def redeem_promo_code(
     # Check validity
     if promo.deactivated_at:
         raise HTTPException(status_code=409, detail="Code deactivated")
-    if promo.expires_at and promo.expires_at <= datetime.utcnow():
+    if promo.expires_at and promo.expires_at <= datetime.now(timezone.utc):
         raise HTTPException(status_code=409, detail="Code expired")
 
     # Check already redeemed
@@ -206,7 +206,7 @@ async def redeem_promo_code(
         user.trial_expires_at = None
         message = f"{promo.target_plan.capitalize()} plan activated!"
     elif promo.type == "trial_extension":
-        if not user.trial_expires_at or user.trial_expires_at <= datetime.utcnow():
+        if not user.trial_expires_at or user.trial_expires_at <= datetime.now(timezone.utc):
             raise HTTPException(status_code=400, detail="No active trial to extend")
         user.trial_expires_at = user.trial_expires_at + timedelta(days=promo.days_to_add)
         message = f"Trial extended {promo.days_to_add} days"

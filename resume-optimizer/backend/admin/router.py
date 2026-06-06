@@ -502,7 +502,7 @@ async def update_user(
 def _promo_status(code) -> str:
     if code.deactivated_at:
         return "deactivated"
-    if code.expires_at and code.expires_at <= datetime.utcnow():
+    if code.expires_at and code.expires_at <= datetime.now(timezone.utc):
         return "expired"
     return "active"
 
@@ -544,7 +544,7 @@ async def create_promo_code(
         discount_percent=body.get("discount_percent"),
         max_uses=max_uses,
         expires_at=expires_at,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
     )
     db.add(promo)
     await db.commit()
@@ -583,12 +583,12 @@ async def list_promo_codes(
     if status == "active":
         query = query.where(
             (PromoCode.deactivated_at == None) &  # noqa: E711
-            ((PromoCode.expires_at == None) | (PromoCode.expires_at > datetime.utcnow()))  # noqa: E711
+            ((PromoCode.expires_at == None) | (PromoCode.expires_at > datetime.now(timezone.utc)))  # noqa: E711
         )
     elif status == "expired":
         query = query.where(
             (PromoCode.deactivated_at == None) &  # noqa: E711
-            (PromoCode.expires_at <= datetime.utcnow())
+            (PromoCode.expires_at <= datetime.now(timezone.utc))
         )
     elif status == "deactivated":
         query = query.where(PromoCode.deactivated_at != None)  # noqa: E711
@@ -605,7 +605,7 @@ async def list_promo_codes(
         status_val = _promo_status(code)
         days_until = None
         if code.expires_at:
-            delta = (code.expires_at - datetime.utcnow()).days
+            delta = (code.expires_at - datetime.now(timezone.utc)).days
             days_until = max(0, delta)
 
         items.append({
@@ -644,7 +644,7 @@ async def deactivate_promo_code(
     if not code:
         raise HTTPException(status_code=404, detail="Code not found")
 
-    code.deactivated_at = datetime.utcnow()
+    code.deactivated_at = datetime.now(timezone.utc)
     await db.commit()
 
     return {

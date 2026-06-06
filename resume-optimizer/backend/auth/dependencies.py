@@ -3,7 +3,7 @@ Auth dependencies — JWT decoding, user fetching, plan limit checking.
 """
 
 import uuid as _uuid_module
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -65,10 +65,10 @@ async def get_current_user(
 def _effective_plan(user: User) -> str:
     """Return the user's effective plan, honouring an active free trial.
 
-    trial_expires_at is stored as naive UTC (DateTime column). Compare
-    against datetime.utcnow() — also naive UTC — to avoid TypeError.
+    trial_expires_at is still a naive UTC column (until migration 0007 runs).
+    Strip timezone from the aware datetime before comparing to avoid TypeError.
     """
-    if user.trial_expires_at and user.trial_expires_at > datetime.utcnow():
+    if user.trial_expires_at and user.trial_expires_at > datetime.now(timezone.utc).replace(tzinfo=None):
         return "pro"
     return user.plan.value
 
