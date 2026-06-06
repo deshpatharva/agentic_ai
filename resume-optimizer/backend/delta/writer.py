@@ -174,9 +174,18 @@ def write_job_match(record: dict) -> None:
 # ── Readers ───────────────────────────────────────────────────────────────────
 
 def read_usage_last_n_days(user_id: str, days: int = 30) -> pd.DataFrame:
-    """
-    Return aggregated daily usage totals for user_id over the last N days.
-    Columns: date, pipeline_runs, uploads, input_tokens, output_tokens, tokens_used
+    """Read usage records for the last n days.
+
+    Args:
+        user_id: The user's UUID string. Pass empty string "" to read aggregate
+                 stats across ALL users — used by admin analytics endpoints only.
+                 Any non-empty string filters to that specific user.
+        days:    Number of days to look back (inclusive of today).
+
+    Returns:
+        pandas DataFrame with columns: user_id, date, pipeline_runs, uploads,
+        input_tokens, output_tokens, tokens_used.
+        Returns empty DataFrame if no data exists.
     """
     path = _usage_path()
     if not _table_exists(path):
