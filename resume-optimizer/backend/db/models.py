@@ -148,9 +148,7 @@ class ProviderCost(Base):
     created_at                    = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at                    = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
-    __table_args__ = (
-        UniqueConstraint("provider", "active", name="uq_provider_active"),
-    )
+    __table_args__ = ()
 
 
 class DailyUsageCounter(Base):
