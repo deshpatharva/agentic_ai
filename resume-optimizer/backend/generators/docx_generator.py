@@ -91,11 +91,27 @@ def _is_name_line(line: str, seq_idx: int) -> bool:
     return True
 
 
+_CONTACT_PATTERNS = re.compile(
+    r"(@|linkedin\.com|github\.com|http|www\.|"
+    r"\+?[\d][\d\s\-\(\)]{7,}|"
+    r"\d{5})",
+    re.IGNORECASE,
+)
+
+
 def _is_contact_line(line: str, seq_idx: int) -> bool:
-    if seq_idx not in (1, 2, 3):
+    """Return True if this line looks like contact information.
+
+    Uses content patterns instead of positional index — LLM-generated resumes
+    frequently start with blank lines, shifting positional assumptions.
+    Only applies within the first 6 non-empty lines to avoid false positives.
+    """
+    if seq_idx > 6:
         return False
-    indicators = ["@", "linkedin", "github", "http", "|", "·", "•", "(", "+"]
-    return any(ind in line.lower() for ind in indicators)
+    stripped = line.strip()
+    if not stripped:
+        return False
+    return bool(_CONTACT_PATTERNS.search(stripped))
 
 
 def generate_docx(resume_text: str, output_path: str) -> str:
