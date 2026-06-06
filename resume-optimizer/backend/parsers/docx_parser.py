@@ -3,37 +3,8 @@ DOCX Resume Parser
 Extracts text from a .docx file and detects common resume sections.
 """
 
-import re
 from docx import Document
-
-
-# Section header patterns — same as PDF parser for consistency
-SECTION_PATTERNS = {
-    "summary": re.compile(
-        r"^(summary|professional\s+summary|objective|profile|about\s+me|career\s+objective)",
-        re.IGNORECASE,
-    ),
-    "experience": re.compile(
-        r"^(experience|work\s+experience|employment|work\s+history|professional\s+experience|career\s+history)",
-        re.IGNORECASE,
-    ),
-    "education": re.compile(
-        r"^(education|academic\s+background|qualifications|academic\s+qualifications)",
-        re.IGNORECASE,
-    ),
-    "skills": re.compile(
-        r"^(skills|technical\s+skills|core\s+competencies|competencies|technologies|tools)",
-        re.IGNORECASE,
-    ),
-    "certifications": re.compile(
-        r"^(certifications?|licenses?|credentials?|professional\s+development)",
-        re.IGNORECASE,
-    ),
-    "projects": re.compile(
-        r"^(projects?|key\s+projects?|notable\s+projects?)",
-        re.IGNORECASE,
-    ),
-}
+from utils.section_parser import SECTION_PATTERNS
 
 
 def _detect_sections(lines: list[str]) -> dict:
