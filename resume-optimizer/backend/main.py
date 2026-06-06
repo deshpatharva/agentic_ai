@@ -656,7 +656,10 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                     await db.commit()
                     await db.refresh(resume_record)
                 except Exception:
-                    pass
+                    _logger.exception(
+                        "job=%s: Resume record save failed — download URL will use job_id fallback",
+                        job_id,
+                    )
 
             # ── Update PipelineJob ──────────────────────────────────────────
             await update_job(
