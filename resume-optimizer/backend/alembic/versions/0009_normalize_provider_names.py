@@ -6,7 +6,6 @@ Create Date: 2026-06-06
 """
 from alembic import op
 from sqlalchemy import text
-from sqlalchemy.engine.reflection import Inspector
 
 revision = "0009"
 down_revision = "0008"
@@ -21,7 +20,7 @@ def upgrade() -> None:
     if dialect == "postgresql":
         op.execute(
             text(
-                "ALTER TABLE provider_costs ADD CONSTRAINT chk_provider_lower "
+                "ALTER TABLE provider_costs ADD CONSTRAINT IF NOT EXISTS chk_provider_lower "
                 "CHECK (provider = lower(provider))"
             )
         )
