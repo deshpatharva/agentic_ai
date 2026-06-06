@@ -493,6 +493,7 @@ async def generate_doc_endpoint(
 @app.post("/scrape-jobs")
 async def scrape_jobs_endpoint(
     request: ScrapeJobsRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -519,9 +520,9 @@ async def scrape_jobs_endpoint(
             try:
                 await asyncio.to_thread(write_job_match, record)
             except Exception:
-                pass
+                _logger.warning("write_job_match failed for posting: %s", posting.get("title", "unknown"))
 
-    asyncio.create_task(_persist())
+    background_tasks.add_task(_persist)
 
     return {
         "total":    len(postings),
