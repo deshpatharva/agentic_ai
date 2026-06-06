@@ -1,7 +1,7 @@
 """Tests for G.3 promo codes — redemption and admin management."""
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uuid as uuid_module
 
 import pytest
@@ -76,10 +76,10 @@ async def test_redeem_upgrade_code(client, promo_db):
     from sqlalchemy import update as sa_update
     await promo_db.execute(
         sa_update(User).where(User.email == "test_upgrade@test.com")
-        .values(trial_expires_at=datetime.utcnow() + timedelta(days=1))
+        .values(trial_expires_at=datetime.now(timezone.utc) + timedelta(days=1))
     )
 
-    code = PromoCode(code="UPGRADE50", type="plan_upgrade", target_plan="pro", max_uses=10, created_at=datetime.utcnow())
+    code = PromoCode(code="UPGRADE50", type="plan_upgrade", target_plan="pro", max_uses=10, created_at=datetime.now(timezone.utc))
     promo_db.add(code)
     await promo_db.commit()
 
@@ -100,7 +100,7 @@ async def test_redeem_upgrade_code(client, promo_db):
 @pytest.mark.asyncio
 async def test_redeem_extension_code(client, promo_db):
     """Redeem extension code: trial_expires_at increases."""
-    trial_end = datetime.utcnow() + timedelta(days=3)
+    trial_end = datetime.now(timezone.utc) + timedelta(days=3)
 
     await client.post("/auth/register", json={"email": "ext@test.com", "password": "Test1234!", "full_name": "Test"})
 
@@ -110,7 +110,7 @@ async def test_redeem_extension_code(client, promo_db):
         .values(trial_expires_at=trial_end)
     )
 
-    code = PromoCode(code="EXTEND7", type="trial_extension", days_to_add=7, max_uses=10, created_at=datetime.utcnow())
+    code = PromoCode(code="EXTEND7", type="trial_extension", days_to_add=7, max_uses=10, created_at=datetime.now(timezone.utc))
     promo_db.add(code)
     await promo_db.commit()
 
@@ -157,7 +157,7 @@ async def test_code_exhausted(client, promo_db):
     """Redeem exhausted code: 409 error."""
     await client.post("/auth/register", json={"email": "exhaust@test.com", "password": "Test1234!", "full_name": "Test"})
 
-    code = PromoCode(code="USED", type="plan_upgrade", target_plan="pro", max_uses=1, current_uses=1, created_at=datetime.utcnow())
+    code = PromoCode(code="USED", type="plan_upgrade", target_plan="pro", max_uses=1, current_uses=1, created_at=datetime.now(timezone.utc))
     promo_db.add(code)
     await promo_db.commit()
 
@@ -177,7 +177,7 @@ async def test_code_expired(client, promo_db):
     await client.post("/auth/register", json={"email": "expired@test.com", "password": "Test1234!", "full_name": "Test"})
 
     code = PromoCode(code="EXPIRED", type="plan_upgrade", target_plan="pro", max_uses=10,
-                    expires_at=datetime.utcnow() - timedelta(days=1), created_at=datetime.utcnow())
+                    expires_at=datetime.now(timezone.utc) - timedelta(days=1), created_at=datetime.now(timezone.utc))
     promo_db.add(code)
     await promo_db.commit()
 
@@ -202,11 +202,11 @@ async def test_code_already_redeemed(client, promo_db):
     registered_user = result.scalar_one()
 
     code_id = uuid_module.uuid4()
-    code = PromoCode(id=code_id, code="TWICE", type="plan_upgrade", target_plan="pro", max_uses=10, created_at=datetime.utcnow())
+    code = PromoCode(id=code_id, code="TWICE", type="plan_upgrade", target_plan="pro", max_uses=10, created_at=datetime.now(timezone.utc))
     promo_db.add(code)
 
     # Add redemption record for the registered user
-    redemption = UserPromoRedemption(user_id=registered_user.id, promo_code_id=code_id, redeemed_at=datetime.utcnow())
+    redemption = UserPromoRedemption(user_id=registered_user.id, promo_code_id=code_id, redeemed_at=datetime.now(timezone.utc))
     promo_db.add(redemption)
     await promo_db.commit()
 

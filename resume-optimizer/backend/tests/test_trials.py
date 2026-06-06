@@ -1,7 +1,7 @@
 """Tests for G.2 free trials — registration, effective plan logic, auth responses."""
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
@@ -72,7 +72,7 @@ async def test_new_user_gets_trial(client):
     user_data = r.json()["user"]
     assert user_data["trial_expires_at"] is not None
     expires = datetime.fromisoformat(user_data["trial_expires_at"].rstrip("Z"))
-    expected = datetime.utcnow() + timedelta(days=TRIAL_DAYS)
+    expected = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=TRIAL_DAYS)
     assert abs((expires - expected).total_seconds()) < 60
 
 
@@ -96,7 +96,7 @@ async def test_trial_in_login_response(client):
 def test_active_trial_gives_pro():
     """User with future trial_expires_at gets effective plan 'pro'."""
     user = User()
-    user.trial_expires_at = datetime.utcnow() + timedelta(days=1)
+    user.trial_expires_at = datetime.now(timezone.utc) + timedelta(days=1)
     user.plan = PlanType.free
     assert _effective_plan(user) == "pro"
 
@@ -104,7 +104,7 @@ def test_active_trial_gives_pro():
 def test_expired_trial_gives_actual_plan():
     """User with past trial_expires_at gets their actual plan."""
     user = User()
-    user.trial_expires_at = datetime.utcnow() - timedelta(days=1)
+    user.trial_expires_at = datetime.now(timezone.utc) - timedelta(days=1)
     user.plan = PlanType.free
     assert _effective_plan(user) == "free"
 
@@ -120,6 +120,6 @@ def test_no_trial_gives_actual_plan():
 def test_trial_expiry_boundary():
     """Trial is inactive the moment trial_expires_at passes (1 second ago)."""
     user = User()
-    user.trial_expires_at = datetime.utcnow() - timedelta(seconds=1)
+    user.trial_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
     user.plan = PlanType.free
     assert _effective_plan(user) == "free"
