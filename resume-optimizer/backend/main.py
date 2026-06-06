@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import os
+import signal
 import sys
 import tempfile
 import time
@@ -116,6 +117,17 @@ async def lifespan(app: FastAPI):
     await init_db()
     cleanup_task = asyncio.create_task(_cleanup_events())
     reap_task = asyncio.create_task(_reap_stuck_jobs())
+
+    # On SIGTERM (gunicorn graceful shutdown), log so operators know in-flight
+    # pipeline tasks may be cancelled. The stuck-job reaper marks them as error
+    # on the next worker start. A proper task queue (ARQ/Celery) would be needed
+    # for zero-loss shutdown guarantees.
+    loop = asyncio.get_event_loop()
+    loop.add_signal_handler(
+        signal.SIGTERM,
+        lambda: _logger.warning("SIGTERM received — in-flight pipeline tasks will be marked error by reaper on next start"),
+    )
+
     yield
     cleanup_task.cancel()
     reap_task.cancel()
