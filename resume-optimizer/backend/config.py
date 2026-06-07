@@ -22,8 +22,10 @@ APIFY_TOKEN      = os.environ.get("APIFY_TOKEN", "")        # optional paid sour
 # ── Bootstrap ─────────────────────────────────────────────────────────────────
 BOOTSTRAP_SECRET = os.environ.get("BOOTSTRAP_SECRET", "")
 if not BOOTSTRAP_SECRET:
-    import warnings
-    warnings.warn("BOOTSTRAP_SECRET not set — /admin/bootstrap endpoint will reject all requests")
+    raise ValueError(
+        "BOOTSTRAP_SECRET env var is required. "
+        "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+    )
 
 # ── Delta Lake ────────────────────────────────────────────────────────────────
 # Local dev: ./delta_store    Prod: s3://your-bucket/delta/

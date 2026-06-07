@@ -22,8 +22,9 @@ from deltalake.exceptions import TableNotFoundError
 
 from config import AZURE_STORAGE_ACCOUNT_NAME, DELTA_STORAGE_PATH
 
-# Threading lock to prevent concurrent first-write table corruption
-_write_lock = threading.Lock()
+# Per-table write locks — prevents transaction log corruption on concurrent writes
+_usage_lock   = threading.Lock()
+_matches_lock = threading.Lock()
 
 # ── Path and storage helpers ──────────────────────────────────────────────────
 
@@ -106,7 +107,7 @@ def write_daily_usage(record: dict) -> None:
     Expected keys: user_id, date (str YYYY-MM-DD or date obj),
                    pipeline_runs, uploads, input_tokens, output_tokens, tokens_used
     """
-    with _write_lock:
+    with _usage_lock:
         now = datetime.now(timezone.utc).isoformat()
         row = {
             "user_id":       str(record["user_id"]),
@@ -137,7 +138,7 @@ def write_job_match(record: dict) -> None:
                    similarity_score, raw_description, scraped_at (ISO str or datetime),
                    is_read (bool, default False)
     """
-    with _write_lock:
+    with _matches_lock:
         scraped_at = record.get("scraped_at", datetime.now(timezone.utc).isoformat())
         if isinstance(scraped_at, datetime):
             scraped_at_str = scraped_at.isoformat()
@@ -260,30 +261,16 @@ def read_job_matches(
 # ── Maintenance ───────────────────────────────────────────────────────────────
 
 def vacuum_old_matches(retention_days: int = 90) -> None:
-    """
-    Hard-delete job_matches rows older than retention_days using Delta VACUUM.
-    Run weekly via APScheduler.
+    """Hard-delete job_matches rows older than retention_days using Delta's native DELETE.
+    Called weekly by the stuck-job reaper in main.py.
     """
     path = _matches_path()
     if not _table_exists(path):
         return
 
     cutoff_dt = datetime.now(timezone.utc) - timedelta(days=retention_days)
-    cutoff_str = cutoff_dt.isoformat()
+    cutoff_iso = cutoff_dt.strftime("%Y-%m-%dT%H:%M:%S")
 
     dt = DeltaTable.from_uri(path, storage_options=_storage_options())
-    df = dt.to_pandas()
-
-    # Keep only recent rows — rewrite the table
-    df_keep = df[df["scraped_at"] >= cutoff_str]
-    if len(df_keep) < len(df):
-        write_deltalake(
-            path,
-            df_keep,
-            schema=_MATCHES_SCHEMA,
-            partition_by=["year", "month"],
-            mode="overwrite",
-            storage_options=_storage_options(),
-        )
-        dt = DeltaTable.from_uri(path, storage_options=_storage_options())
-        dt.vacuum(retention_hours=0, enforce_retention_duration=False, dry_run=False)
+    dt.delete(f"scraped_at < '{cutoff_iso}'")
+    dt.vacuum(retention_hours=168, dry_run=False)  # 7-day file retention

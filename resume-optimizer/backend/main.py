@@ -48,7 +48,7 @@ from parsers.pdf_parser import parse_pdf
 from parsers.docx_parser import parse_docx
 from generators.docx_generator import generate_docx
 import storage as _storage
-from delta.writer import write_daily_usage, write_job_match
+from delta.writer import write_daily_usage, write_job_match, vacuum_old_matches
 from scraper.scraper import scrape_jobs
 from db.session import get_db, init_db, AsyncSessionLocal
 from db.models import JobStatus, PipelineEvent, PipelineJob, Resume, User, ProviderCost
@@ -61,6 +61,7 @@ from admin.router import router as admin_router
 # ── App setup ────────────────────────────────────────────────────────────────
 
 _EVENT_TTL_HOURS = 24  # delete PipelineEvent rows older than this
+_last_vacuum_ts: float = 0.0
 
 
 async def _cleanup_events():
@@ -100,7 +101,10 @@ async def _reap_once(db: AsyncSession) -> list[str]:
 
 
 async def _reap_stuck_jobs():
-    """Periodically mark stuck running jobs as error (every 5 minutes)."""
+    """Periodically mark stuck running jobs as error (every 5 minutes).
+    Also runs vacuum_old_matches weekly and cleans stale agent sessions.
+    """
+    global _last_vacuum_ts
     while True:
         await asyncio.sleep(300)
         try:
@@ -108,8 +112,24 @@ async def _reap_stuck_jobs():
                 ids = await _reap_once(db)
                 if ids:
                     _logger.warning("Reaped %d stuck jobs: %s", len(ids), ids)
+            try:
+                from agents.optimizer_agent import cleanup_stale_sessions
+                stale = cleanup_stale_sessions()
+                if stale:
+                    _logger.info("Cleaned up %d stale pipeline sessions", stale)
+            except Exception:
+                pass
         except Exception:
             _logger.exception("Reaper cycle failed — will retry in 5 minutes")
+
+        now = time.time()
+        if now - _last_vacuum_ts >= 7 * 24 * 3600:
+            try:
+                await asyncio.to_thread(vacuum_old_matches)
+                _last_vacuum_ts = now
+                _logger.info("vacuum_old_matches completed")
+            except Exception:
+                _logger.exception("vacuum_old_matches failed — will retry next week")
 
 
 @asynccontextmanager
@@ -224,6 +244,12 @@ BASE_DIR = Path(__file__).parent
 
 # ── Request/response models ──────────────────────────────────────────────────
 
+_UPLOAD_MAGIC = {
+    ".pdf":  b"%PDF-",
+    ".docx": b"PK\x03\x04",
+}
+
+
 class AnalyzeJDRequest(BaseModel):
     jd_text: str = Field(..., max_length=MAX_JD_CHARS)
 
@@ -268,6 +294,13 @@ async def upload_resume(
         raise HTTPException(
             status_code=413,
             detail=f"File too large. Maximum upload size is {MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
+        )
+
+    expected_magic = _UPLOAD_MAGIC.get(ext, b"")
+    if not contents[:8].startswith(expected_magic):
+        raise HTTPException(
+            status_code=400,
+            detail=f"File content does not match {ext} extension.",
         )
 
     with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
@@ -421,7 +454,7 @@ async def stream_status(
                     if current_status in (JobStatus.done, JobStatus.error):
                         return
 
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(2.0)
 
     return EventSourceResponse(event_generator())
 
@@ -507,6 +540,7 @@ async def scrape_jobs_endpoint(
     request: ScrapeJobsRequest,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Scrape job postings from all active sources using provided keywords.
@@ -514,6 +548,20 @@ async def scrape_jobs_endpoint(
     """
     if not request.keywords.strip():
         raise HTTPException(status_code=400, detail="keywords cannot be empty.")
+
+    if request.resume_id:
+        try:
+            resume_uuid = uuid.UUID(request.resume_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid resume_id format.")
+        resume = await db.scalar(
+            select(Resume).where(
+                Resume.id == resume_uuid,
+                Resume.user_id == current_user.id,
+            )
+        )
+        if not resume:
+            raise HTTPException(status_code=403, detail="Resume not found or access denied.")
 
     try:
         postings = await scrape_jobs(request.keywords.strip(), per_source=request.per_source)

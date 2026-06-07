@@ -10,6 +10,7 @@ frontend/dist/
 
 # ── Environment / secrets ─────────────────────────────────────────────────────
 .env
+.env.local
 *.env
 
 # ── Terraform ────────────────────────────────────────────────────────────────
@@ -26,4 +27,14 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+env/
+rv/
 *.superpowers/
+
+# ── Test databases (ephemeral — never commit) ─────────────────────────────────
+*.db
+*.db-shm
+*.db-wal
+
+# ── Delta Lake test artifacts ─────────────────────────────────────────────────
+delta_store/

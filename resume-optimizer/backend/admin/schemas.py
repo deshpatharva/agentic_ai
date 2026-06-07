@@ -1,5 +1,6 @@
-from typing import Optional
-from pydantic import BaseModel
+from datetime import datetime
+from typing import Literal, Optional
+from pydantic import BaseModel, Field
 
 
 class BootstrapRequest(BaseModel):
@@ -78,6 +79,16 @@ class PromoCodeStats(BaseModel):
     redeemed_by_plan: dict  # {free: N, pro: N, enterprise: N}
     last_redeemed_at: Optional[str] = None
     first_redeemed_at: Optional[str] = None
+
+
+class PromoCodeCreate(BaseModel):
+    code: str = Field(min_length=1, max_length=50)
+    type: Literal["plan_upgrade", "trial_extension", "discount"]
+    target_plan: Optional[str] = None
+    days_to_add: Optional[int] = Field(None, ge=1, le=365)
+    discount_percent: Optional[int] = Field(None, ge=1, le=100)
+    max_uses: int = Field(ge=1)
+    expires_at: Optional[datetime] = None
 
 
 class ProviderCostCreate(BaseModel):

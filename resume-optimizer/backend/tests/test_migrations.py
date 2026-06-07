@@ -59,4 +59,4 @@ def test_migrations_stamped_after_run(tmp_path, monkeypatch):
     conn.close()
 
     assert len(rows) == 1
-    assert rows[0][0] == "0009"
+    assert rows[0][0] == "0010"

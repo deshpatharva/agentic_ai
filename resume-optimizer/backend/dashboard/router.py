@@ -45,17 +45,27 @@ async def summary(
     )
     recent = recent_q.scalars().all()
 
-    # Today's usage from Delta
+    from datetime import date
+    from db.models import DailyUsageCounter
+    today_str = date.today().isoformat()
+
+    # runs_today: use transactional counter — authoritative for quota display
+    counter = await db.scalar(
+        select(DailyUsageCounter).where(
+            DailyUsageCounter.user_id == user.id,
+            DailyUsageCounter.date == today_str,
+        )
+    )
+    runs_today = counter.runs if counter else 0
+
+    # uploads_today, tokens_today: best-effort from Delta analytics
     try:
-        from datetime import date
-        today_str = date.today().isoformat()
         df = await asyncio.to_thread(read_usage_last_n_days, user_id, 1)
         today_df = df[df["date"] == today_str]
-        runs_today    = int(today_df["pipeline_runs"].sum()) if not today_df.empty else 0
-        uploads_today = int(today_df["uploads"].sum())      if not today_df.empty else 0
-        tokens_today  = int(today_df["tokens_used"].sum())  if not today_df.empty else 0
+        uploads_today = int(today_df["uploads"].sum()) if not today_df.empty else 0
+        tokens_today  = int(today_df["tokens_used"].sum()) if not today_df.empty else 0
     except Exception:
-        runs_today = uploads_today = tokens_today = 0
+        uploads_today = tokens_today = 0
 
     # Unread job matches from Delta
     try:

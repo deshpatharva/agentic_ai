@@ -118,11 +118,32 @@ class ResumeState:
 
 _sessions: Dict[str, ResumeState] = {}
 _sessions_lock = threading.Lock()
+_session_created_at: Dict[str, "datetime"] = {}
+_SESSION_TTL_SECONDS = 4 * 3600  # 4 hours
+
+
+def cleanup_stale_sessions() -> int:
+    """Remove sessions older than _SESSION_TTL_SECONDS. Called by the stuck-job reaper.
+    Returns count of cleaned up sessions.
+    """
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    with _sessions_lock:
+        stale = [
+            k for k, t in _session_created_at.items()
+            if (now - t).total_seconds() > _SESSION_TTL_SECONDS
+        ]
+        for k in stale:
+            _sessions.pop(k, None)
+            _session_created_at.pop(k, None)
+    return len(stale)
 
 
 def register_session(session_key: str, state: ResumeState) -> None:
+    from datetime import datetime, timezone
     with _sessions_lock:
         _sessions[session_key] = state
+        _session_created_at[session_key] = datetime.now(timezone.utc)
 
 
 def get_session(session_key: str) -> Optional[ResumeState]:
@@ -133,6 +154,7 @@ def get_session(session_key: str) -> Optional[ResumeState]:
 def cleanup_session(session_key: str) -> None:
     with _sessions_lock:
         _sessions.pop(session_key, None)
+        _session_created_at.pop(session_key, None)
 
 
 # ── LLM helper ────────────────────────────────────────────────────────────────

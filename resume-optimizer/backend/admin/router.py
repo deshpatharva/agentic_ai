@@ -10,7 +10,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.dependencies import get_admin_user
-from admin.schemas import AdminStats, BootstrapRequest, UserUpdate, ProviderCostCreate, ProviderCostsResponse, AnalyticsResponse
+from admin.schemas import AdminStats, BootstrapRequest, UserUpdate, ProviderCostCreate, ProviderCostsResponse, AnalyticsResponse, PromoCodeCreate
 from limiter import limiter
 from config import STUCK_JOB_TIMEOUT_MINUTES, BOOTSTRAP_SECRET
 from db.models import JobStatus, PipelineJob, PlanType, Resume, User, ProviderCost
@@ -102,7 +102,9 @@ async def bootstrap(
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
 @router.get("/stats", response_model=AdminStats)
+@limiter.limit("30/minute")
 async def get_stats(
+    request: Request,
     _: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -177,9 +179,19 @@ async def get_stats(
                     output_cost = (month_output / 1_000_000) * cost_row.output_cost_per_1m_tokens
                     total_cost_cents_month = int((input_cost + output_cost) * 100)
 
-                    # Calculate average cost per run
-                    if pipeline_runs_today > 0:
-                        avg_cost_per_run = (total_cost_cents_month / 100) / pipeline_runs_today if pipeline_runs_today > 0 else 0
+                    # Calculate average cost per run using monthly denominator
+                    pipeline_runs_month = (
+                        await db.execute(
+                            select(func.count(PipelineJob.id)).where(
+                                PipelineJob.created_at >= month_start,
+                                PipelineJob.status == JobStatus.done,
+                            )
+                        )
+                    ).scalar() or 0
+                    avg_cost_per_run = (
+                        (total_cost_cents_month / 100) / pipeline_runs_month
+                        if pipeline_runs_month > 0 else 0
+                    )
     except Exception:
         # If Delta read fails, just return 0 costs
         pass
@@ -199,7 +211,9 @@ async def get_stats(
 # ── Analytics ─────────────────────────────────────────────────────────────────
 
 @router.get("/analytics", response_model=AnalyticsResponse)
+@limiter.limit("10/minute")
 async def get_analytics(
+    request: Request,
     _: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
     days: int = Query(30, ge=1, le=90),
@@ -511,39 +525,26 @@ def _promo_status(code) -> str:
 
 @router.post("/promo-codes", status_code=201)
 async def create_promo_code(
-    body: dict,
+    body: PromoCodeCreate,
     user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a promo code."""
     from db.models import PromoCode
 
-    code_str = body.get("code", "").strip()
-    if not code_str or len(code_str) > 50:
-        raise HTTPException(status_code=400, detail="Code must be 1-50 chars")
-    code_type = body.get("type", "").strip()
-    if code_type not in ["plan_upgrade", "trial_extension", "discount"]:
-        raise HTTPException(status_code=400, detail="Invalid type")
-    max_uses = body.get("max_uses", 0)
-    if max_uses < 1:
-        raise HTTPException(status_code=400, detail="max_uses must be >= 1")
-
-    result = await db.execute(select(PromoCode).where(PromoCode.code == code_str))
+    result = await db.execute(select(PromoCode).where(PromoCode.code == body.code))
     if result.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Code already exists")
 
-    expires_at_raw = body.get("expires_at")
-    expires_at = datetime.fromisoformat(expires_at_raw) if expires_at_raw else None
-
     promo = PromoCode(
         id=uuid.uuid4(),
-        code=code_str,
-        type=code_type,
-        target_plan=body.get("target_plan"),
-        days_to_add=body.get("days_to_add"),
-        discount_percent=body.get("discount_percent"),
-        max_uses=max_uses,
-        expires_at=expires_at,
+        code=body.code,
+        type=body.type,
+        target_plan=body.target_plan,
+        days_to_add=body.days_to_add,
+        discount_percent=body.discount_percent,
+        max_uses=body.max_uses,
+        expires_at=body.expires_at,
         created_at=datetime.now(timezone.utc),
     )
     db.add(promo)
@@ -596,8 +597,11 @@ async def list_promo_codes(
     if type:
         query = query.where(PromoCode.type == type)
 
-    query = query.limit(limit).offset(offset)
-    result = await db.execute(query)
+    total = (
+        await db.execute(select(func.count()).select_from(query.subquery()))
+    ).scalar() or 0
+
+    result = await db.execute(query.limit(limit).offset(offset))
     codes = result.scalars().all()
 
     items = []
@@ -620,7 +624,7 @@ async def list_promo_codes(
             "days_until_expiry": days_until,
         })
 
-    return {"total": len(items), "codes": items}
+    return {"total": total, "codes": items}
 
 
 # ── Promo code deactivate ─────────────────────────────────────────────────────

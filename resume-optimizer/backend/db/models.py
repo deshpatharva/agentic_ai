@@ -43,7 +43,7 @@ class User(Base):
     stripe_subscription_id = Column(String(255), nullable=True)
     is_active              = Column(Boolean, default=True, nullable=False)
     is_admin               = Column(Boolean, default=False, nullable=False)
-    created_at             = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    created_at             = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     trial_expires_at       = Column(DateTime(timezone=True), nullable=True)
 
     resumes = relationship("Resume", back_populates="user", cascade="all, delete-orphan")
@@ -71,7 +71,7 @@ class Resume(Base):
     scores_json       = Column(JSON, nullable=True)
     iterations        = Column(Integer, default=0, nullable=False)
     version           = Column(Integer, default=1, nullable=False)
-    created_at        = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    created_at        = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
     user = relationship("User", back_populates="resumes")
 
@@ -90,8 +90,8 @@ class PipelineJob(Base):
     download_path     = Column(String(1000), nullable=True)
     iteration         = Column(Integer, default=0, nullable=False)
     error_message     = Column(String(2000), nullable=True)
-    created_at        = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
-    updated_at        = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    created_at        = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at        = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
     events = relationship("PipelineEvent", back_populates="job", cascade="all, delete-orphan")
 
@@ -103,7 +103,7 @@ class PipelineEvent(Base):
     id         = Column(Integer, primary_key=True, autoincrement=True)  # sequential ordering
     job_id     = Column(Uuid(), ForeignKey("pipeline_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
     event_json = Column(JSON, nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
     job = relationship("PipelineJob", back_populates="events")
 
@@ -130,7 +130,7 @@ class UserPromoRedemption(Base):
     id              = Column(Integer(), primary_key=True, autoincrement=True)
     user_id         = Column(Uuid(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     promo_code_id   = Column(Uuid(), ForeignKey("promo_codes.id", ondelete="CASCADE"), nullable=False, index=True)
-    redeemed_at     = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    redeemed_at     = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
     __table_args__ = (
         UniqueConstraint("user_id", "promo_code_id", name="uq_user_code"),
@@ -145,8 +145,8 @@ class ProviderCost(Base):
     input_cost_per_1m_tokens      = Column(Float, nullable=False)
     output_cost_per_1m_tokens     = Column(Float, nullable=False)
     active                        = Column(Boolean, default=True, nullable=False)
-    created_at                    = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
-    updated_at                    = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    created_at                    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at                    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
     __table_args__ = (
         Index(
