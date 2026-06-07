@@ -97,7 +97,20 @@
       "Bash(python -m pytest backend/tests/test_migrations.py backend/tests/test_prod_fixes.py backend/tests/test_cost_tracking.py backend/tests/test_delta_writer.py -x -q --tb=short)",
       "Bash(python -m pytest backend/tests/test_migrations.py backend/tests/test_cost_tracking.py backend/tests/test_delta_writer.py -q --tb=short)",
       "Bash(python -c \"import ast, sys; [ast.parse\\(open\\(f\\).read\\(\\)\\) or print\\(f, 'OK'\\) for f in ['auth/dependencies.py','auth/router.py','admin/router.py']] and print\\('all OK'\\)\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('main.py'\\).read\\(\\)\\); print\\('main.py OK'\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\('main.py'\\).read\\(\\)\\); print\\('main.py OK'\\)\")",
+      "Bash(python -m pytest tests/test_humanizer_improvements.py -v)",
+      "Bash(python -m pytest tests/test_scorer_improvements.py tests/test_jd_analyzer_improvements.py tests/test_claims_improvements.py tests/test_humanizer_improvements.py tests/test_rewriter_improvements.py -v)",
+      "Bash(python -m pytest tests/test_cost_flow.py -v)",
+      "Bash(python -m pytest tests/test_agent_improvements.py -v)",
+      "Bash(python -m pytest tests/test_agent_improvements.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_prod_fixes.py::test_result_cache_clear_not_in_pipeline -v --tb=short)",
+      "Bash(python -m pytest tests/test_prod_fixes.py::test_result_cache_clear_not_in_pipeline -v --tb=long)",
+      "Bash(python -m pytest tests/test_optimizer_improvements.py tests/test_agent_improvements.py -v)",
+      "Bash(python -m pytest tests/test_pipeline_integration.py -v)",
+      "Bash(python -m pytest tests/test_scorer_improvements.py tests/test_jd_analyzer_improvements.py tests/test_claims_improvements.py tests/test_humanizer_improvements.py tests/test_rewriter_improvements.py tests/test_optimizer_improvements.py tests/test_agent_improvements.py tests/test_pipeline_integration.py tests/test_cost_flow.py -v)",
+      "Bash(python -m pytest tests/test_migrations.py tests/test_cost_tracking.py tests/test_delta_writer.py tests/test_ratelimit.py -v)",
+      "Bash(python -m pytest tests/test_migrations.py tests/test_cost_tracking.py tests/test_delta_writer.py -v)",
+      "Bash(python -m pytest tests/test_ratelimit.py --tb=short)"
     ],
     "additionalDirectories": [
       "c:\\Users\\deshp\\Documents\\github_repo\\agentic_ai\\resume-optimizer\\docs\\superpowers",
