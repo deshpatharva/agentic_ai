@@ -30,6 +30,8 @@ from utils.section_parser import detect_sections
 
 _logger = logging.getLogger(__name__)
 
+_WORK_THRESHOLD = max(75, SCORE_TARGET - 10)
+
 
 def _build_task_description(
     session_key: str,
@@ -48,7 +50,7 @@ def _build_task_description(
     read   = scores.get("readability", {})
 
     def _s(d):    return d.get("score", 0)
-    def _flag(d): return "NEEDS WORK" if _s(d) < 75 else "ok — skip"
+    def _flag(d): return "NEEDS WORK" if _s(d) < _WORK_THRESHOLD else "ok — skip"
 
     return f"""Optimize the resume stored under session key: {session_key}
 
@@ -57,17 +59,17 @@ Do NOT pass any resume text to tools. They load from session state automatically
 
 SCORES (call tools only for dimensions marked NEEDS WORK):
   ATS Match:   {_s(ats):>3}  [{_flag(ats)}]
-    missing_keywords_csv = "{', '.join(ats.get('missing_keywords', [])[:8])}"
+    missing_keywords_csv = "{', '.join(ats.get('missing_keywords', [])[:15])}"
     target_sections_csv  = "experience,summary"
 
   Impact:      {_s(impact):>3}  [{_flag(impact)}]
-    weak_bullets_csv = "{', '.join(impact.get('weak_bullets', [])[:4])}"
+    weak_bullets_csv = "{', '.join(impact.get('weak_bullets', [])[:8])}"
 
   Skills Gap:  {_s(skills):>3}  [{_flag(skills)}]
-    missing_skills_csv = "{', '.join(skills.get('missing_skills', [])[:8])}"
+    missing_skills_csv = "{', '.join(skills.get('missing_skills', [])[:15])}"
 
   Readability: {_s(read):>3}  [{_flag(read)}]
-    section_name = "summary"
+    section_name = "{read.get('worst_section', 'experience')}"
     issues_csv   = "{', '.join(read.get('issues', [])[:4])}"
 
 AVAILABLE SECTIONS IN STATE: {', '.join(available_sections)}

@@ -33,7 +33,6 @@ from crewai import Agent
 from crewai.tools import tool
 
 from config import (
-    AGENT_MAX_ITER,
     AGENT_TOKEN_BUDGET,
     MODEL_BULLET_STRENGTHEN,
     MODEL_KEYWORD_INJECT,
@@ -42,7 +41,10 @@ from config import (
     MODEL_SKILLS_REWRITE,
     SCORE_TARGET,
 )
+
 from utils.section_parser import SECTION_ORDER
+
+AGENT_MAX_ITER = 6  # max CrewAI agent iterations before forced stop
 
 
 # ── Shared session state ──────────────────────────────────────────────────────
@@ -458,7 +460,7 @@ def create_optimizer_agent() -> Agent:
         role="Resume Optimization Strategist",
         goal=(
             f"Raise each score dimension above {SCORE_TARGET} by calling targeted tools "
-            f"on underperforming sections only. Skip any dimension already above 75."
+            f"on underperforming sections only. Skip any dimension not marked NEEDS WORK."
         ),
         backstory=(
             "You are a senior resume strategist who applies precise, surgical fixes. "
