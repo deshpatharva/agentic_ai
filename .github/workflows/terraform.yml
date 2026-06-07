@@ -44,6 +44,7 @@ jobs:
       TF_VAR_google_ai_api_key:  ${{ secrets.TF_VAR_GOOGLE_AI_API_KEY }}
       TF_VAR_groq_api_key:       ${{ secrets.TF_VAR_GROQ_API_KEY }}
       TF_VAR_anthropic_api_key:  ${{ secrets.TF_VAR_ANTHROPIC_API_KEY }}
+      TF_VAR_client_id: ${{ secrets.AZURE_CLIENT_ID }}
 
     steps:
       - uses: actions/checkout@v4
@@ -153,6 +154,7 @@ jobs:
       TF_VAR_google_ai_api_key: ${{ secrets.TF_VAR_GOOGLE_AI_API_KEY }}
       TF_VAR_groq_api_key:      ${{ secrets.TF_VAR_GROQ_API_KEY }}
       TF_VAR_anthropic_api_key: ${{ secrets.TF_VAR_ANTHROPIC_API_KEY }}
+      TF_VAR_client_id: ${{ secrets.AZURE_CLIENT_ID }}
 
     steps:
       - uses: actions/checkout@v4
