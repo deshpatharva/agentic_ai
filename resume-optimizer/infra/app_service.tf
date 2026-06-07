@@ -48,7 +48,7 @@ resource "azurerm_linux_web_app" "backend" {
   # Service, DefaultAzureCredential will prefer the MI automatically.
   app_settings = {
     AZURE_TENANT_ID = data.azurerm_client_config.current.tenant_id
-    AZURE_CLIENT_ID = azuread_application.app.client_id
+    AZURE_CLIENT_ID = data.azuread_application.app.client_id
     KEY_VAULT_URL   = azurerm_key_vault.main.vault_uri
 
     SCM_DO_BUILD_DURING_DEPLOYMENT     = "true"
