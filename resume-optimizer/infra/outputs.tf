@@ -7,7 +7,7 @@ output "tenant_id" {
 
 output "service_principal_client_id" {
   description = "Service Principal Client ID (non-secret GUID) — add as AZURE_CLIENT_ID in GitHub Actions secrets"
-  value       = var.client_id
+  value       = data.azurerm_client_config.current.client_id
 }
 
 # ── Key Vault ─────────────────────────────────────────────────────────────────

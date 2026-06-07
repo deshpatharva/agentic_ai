@@ -1,7 +1,3 @@
-variable "subscription_id" {
-  description = "Azure subscription ID (find with: az account show --query id -o tsv)"
-  type        = string
-}
 
 variable "location" {
   description = "Azure region for all resources"
@@ -121,20 +117,8 @@ variable "stripe_secret_key" {
   default     = "REPLACE_ME"
 }
 
-variable "client_id" {
-  type        = string
-  description = "The Application (client) ID of the existing App Registration"
-}
 
-variable "app_object_id" {
-  type        = string
-  description = "The Object ID of the App Registration (used for federated identity credentials)"
-}
 
-variable "sp_object_id" {
-  type        = string
-  description = "The Object ID of the Service Principal assigned to this App Registration (used for RBAC role assignments)"
-}
 
 # ── Blob lifecycle / retention ────────────────────────────────────────────────
 
