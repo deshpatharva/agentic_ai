@@ -69,7 +69,7 @@ resource "azurerm_role_assignment" "terraform_tfstate" {
 terraform {
     backend "azurerm" {
      resource_group_name  = "resumai-rg-dev"          # from output above
-     storage_account_name = "resumaitfst<suffix>"     # from output above
+     storage_account_name = "resumeaitfstg28nr1"     # from output above
      container_name       = "tfstate"
      key                  = "resume-optimizer/dev/terraform.tfstate"
      use_azuread_auth     = true                       # no shared key needed
