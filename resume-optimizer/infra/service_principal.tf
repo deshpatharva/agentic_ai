@@ -1,34 +1,23 @@
-# ── Azure AD App Registration ─────────────────────────────────────────────────
+# ── Azure AD App Registration (UPDATED TO DATA LOOKUPS) ───────────────────────
 
 data "azuread_client_config" "current" {}
 
-resource "azuread_application" "app" {
-  display_name = local.sp_app_name
-  owners       = [data.azuread_client_config.current.object_id]
+# 1. Changed to data block and supplied your exact Client ID from the portal
+data "azuread_application" "app" {
+  client_id = var.client_id
 }
 
-resource "azuread_service_principal" "app" {
-  client_id                    = azuread_application.app.client_id
-  app_role_assignment_required = false
-  owners                       = [data.azuread_client_config.current.object_id]
+# 2. Changed to data block because your pipeline identity's service principal already exists
+data "azuread_service_principal" "app" {
+  client_id = data.azuread_application.app.client_id
 }
 
 # ── OIDC Federated Identity Credentials (no stored secret) ───────────────────
 # GitHub Actions authenticates to Azure via OIDC — no client_secret is created,
 # stored, or rotated.  The SP is used only by CI/CD pipelines.
-#
-# GitHub Actions workflow must set:
-#   permissions:
-#     id-token: write
-#     contents: read
-#
-# And use the azure/login action with:
-#   client-id:       ${{ secrets.AZURE_CLIENT_ID }}    (non-sensitive GUID)
-#   tenant-id:       ${{ secrets.AZURE_TENANT_ID }}    (non-sensitive GUID)
-#   subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
 resource "azuread_application_federated_identity_credential" "github_main" {
-  application_id = azuread_application.app.id
+  application_id = data.azuread_application.app.id # Updated reference to use data block
   display_name   = "github-main"
   description    = "GitHub Actions OIDC — deshpatharva/agentic_ai main branch"
   audiences      = ["api://AzureADTokenExchange"]
@@ -37,7 +26,7 @@ resource "azuread_application_federated_identity_credential" "github_main" {
 }
 
 resource "azuread_application_federated_identity_credential" "github_env_production" {
-  application_id = azuread_application.app.id
+  application_id = data.azuread_application.app.id # Updated reference to use data block
   display_name   = "github-env-production"
   description    = "GitHub Actions OIDC — deshpatharva/agentic_ai production environment"
   audiences      = ["api://AzureADTokenExchange"]
