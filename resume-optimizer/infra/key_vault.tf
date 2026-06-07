@@ -34,7 +34,7 @@ resource "time_sleep" "wait_for_kv_rbac" {
 resource "azurerm_role_assignment" "sp_kv_secrets_user" {
   scope                = azurerm_key_vault.main.id
   role_definition_name = "Key Vault Secrets User"
-  principal_id         = azuread_service_principal.app.object_id
+  principal_id         = data.azuread_service_principal.app.object_id
 }
 
 # ── Secrets ───────────────────────────────────────────────────────────────────
