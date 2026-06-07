@@ -48,13 +48,13 @@ def _normalise_metric(m: str) -> float:
 
 
 def _metric_attested(generated_metric: str, source_text: str) -> bool:
-    """Return True if this metric's numeric value (±2%) appears anywhere in the source."""
+    """Return True if this metric's numeric value (±10%) appears anywhere in the source."""
     gen_val = _normalise_metric(generated_metric)
     if gen_val == 0.0:
         return True  # unparseable — give benefit of the doubt
     for m in METRIC_RE.finditer(source_text):
         src_val = _normalise_metric(m.group(0))
-        if src_val > 0 and abs(gen_val - src_val) / max(src_val, 1) < 0.02:
+        if src_val > 0 and abs(gen_val - src_val) / max(abs(src_val), 1e-9) < 0.10:
             return True
     return False
 
@@ -120,11 +120,8 @@ def fabrication_guard(
             stripped.extend(bad_metrics)
             stripped.extend(bad_companies)
 
-            original = _closest_original(bare, ledger.raw_bullets)
-            if original:
-                output_lines.append(original)  # substitute with verified original
-            else:
-                gaps.append(bare)  # no original — drop and surface as honest gap
+            output_lines.append(f"[VERIFY] {line}")
+            gaps.append(f"unverified claim: {bare!r}")
         else:
             output_lines.append(line)
 

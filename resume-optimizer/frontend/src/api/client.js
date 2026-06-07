@@ -13,7 +13,21 @@ client.interceptors.request.use((config) => {
 
 client.interceptors.response.use(
   (res) => res,
-  (err) => {
+  async (err) => {
+    const config = err.config;
+
+    // Retry GET requests on 5xx (transient server errors / cold starts)
+    if (
+      config &&
+      config.method === 'get' &&
+      err.response?.status >= 500 &&
+      (config._retryCount || 0) < 2
+    ) {
+      config._retryCount = (config._retryCount || 0) + 1;
+      await new Promise((r) => setTimeout(r, 1000 * config._retryCount));
+      return client(config);
+    }
+
     if (err.response?.status === 401) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');

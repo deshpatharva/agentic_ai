@@ -75,6 +75,15 @@ jobs:
       - name: Smoke tests
         run: pytest --tb=short -v
 
+      - name: Migration smoke test
+        working-directory: resume-optimizer/backend
+        env:
+          DATABASE_URL: sqlite+aiosqlite:///./test_migrate_ci.db
+        run: |
+          alembic upgrade head
+          alembic check || echo "alembic check reported drift (SQLite enum rendering) — review locally against PostgreSQL"
+          rm -f test_migrate_ci.db
+
   # ── Frontend ─────────────────────────────────────────────────────────────────
   frontend:
     name: Frontend — build

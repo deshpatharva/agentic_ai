@@ -6,6 +6,9 @@ import Sidebar from '../components/layout/Sidebar';
 import Card from '../components/ui/Card';
 import QuotaBar from '../components/ui/QuotaBar';
 import Badge from '../components/ui/Badge';
+import UsageTrendsChart from '../components/UsageTrendsChart';
+import CostTrendChart from '../components/CostTrendChart';
+import MatchAnalytics from '../components/MatchAnalytics';
 import client from '../api/client';
 import useAuthStore from '../store/authStore';
 
@@ -20,6 +23,12 @@ export default function Dashboard() {
   const [summary, setSummary] = useState(null);
   const [usage, setUsage] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [usageData, setUsageData] = useState([]);
+  const [costData, setCostData] = useState([]);
+  const [matchData, setMatchData] = useState([]);
+  const [chartDays, setChartDays] = useState(30);
+  const [loadingCharts, setLoadingCharts] = useState(false);
+  const [chartError, setChartError] = useState(null);
 
   useEffect(() => {
     Promise.all([
@@ -27,6 +36,33 @@ export default function Dashboard() {
       client.get('/dashboard/usage-history').then(r => setUsage(r.data.rows || [])),
     ]).finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    const fetchAnalytics = async () => {
+      setLoadingCharts(true);
+      setChartError(null);
+      try {
+        const usageRes = await fetch(`/api/dashboard/usage-history?days=${chartDays}`);
+        if (usageRes.ok) {
+          const usageJson = await usageRes.json();
+          setUsageData(usageJson.rows || []);
+          setCostData(usageJson.rows || []);
+        }
+
+        const matchRes = await fetch(`/api/dashboard/match-analytics?days=${chartDays}`);
+        if (matchRes.ok) {
+          const matchJson = await matchRes.json();
+          setMatchData(matchJson.analytics || []);
+        }
+      } catch (err) {
+        setChartError(err.message);
+      } finally {
+        setLoadingCharts(false);
+      }
+    };
+
+    fetchAnalytics();
+  }, [chartDays]);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
@@ -97,6 +133,27 @@ export default function Dashboard() {
                 )}
               </div>
             </Card>
+          </div>
+
+          {/* Charts section */}
+          <div className="mb-8">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-semibold">Analytics</h2>
+              <select
+                value={chartDays}
+                onChange={(e) => setChartDays(parseInt(e.target.value))}
+                className="px-3 py-1 border rounded"
+              >
+                <option value={7}>Last 7 days</option>
+                <option value={30}>Last 30 days</option>
+                <option value={90}>Last 90 days</option>
+              </select>
+            </div>
+            <div className="grid grid-cols-1 gap-6">
+              <UsageTrendsChart data={usageData} isLoading={loadingCharts} error={chartError} />
+              <CostTrendChart data={costData} isLoading={loadingCharts} error={chartError} />
+              <MatchAnalytics data={matchData} isLoading={loadingCharts} error={chartError} />
+            </div>
           </div>
 
           {/* Recent resumes */}

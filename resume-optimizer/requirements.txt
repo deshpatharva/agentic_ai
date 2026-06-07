@@ -11,6 +11,8 @@ spacy==3.7.5
 en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
 scikit-learn
 anthropic
+litellm
+crewai>=1.0.0,<2.0
 python-multipart
 sse-starlette
 python-dotenv
@@ -19,8 +21,18 @@ groq
 # Delta Lake
 deltalake
 pandas
+# Azure Storage
+azure-storage-blob>=12.19.0
+azure-identity>=1.15.0
 pyarrow
+# Database migrations
+alembic>=1.13.0
+email-validator
+python-jose[cryptography]
 # Job scraper
 httpx
+slowapi>=0.1.9
+python-json-logger>=2.0.7
+gunicorn
 # Optional: boto3 for S3 Delta storage in prod
 # boto3

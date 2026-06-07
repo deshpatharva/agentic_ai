@@ -12,6 +12,12 @@ import Dashboard    from './pages/Dashboard';
 import JobMatches   from './pages/JobMatches';
 import Settings     from './pages/Settings';
 import ProtectedRoute from './components/ProtectedRoute';
+import AdminRoute from './components/AdminRoute';
+import AdminLayout from './pages/admin/AdminLayout';
+import AdminDashboard from './pages/admin/AdminDashboard';
+import UserList from './pages/admin/UserList';
+import UserDetail from './pages/admin/UserDetail';
+import AdminAnalytics from './pages/AdminAnalytics';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
@@ -28,6 +34,17 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         <Route path="/dashboard/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
         <Route path="/dashboard/resumes"  element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
         <Route path="/dashboard/usage"    element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+
+        <Route
+          path="/admin"
+          element={<AdminRoute><AdminLayout /></AdminRoute>}
+        >
+          <Route index element={<AdminDashboard />} />
+          <Route path="users" element={<UserList />} />
+          <Route path="users/:id" element={<UserDetail />} />
+        </Route>
+
+        <Route path="/admin/analytics" element={<AdminRoute><AdminAnalytics /></AdminRoute>} />
 
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>

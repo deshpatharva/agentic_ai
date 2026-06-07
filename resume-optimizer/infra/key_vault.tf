@@ -7,7 +7,7 @@ resource "azurerm_key_vault" "main" {
   tenant_id                  = data.azurerm_client_config.current.tenant_id
   sku_name                   = "standard"
   soft_delete_retention_days = 7
-  purge_protection_enabled   = false # false = easier teardown in dev; set true for prod
+  purge_protection_enabled = true
 
   # Azure RBAC for secrets — no legacy access policies
   rbac_authorization_enabled = true

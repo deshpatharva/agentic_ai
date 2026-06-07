@@ -15,7 +15,7 @@ Call scrape_jobs(keywords) to get deduplicated results from all active sources.
 
 import asyncio
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
@@ -46,7 +46,7 @@ def _posting(
         "url":             url.strip() if url else None,
         "source":          source,
         "raw_description": raw_description.strip() if raw_description else None,
-        "scraped_at":      datetime.utcnow().isoformat(),
+        "scraped_at":      datetime.now(timezone.utc).isoformat(),
     }
 
 

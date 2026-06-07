@@ -13,6 +13,10 @@ export default function Settings() {
   const { user, logout, fetchMe } = useAuthStore();
   const [form, setForm] = useState({ full_name: user?.full_name || '', email: user?.email || '' });
   const [saving, setSaving] = useState(false);
+  const [promoCode, setPromoCode] = useState('');
+  const [promoLoading, setPromoLoading] = useState(false);
+  const [promoMessage, setPromoMessage] = useState('');
+  const [promoError, setPromoError] = useState('');
 
   const save = async (e) => {
     e.preventDefault();
@@ -25,6 +29,23 @@ export default function Settings() {
       toast.error(err?.response?.data?.detail || 'Failed to save profile');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleRedeemCode = async () => {
+    setPromoLoading(true);
+    setPromoMessage('');
+    setPromoError('');
+
+    try {
+      const response = await client.post('/user/redeem-promo-code', { code: promoCode });
+      setPromoMessage(response.data.message);
+      setPromoCode('');
+      await fetchMe();
+    } catch (err) {
+      setPromoError(err?.response?.data?.detail || 'Failed to redeem code');
+    } finally {
+      setPromoLoading(false);
     }
   };
 
@@ -64,6 +85,31 @@ export default function Settings() {
               )}
             </div>
             <QuotaBar used={user?.limits?.daily_uploads || 0} total={user?.limits?.daily_uploads || 2} label="Daily uploads quota" />
+          </Card>
+
+          {/* Redeem Promo Code */}
+          <Card header="Redeem Promo Code">
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Enter promo code"
+                  value={promoCode}
+                  onChange={(e) => setPromoCode(e.target.value)}
+                  className="flex-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all duration-150 focus:shadow-[0_0_0_3px_rgba(127,119,221,.15)]"
+                  disabled={promoLoading}
+                />
+                <Button
+                  onClick={handleRedeemCode}
+                  disabled={promoLoading || !promoCode}
+                  size="sm"
+                >
+                  {promoLoading ? 'Redeeming...' : 'Redeem'}
+                </Button>
+              </div>
+              {promoMessage && <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-800">{promoMessage}</div>}
+              {promoError && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-800">{promoError}</div>}
+            </div>
           </Card>
 
           {/* Danger zone */}

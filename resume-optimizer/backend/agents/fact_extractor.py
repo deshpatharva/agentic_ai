@@ -10,7 +10,7 @@ The ledger is the anti-hallucination ground truth:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import spacy
 
@@ -45,6 +45,9 @@ class ClaimsLedger:
     companies:   frozenset  # ORG entities extracted from the original resume
     metrics:     frozenset  # explicit quantitative metrics found in the original text
     raw_bullets: tuple      # every non-header line verbatim (provenance for guard)
+    job_titles:  frozenset = field(default_factory=frozenset)  # job titles found in the resume
+    degrees:     frozenset = field(default_factory=frozenset)  # academic degrees found in the resume
+    date_ranges: frozenset = field(default_factory=frozenset)  # date ranges found in the resume
 
     def prompt_block(self) -> str:
         """Compact string injected into the rewriter prompt."""
@@ -81,8 +84,33 @@ def extract_claims(resume_text: str) -> ClaimsLedger:
         and not _BULLET_STRIP_RE.sub("", line).strip().endswith(":")
     ]
 
+    # Job titles — pattern matching on common title words
+    _TITLE_PAT = re.compile(
+        r'\b(?:Senior|Junior|Lead|Principal|Staff|VP|Director|Manager|Engineer|Developer|'
+        r'Analyst|Architect|Scientist|Specialist|Consultant|Associate)\b[\w\s]{0,20}'
+        r'(?:Engineer|Developer|Manager|Director|Analyst|Architect|Scientist|Specialist|Consultant)\b',
+        re.IGNORECASE,
+    )
+    job_titles = frozenset(m.group().strip() for m in _TITLE_PAT.finditer(resume_text))
+
+    # Degrees
+    _DEGREE_PAT = re.compile(
+        r'\b(?:Bachelor|Master|PhD|Ph\.D|B\.S\.|M\.S\.|B\.A\.|M\.A\.|MBA|Associate)[^,\n]{0,50}',
+        re.IGNORECASE,
+    )
+    degrees = frozenset(m.group().strip() for m in _DEGREE_PAT.finditer(resume_text))
+
+    # Date ranges
+    _DATE_PAT = re.compile(
+        r'\b(?:19|20)\d{2}\s*[-–—]\s*(?:(?:19|20)\d{2}|[Pp]resent|[Cc]urrent)\b'
+    )
+    date_ranges = frozenset(m.group() for m in _DATE_PAT.finditer(resume_text))
+
     return ClaimsLedger(
         companies=companies,
         metrics=metrics,
         raw_bullets=tuple(bullets),
+        job_titles=job_titles,
+        degrees=degrees,
+        date_ranges=date_ranges,
     )

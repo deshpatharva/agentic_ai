@@ -2,19 +2,18 @@
 Auth dependencies — JWT decoding, user fetching, plan limit checking.
 """
 
-import asyncio
-from datetime import date
+import uuid as _uuid_module
+from datetime import date, datetime, timezone
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import JWT_ALGORITHM, JWT_SECRET
-from db.models import PlanLimit, User
+from db.models import DailyUsageCounter, PlanLimit, User, TokenBlocklist
 from db.session import get_db
-from delta.writer import read_usage_last_n_days
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
@@ -26,6 +25,27 @@ def decode_token(token: str) -> str:
     """
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user_id: str = payload.get("sub")
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        return user_id
+    except JWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+
+
+def decode_sse_token(token: str) -> str:
+    """Decode a short-lived SSE token and return user_id. Raises HTTP 401 on failure.
+
+    SSE tokens must have the 'sse': True claim — rejects regular session tokens
+    to prevent the 7-day token from being used in URLs (where it appears in logs).
+    """
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        if not payload.get("sse"):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token for SSE — use POST /auth/sse-token",
+            )
         user_id: str = payload.get("sub")
         if not user_id:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
@@ -48,46 +68,82 @@ async def get_current_user(
         user_id: str = payload.get("sub")
         if not user_id:
             raise credentials_exc
+        jti: str = payload.get("jti")
     except JWTError:
         raise credentials_exc
 
-    result = await db.execute(select(User).where(User.id == user_id, User.is_active == True))
+    if jti:
+        blocked = await db.scalar(
+            select(TokenBlocklist).where(TokenBlocklist.jti == jti)
+        )
+        if blocked:
+            raise credentials_exc
+
+    try:
+        user_uuid = _uuid_module.UUID(user_id)
+    except (ValueError, AttributeError):
+        raise credentials_exc
+
+    result = await db.execute(select(User).where(User.id == user_uuid, User.is_active == True))
     user = result.scalar_one_or_none()
     if not user:
         raise credentials_exc
     return user
 
 
+def _effective_plan(user: User) -> str:
+    """Return the user's effective plan, honouring an active free trial."""
+    if user.trial_expires_at and user.trial_expires_at > datetime.now(timezone.utc):
+        return "pro"
+    return user.plan.value
+
+
 async def check_plan_limit(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """Raise HTTP 429 if user has hit their daily upload limit."""
-    result = await db.execute(select(PlanLimit).where(PlanLimit.plan == user.plan.value))
+    """Raise HTTP 429 if user has hit their daily upload limit.
+    Uses PostgreSQL DailyUsageCounter — transactional, accurate under concurrent load.
+    Delta Lake reads are too slow (200-2000ms) and writes are fire-and-forget,
+    allowing free users to bypass limits with concurrent requests.
+    """
+    result = await db.execute(select(PlanLimit).where(PlanLimit.plan == _effective_plan(user)))
     limits = result.scalar_one_or_none()
     if not limits:
         return user
 
     today_str = date.today().isoformat()
-    try:
-        df = await asyncio.to_thread(read_usage_last_n_days, str(user.id), 1)
-        today_df = df[df["date"] == today_str]
-        used = int(today_df["pipeline_runs"].sum()) if not today_df.empty else 0
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Usage tracking temporarily unavailable. Please try again in a moment.",
-        ) from exc
 
-    if used >= limits.daily_uploads:
+    # Atomically increment the counter (upsert). The increment is part of the
+    # request's DB transaction — if the handler raises (including this 429), the
+    # transaction never commits and the increment is rolled back automatically.
+    await db.execute(
+        text(
+            "INSERT INTO daily_usage_counters (user_id, date, runs) "
+            "VALUES (:uid, :date, 1) "
+            "ON CONFLICT (user_id, date) DO UPDATE "
+            "SET runs = daily_usage_counters.runs + 1"
+        ),
+        {"uid": str(user.id), "date": today_str},
+    )
+
+    counter_result = await db.execute(
+        select(DailyUsageCounter.runs).where(
+            DailyUsageCounter.user_id == user.id,
+            DailyUsageCounter.date == today_str,
+        )
+    )
+    used = counter_result.scalar() or 1
+
+    if used > limits.daily_uploads:
         raise HTTPException(
             status_code=429,
             detail={
                 "error": "limit_reached",
                 "limit": limits.daily_uploads,
-                "used": used,
+                "used": used - 1,
                 "plan": user.plan.value,
-                "upgrade_message": f"Upgrade to Pro for 20 uploads/day",
+                "upgrade_message": "Upgrade to Pro for 20 uploads/day",
             },
         )
     return user

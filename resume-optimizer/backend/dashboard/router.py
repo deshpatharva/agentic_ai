@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.dependencies import get_current_user
-from db.models import PlanLimit, Resume, User
+from db.models import PlanLimit, Resume, User, ProviderCost
 from db.session import get_db
 from delta.writer import read_job_matches, read_usage_last_n_days
 from config import BACKEND_URL
@@ -45,17 +45,27 @@ async def summary(
     )
     recent = recent_q.scalars().all()
 
-    # Today's usage from Delta
+    from datetime import date
+    from db.models import DailyUsageCounter
+    today_str = date.today().isoformat()
+
+    # runs_today: use transactional counter — authoritative for quota display
+    counter = await db.scalar(
+        select(DailyUsageCounter).where(
+            DailyUsageCounter.user_id == user.id,
+            DailyUsageCounter.date == today_str,
+        )
+    )
+    runs_today = counter.runs if counter else 0
+
+    # uploads_today, tokens_today: best-effort from Delta analytics
     try:
-        from datetime import date
-        today_str = date.today().isoformat()
         df = await asyncio.to_thread(read_usage_last_n_days, user_id, 1)
         today_df = df[df["date"] == today_str]
-        runs_today    = int(today_df["pipeline_runs"].sum()) if not today_df.empty else 0
-        uploads_today = int(today_df["uploads"].sum())      if not today_df.empty else 0
-        tokens_today  = int(today_df["tokens_used"].sum())  if not today_df.empty else 0
+        uploads_today = int(today_df["uploads"].sum()) if not today_df.empty else 0
+        tokens_today  = int(today_df["tokens_used"].sum()) if not today_df.empty else 0
     except Exception:
-        runs_today = uploads_today = tokens_today = 0
+        uploads_today = tokens_today = 0
 
     # Unread job matches from Delta
     try:
@@ -146,10 +156,34 @@ async def list_resumes(
 async def usage_history(
     user: User = Depends(get_current_user),
     days: int = Query(30, ge=1, le=90),
+    db: AsyncSession = Depends(get_db),
 ):
     try:
         df = await asyncio.to_thread(read_usage_last_n_days, str(user.id), days)
-        return {"days": days, "rows": df.to_dict(orient="records")}
+
+        # Fetch active provider costs to calculate cost_cents for each day
+        cost_result = await db.execute(
+            select(ProviderCost).where(
+                (ProviderCost.provider == "anthropic") & (ProviderCost.active == True)
+            )
+        )
+        cost_row = cost_result.scalar_one_or_none()
+
+        # Convert DataFrame to dict and add cost_cents calculation
+        rows = df.to_dict(orient="records")
+        if cost_row:
+            for row in rows:
+                input_tokens = int(row.get("input_tokens", 0))
+                output_tokens = int(row.get("output_tokens", 0))
+                input_cost = (input_tokens / 1_000_000) * cost_row.input_cost_per_1m_tokens
+                output_cost = (output_tokens / 1_000_000) * cost_row.output_cost_per_1m_tokens
+                row["cost_cents"] = int((input_cost + output_cost) * 100)
+        else:
+            # If no cost row found, set cost_cents to 0
+            for row in rows:
+                row["cost_cents"] = 0
+
+        return {"days": days, "rows": rows}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read usage: {str(e)}")
 
@@ -175,3 +209,72 @@ async def job_matches(
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read job matches: {str(e)}")
+
+
+@router.get("/match-analytics")
+async def match_analytics(
+    user: User = Depends(get_current_user),
+    days: int = Query(30, ge=1, le=90),
+):
+    """
+    Return job match analytics grouped by date.
+
+    Each day includes:
+    - match_count: number of job matches that day
+    - avg_similarity_score: average similarity score (0.0-1.0)
+    - source_breakdown: dict of match counts by source
+
+    Results sorted by date descending (most recent first).
+    """
+    try:
+        user_id = str(user.id)
+        # Read all matches for the specified period
+        result = await asyncio.to_thread(read_job_matches, user_id, days, 1, 10000)
+        matches = result["results"]
+
+        if not matches:
+            return {"analytics": []}
+
+        # Group matches by date (from scraped_at)
+        from datetime import date
+        daily_groups = {}
+
+        for match in matches:
+            # Extract date from scraped_at ISO datetime string
+            scraped_at_str = match.get("scraped_at", "")
+            if scraped_at_str:
+                # Parse ISO datetime and extract date portion
+                date_str = scraped_at_str[:10]  # YYYY-MM-DD from ISO string
+            else:
+                continue
+
+            if date_str not in daily_groups:
+                daily_groups[date_str] = []
+            daily_groups[date_str].append(match)
+
+        # Aggregate metrics for each day
+        analytics = []
+        for date_str in sorted(daily_groups.keys(), reverse=True):
+            day_matches = daily_groups[date_str]
+            match_count = len(day_matches)
+
+            # Calculate average similarity score
+            scores = [m.get("similarity_score") for m in day_matches if m.get("similarity_score") is not None]
+            avg_score = sum(scores) / len(scores) if scores else 0.0
+
+            # Build source breakdown
+            source_breakdown = {}
+            for match in day_matches:
+                source = match.get("source", "unknown")
+                source_breakdown[source] = source_breakdown.get(source, 0) + 1
+
+            analytics.append({
+                "date": date_str,
+                "match_count": match_count,
+                "avg_similarity_score": round(avg_score, 2),
+                "source_breakdown": source_breakdown,
+            })
+
+        return {"analytics": analytics}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read match analytics: {str(e)}")

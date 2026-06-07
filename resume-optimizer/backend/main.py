@@ -6,8 +6,12 @@ and optimized resume download.
 
 import asyncio
 import json
+import logging
 import os
+import signal
 import sys
+import tempfile
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import date as date_type
@@ -16,39 +20,50 @@ from pathlib import Path
 
 # Ensure backend/ is on the path regardless of where uvicorn is launched from
 sys.path.insert(0, str(Path(__file__).parent))
+from logging_config import setup_logging
+setup_logging()
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from limiter import limiter
+from starlette.middleware.base import BaseHTTPMiddleware
+from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
-from sqlalchemy import delete, select, func, update
+from sqlalchemy import delete, select, func, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── Agent & utility imports ──────────────────────────────────────────────────
 from agents.jd_analyzer import analyze_jd
 from utils import cache as result_cache
-from config import MAX_ITERATIONS, SCORE_TARGET, BACKEND_URL, FRONTEND_URL, MODEL_SCORER, MAX_UPLOAD_BYTES, MAX_RESUME_CHARS, MAX_JD_CHARS
-from agents.rewriter import rewrite_resume
-from agents.humanizer import humanize_resume
+from config import MAX_ITERATIONS, SCORE_TARGET, BACKEND_URL, FRONTEND_URL, MODEL_SCORER, MAX_UPLOAD_BYTES, MAX_RESUME_CHARS, MAX_JD_CHARS, STUCK_JOB_TIMEOUT_MINUTES, DATABASE_URL
 from agents.scorer import score_combined
 from agents.fact_extractor import extract_claims
 from agents.fabrication_guard import fabrication_guard
+from agents.humanizer import humanize_resume
+from orchestration.optimizer import run_optimization_async, _WORK_THRESHOLD
 from parsers.pdf_parser import parse_pdf
 from parsers.docx_parser import parse_docx
 from generators.docx_generator import generate_docx
-from delta.writer import write_daily_usage, write_job_match
+import storage as _storage
+from delta.writer import write_daily_usage, write_job_match, vacuum_old_matches
 from scraper.scraper import scrape_jobs
 from db.session import get_db, init_db, AsyncSessionLocal
-from db.models import JobStatus, PipelineEvent, PipelineJob, Resume, User
-from auth.router import router as auth_router
-from auth.dependencies import decode_token, get_current_user, check_plan_limit
+from db.models import JobStatus, PipelineEvent, PipelineJob, Resume, User, ProviderCost, TokenBlocklist
+from auth.router import router as auth_router, user_router
+from auth.dependencies import decode_token, decode_sse_token, get_current_user, check_plan_limit
 from dashboard.router import router as dashboard_router
+from admin.router import router as admin_router
 
 
 # ── App setup ────────────────────────────────────────────────────────────────
 
 _EVENT_TTL_HOURS = 24  # delete PipelineEvent rows older than this
+_last_vacuum_ts: float = 0.0
+_is_postgres = DATABASE_URL.startswith("postgresql")
 
 
 async def _cleanup_events():
@@ -61,12 +76,112 @@ async def _cleanup_events():
             await db.commit()
 
 
+_logger = logging.getLogger(__name__)
+
+
+async def _reap_once(db: AsyncSession) -> list[str]:
+    """Find stuck running jobs and mark them error. Returns list of reaped IDs."""
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=STUCK_JOB_TIMEOUT_MINUTES)
+    result = await db.execute(
+        select(PipelineJob).where(
+            PipelineJob.status == JobStatus.running,
+            PipelineJob.updated_at < cutoff,
+        )
+    )
+    stuck = result.scalars().all()
+    if not stuck:
+        return []
+    now = datetime.now(timezone.utc)
+    ids = []
+    for job in stuck:
+        job.status = JobStatus.error
+        job.error_message = "Job timed out — worker may have restarted."
+        job.updated_at = now
+        ids.append(str(job.id))
+    await db.commit()
+    return ids
+
+
+async def _reap_stuck_jobs():
+    """Periodically mark stuck running jobs as error (every 5 minutes).
+    Also runs vacuum_old_matches weekly and cleans stale agent sessions.
+    """
+    global _last_vacuum_ts
+    while True:
+        await asyncio.sleep(300)
+        try:
+            async with AsyncSessionLocal() as db:
+                ids = await _reap_once(db)
+                if ids:
+                    _logger.warning("Reaped %d stuck jobs: %s", len(ids), ids)
+                # Clean up expired blocklist entries
+                await db.execute(
+                    delete(TokenBlocklist).where(
+                        TokenBlocklist.expires_at < datetime.now(timezone.utc)
+                    )
+                )
+                await db.commit()
+            try:
+                from agents.optimizer_agent import cleanup_stale_sessions
+                stale = cleanup_stale_sessions()
+                if stale:
+                    _logger.info("Cleaned up %d stale pipeline sessions", stale)
+            except Exception:
+                pass
+        except Exception:
+            _logger.exception("Reaper cycle failed — will retry in 5 minutes")
+
+        now = time.time()
+        if now - _last_vacuum_ts >= 7 * 24 * 3600:
+            try:
+                await asyncio.to_thread(vacuum_old_matches)
+                _last_vacuum_ts = now
+                _logger.info("vacuum_old_matches completed")
+            except Exception:
+                _logger.exception("vacuum_old_matches failed — will retry next week")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
     cleanup_task = asyncio.create_task(_cleanup_events())
+    reap_task = asyncio.create_task(_reap_stuck_jobs())
+
+    # On SIGTERM (gunicorn graceful shutdown), log so operators know in-flight
+    # pipeline tasks may be cancelled. The stuck-job reaper marks them as error
+    # on the next worker start. A proper task queue (ARQ/Celery) would be needed
+    # for zero-loss shutdown guarantees.
+    loop = asyncio.get_event_loop()
+    loop.add_signal_handler(
+        signal.SIGTERM,
+        lambda: _logger.warning("SIGTERM received — in-flight pipeline tasks will be marked error by reaper on next start"),
+    )
+
     yield
     cleanup_task.cancel()
+    reap_task.cancel()
+
+
+class LoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path == "/health":
+            return await call_next(request)
+        request_id = str(uuid.uuid4())
+        start = time.perf_counter()
+        response = await call_next(request)
+        latency_ms = round((time.perf_counter() - start) * 1000, 1)
+        _logger.info(
+            "request",
+            extra={
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code,
+                "latency_ms": latency_ms,
+            },
+        )
+        response.headers["X-Request-ID"] = request_id
+        return response
 
 
 app = FastAPI(title="Resume Optimizer API", version="1.0.0", lifespan=lifespan)
@@ -80,21 +195,72 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+app.add_middleware(LoggingMiddleware)
 
 app.include_router(auth_router)
+app.include_router(user_router)
 app.include_router(dashboard_router)
+app.include_router(admin_router)
+
+
+@app.get("/health")
+async def health(db: AsyncSession = Depends(get_db)):
+    """Liveness probe — no auth required."""
+    db_ok = True
+    try:
+        await db.execute(text("SELECT 1"))
+    except Exception:
+        db_ok = False
+
+    storage_status = await asyncio.to_thread(_storage.ping_storage)
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=STUCK_JOB_TIMEOUT_MINUTES)
+    stuck_count = (
+        await db.execute(
+            select(func.count(PipelineJob.id)).where(
+                PipelineJob.status == JobStatus.running,
+                PipelineJob.updated_at < cutoff,
+            )
+        )
+    ).scalar() or 0
+
+    pending_count = (
+        await db.execute(
+            select(func.count(PipelineJob.id)).where(
+                PipelineJob.status == JobStatus.pending,
+            )
+        )
+    ).scalar() or 0
+
+    overall_status = "ok" if (db_ok and storage_status != "error") else "degraded"
+    return JSONResponse(
+        status_code=200 if db_ok else 503,
+        content={
+            "status": overall_status,
+            "db": "ok" if db_ok else "error",
+            "storage": storage_status,
+            "stuck_jobs": stuck_count,
+            "pending_jobs": pending_count,
+        },
+    )
+
 
 # ── Directory setup ──────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent
-UPLOADS_DIR = BASE_DIR / "uploads"
-OUTPUTS_DIR = BASE_DIR / "outputs"
-UPLOADS_DIR.mkdir(exist_ok=True)
-OUTPUTS_DIR.mkdir(exist_ok=True)
 
 # ── Request/response models ──────────────────────────────────────────────────
 
+_UPLOAD_MAGIC = {
+    ".pdf":  b"%PDF-",
+    ".docx": b"PK\x03\x04",
+}
+
+
 class AnalyzeJDRequest(BaseModel):
-    jd_text: str
+    jd_text: str = Field(..., max_length=MAX_JD_CHARS)
 
 
 class RunPipelineRequest(BaseModel):
@@ -105,7 +271,7 @@ class RunPipelineRequest(BaseModel):
 class ScrapeJobsRequest(BaseModel):
     resume_id: str
     keywords: str
-    per_source: int = 20
+    per_source: int = Field(default=20, ge=1, le=50)
 
 
 class GenerateDocRequest(BaseModel):
@@ -131,7 +297,6 @@ async def upload_resume(
         raise HTTPException(status_code=400, detail="Only .pdf and .docx files are supported.")
 
     job_id = str(uuid.uuid4())
-    save_path = UPLOADS_DIR / f"{job_id}{ext}"
 
     contents = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(contents) > MAX_UPLOAD_BYTES:
@@ -139,18 +304,30 @@ async def upload_resume(
             status_code=413,
             detail=f"File too large. Maximum upload size is {MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
         )
-    await asyncio.to_thread(save_path.write_bytes, contents)
+
+    expected_magic = _UPLOAD_MAGIC.get(ext, b"")
+    if not contents[:8].startswith(expected_magic):
+        raise HTTPException(
+            status_code=400,
+            detail=f"File content does not match {ext} extension.",
+        )
+
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
+        f.write(contents)
+        tmp_path = f.name
 
     try:
         parser = parse_pdf if ext == ".pdf" else parse_docx
         parsed = await asyncio.wait_for(
-            asyncio.to_thread(parser, str(save_path)),
+            asyncio.to_thread(parser, tmp_path),
             timeout=30,
         )
     except asyncio.TimeoutError:
         raise HTTPException(status_code=408, detail="Resume parsing timed out. Try a simpler PDF or convert to .docx.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to parse file: {str(e)}")
+    finally:
+        os.unlink(tmp_path)
 
     job = PipelineJob(
         id=uuid.UUID(job_id),
@@ -181,7 +358,8 @@ async def analyze_jd_endpoint(
         raise HTTPException(status_code=400, detail="jd_text cannot be empty.")
 
     try:
-        result = await analyze_jd(request.jd_text[:MAX_JD_CHARS])
+        result_dict = await analyze_jd(request.jd_text[:MAX_JD_CHARS])
+        result = result_dict.get("text", result_dict)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"JD analysis failed: {str(e)}")
 
@@ -237,7 +415,7 @@ async def stream_status(
     if not token:
         raise HTTPException(status_code=401, detail="Token required. Pass ?token=<jwt>.")
 
-    user_id = decode_token(token)  # raises 401 if invalid
+    user_id = decode_sse_token(token)  # raises 401 if invalid or not an SSE token
 
     try:
         job_uuid = uuid.UUID(job_id)
@@ -260,32 +438,66 @@ async def stream_status(
 
     async def event_generator():
         nonlocal last_event_id
-        while True:
-            async with AsyncSessionLocal() as db:
-                evts_result = await db.execute(
-                    select(PipelineEvent)
-                    .where(PipelineEvent.job_id == job_uuid, PipelineEvent.id > last_event_id)
-                    .order_by(PipelineEvent.id)
-                    .limit(100)
+        _notify = asyncio.Event()
+        _pg_conn = None
+
+        if _is_postgres:
+            try:
+                import asyncpg as _asyncpg
+                _pg_dsn = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://", 1)
+                _pg_conn = await _asyncpg.connect(_pg_dsn)
+                await _pg_conn.add_listener(
+                    f"pipeline_{job_id}",
+                    lambda _c, _pid, _ch, _payload: _notify.set(),
                 )
-                events = evts_result.scalars().all()
+            except Exception:
+                _pg_conn = None
 
-                for evt in events:
-                    last_event_id = evt.id
-                    yield {"id": str(evt.id), "data": json.dumps(evt.event_json)}
-                    if evt.event_json.get("type") in ("done", "error"):
-                        return
-
-                # No new events — check if job already finished (handles post-restart reconnect)
-                if not events:
-                    status_result = await db.execute(
-                        select(PipelineJob.status).where(PipelineJob.id == job_uuid)
+        try:
+            while True:
+                got_events = False
+                async with AsyncSessionLocal() as db:
+                    evts_result = await db.execute(
+                        select(PipelineEvent)
+                        .where(PipelineEvent.job_id == job_uuid, PipelineEvent.id > last_event_id)
+                        .order_by(PipelineEvent.id)
+                        .limit(100)
                     )
-                    current_status = status_result.scalar()
-                    if current_status in (JobStatus.done, JobStatus.error):
-                        return
+                    events = evts_result.scalars().all()
 
-            await asyncio.sleep(0.5)
+                    for evt in events:
+                        got_events = True
+                        last_event_id = evt.id
+                        yield {"id": str(evt.id), "data": json.dumps(evt.event_json)}
+                        if evt.event_json.get("type") in ("done", "error"):
+                            return
+
+                    # No new events — check if job already finished (handles post-restart reconnect)
+                    if not events:
+                        status_result = await db.execute(
+                            select(PipelineJob.status).where(PipelineJob.id == job_uuid)
+                        )
+                        current_status = status_result.scalar()
+                        if current_status in (JobStatus.done, JobStatus.error):
+                            return
+
+                if got_events:
+                    continue  # more events may have arrived, re-query immediately
+
+                if _pg_conn:
+                    _notify.clear()
+                    try:
+                        await asyncio.wait_for(_notify.wait(), timeout=30.0)
+                    except asyncio.TimeoutError:
+                        pass
+                else:
+                    await asyncio.sleep(2.0)
+        finally:
+            if _pg_conn:
+                try:
+                    await _pg_conn.close()
+                except Exception:
+                    pass
 
     return EventSourceResponse(event_generator())
 
@@ -310,11 +522,14 @@ async def download_resume(
     if not resume or str(resume.user_id) != str(current_user.id):
         raise HTTPException(status_code=404, detail="Resume not found.")
 
-    if not resume.file_path or not Path(resume.file_path).exists():
+    if not resume.file_path:
         raise HTTPException(status_code=404, detail="Output file not found.")
 
+    url = await asyncio.to_thread(_storage.generate_download_url, resume.file_path)
+    if url.startswith("http"):
+        return RedirectResponse(url, status_code=302)
     return FileResponse(
-        path=resume.file_path,
+        path=url,
         filename=f"optimized_{resume.original_filename or 'resume'}.docx",
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
@@ -336,15 +551,26 @@ async def generate_doc_endpoint(
         raise HTTPException(status_code=400, detail="resume_text cannot be empty.")
 
     doc_id = str(uuid.uuid4())
-    output_path = str(OUTPUTS_DIR / f"gen_{doc_id}.docx")
+    blob_name = f"gen_{doc_id}.docx"
 
+    tmp_docx = None
     try:
-        await asyncio.to_thread(generate_docx, request.resume_text, output_path)
+        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as _f:
+            tmp_docx = _f.name
+        await asyncio.to_thread(generate_docx, request.resume_text, tmp_docx)
+        docx_bytes = await asyncio.to_thread(Path(tmp_docx).read_bytes)
+        await asyncio.to_thread(_storage.upload_output, docx_bytes, blob_name)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate document: {str(e)}")
+    finally:
+        if tmp_docx is not None:
+            os.unlink(tmp_docx)
 
+    url = await asyncio.to_thread(_storage.generate_download_url, blob_name)
+    if url.startswith("http"):
+        return RedirectResponse(url, status_code=302)
     return FileResponse(
-        path=output_path,
+        path=url,
         filename="resume.docx",
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
@@ -355,7 +581,9 @@ async def generate_doc_endpoint(
 @app.post("/scrape-jobs")
 async def scrape_jobs_endpoint(
     request: ScrapeJobsRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Scrape job postings from all active sources using provided keywords.
@@ -363,6 +591,20 @@ async def scrape_jobs_endpoint(
     """
     if not request.keywords.strip():
         raise HTTPException(status_code=400, detail="keywords cannot be empty.")
+
+    if request.resume_id:
+        try:
+            resume_uuid = uuid.UUID(request.resume_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid resume_id format.")
+        resume = await db.scalar(
+            select(Resume).where(
+                Resume.id == resume_uuid,
+                Resume.user_id == current_user.id,
+            )
+        )
+        if not resume:
+            raise HTTPException(status_code=403, detail="Resume not found or access denied.")
 
     try:
         postings = await scrape_jobs(request.keywords.strip(), per_source=request.per_source)
@@ -381,9 +623,9 @@ async def scrape_jobs_endpoint(
             try:
                 await asyncio.to_thread(write_job_match, record)
             except Exception:
-                pass
+                _logger.warning("write_job_match failed for posting: %s", posting.get("title", "unknown"))
 
-    asyncio.create_task(_persist())
+    background_tasks.add_task(_persist)
 
     return {
         "total":    len(postings),
@@ -396,254 +638,267 @@ async def scrape_jobs_endpoint(
 
 async def _run_pipeline_task(job_id: str, user_id: str = ""):
     """
-    Main optimization loop. Reads/writes state via Postgres; emits SSE events as
-    PipelineEvent rows so any worker or reconnecting client can consume them.
+    3-phase optimization pipeline — each DB operation uses its own short-lived session.
+    LLM calls happen entirely outside any DB context to avoid holding connections for minutes.
+    Phase 1 (deterministic): claims extraction, JD analysis, baseline score.
+    Phase 2 (agentic):       CrewAI Optimization Strategist with 4 targeted tools.
+    Phase 3 (deterministic): fabrication guard, docx generation, persistence.
     """
     job_uuid = uuid.UUID(job_id)
+    _loop = asyncio.get_event_loop()
 
-    async with AsyncSessionLocal() as db:
-
-        async def emit(event: dict):
+    async def emit(event: dict):
+        """Each SSE event gets its own short-lived DB connection."""
+        async with AsyncSessionLocal() as db:
             evt = PipelineEvent(job_id=job_uuid, event_json=event)
             db.add(evt)
+            if _is_postgres:
+                await db.execute(
+                    text("SELECT pg_notify(:ch, '')"),
+                    {"ch": f"pipeline_{job_id}"},
+                )
             await db.commit()
 
-        async def update_job(**kwargs):
+    async def update_job(**kwargs):
+        """Each status update gets its own short-lived DB connection."""
+        async with AsyncSessionLocal() as db:
             kwargs["updated_at"] = datetime.now(timezone.utc)
-            await db.execute(update(PipelineJob).where(PipelineJob.id == job_uuid).values(**kwargs))
+            await db.execute(
+                update(PipelineJob).where(PipelineJob.id == job_uuid).values(**kwargs)
+            )
             await db.commit()
 
-        try:
-            result_cache.clear()
+    def _on_agent_event(event: dict):
+        asyncio.run_coroutine_threadsafe(emit(event), _loop)
 
-            # Load job state from DB
+    try:
+        # ── Load job (short-lived session, closed before any LLM call) ─────
+        async with AsyncSessionLocal() as db:
             job_result = await db.execute(select(PipelineJob).where(PipelineJob.id == job_uuid))
             job_row = job_result.scalar_one()
             resume_text: str = job_row.resume_text[:MAX_RESUME_CHARS]
             jd_text: str     = job_row.jd_text[:MAX_JD_CHARS]
+            original_filename = job_row.original_filename
 
-            # Build claims ledger once from the original resume text.
-            # Used by the rewriter (constrain invented facts) and the guard (verify output).
-            ledger = await asyncio.to_thread(extract_claims, resume_text)
+        total_input_tokens  = 0
+        total_output_tokens = 0
 
-            # ── Step 1: Analyze JD ──────────────────────────────────────────
-            await emit({"type": "stage", "message": "Analyzing Job Description...", "stage": "jd_analysis"})
-            jd_result = await analyze_jd(jd_text)
-            jd_keywords: list[str] = jd_result.get("keywords", [])
-            await emit({
-                "type": "stage",
-                "message": f"JD analyzed — {len(jd_keywords)} keywords extracted.",
-                "stage": "jd_analysis",
-                "keywords": jd_keywords[:20],
-            })
+        # ── Phase 1: Deterministic setup (no DB held) ──────────────────
+        ledger = await asyncio.to_thread(extract_claims, resume_text)
 
-            current_resume = resume_text
-            consolidated_feedback = None
-            iteration = 0
-            prev_average = 0
+        await emit({"type": "stage", "message": "Analyzing Job Description...", "stage": "jd_analysis"})
+        jd_result_dict = await analyze_jd(jd_text)
+        jd_result  = jd_result_dict.get("text", jd_result_dict)
+        jd_tokens  = jd_result_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
+        jd_keywords: list[str]     = jd_result.get("keywords", [])
+        required_hard_skills: list = jd_result.get("required_hard_skills", [])
+        seniority_level: str       = jd_result.get("seniority_level", "mid")
+        industry: str              = jd_result.get("industry", "")
+        total_input_tokens  += jd_tokens["input_tokens"]
+        total_output_tokens += jd_tokens["output_tokens"]
+        await emit({"type": "stage", "message": f"JD analyzed — {len(jd_keywords)} keywords extracted.",
+                    "stage": "jd_analysis", "keywords": jd_keywords[:20]})
 
-            # ── Initial score ───────────────────────────────────────────────
-            await emit({"type": "stage", "message": "Scoring original resume...", "stage": "score"})
-            initial_combined = await score_combined(current_resume, jd_text, jd_keywords)
-            initial_avg = round(sum(initial_combined[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")) / 4)
-            await emit({
-                "type": "average",
-                "score": initial_avg,
-                "iteration": 0,
-                "scores": {k: initial_combined[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")},
-                "message": f"Original resume score: {initial_avg}",
-            })
+        await emit({"type": "stage", "message": "Scoring original resume...", "stage": "score"})
+        baseline_dict   = await score_combined(
+            resume_text,
+            jd_text,
+            jd_keywords=jd_keywords,
+            seniority_level=seniority_level,
+            required_hard_skills=required_hard_skills,
+        )
+        baseline_scores = baseline_dict.get("text", baseline_dict)
+        baseline_tokens = baseline_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
+        total_input_tokens  += baseline_tokens["input_tokens"]
+        total_output_tokens += baseline_tokens["output_tokens"]
 
-            if initial_avg >= SCORE_TARGET:
-                await emit({
-                    "type": "stage",
-                    "message": f"Original resume already scores {initial_avg} — no optimization needed. Finalizing...",
-                    "stage": "finalize",
-                })
+        baseline_avg = round(sum(baseline_scores[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")) / 4)
+        await emit({"type": "average", "score": baseline_avg, "iteration": 0,
+                    "scores": {k: baseline_scores[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")},
+                    "message": f"Original resume score: {baseline_avg}"})
 
-            scores = {
-                "ats": initial_combined["ats"],
-                "impact": initial_combined["impact"],
-                "skills_gap": initial_combined["skills_gap"],
-                "readability": initial_combined["readability"],
-                "average": initial_avg,
-            }
+        scores = {**baseline_scores, "average": baseline_avg}
 
-            while iteration < MAX_ITERATIONS and initial_avg < SCORE_TARGET:
-                iteration += 1
-                is_fast_iter = iteration > 1 and prev_average >= 75
+        if baseline_avg >= SCORE_TARGET:
+            await emit({"type": "stage",
+                        "message": f"Original resume already scores {baseline_avg} — skipping optimization.",
+                        "stage": "agent"})
 
-                await emit({
-                    "type": "iterate",
-                    "message": (
-                        f"Starting iteration {iteration} (fast mode — rewrite only)..."
-                        if is_fast_iter else
-                        f"Starting optimization iteration {iteration}..."
-                    ),
-                    "iteration": iteration,
-                })
+        # ── Phase 2: Agentic optimization (no DB held) ─────────────────
+        _iter = 0
+        if baseline_avg < SCORE_TARGET:
+            current_resume  = resume_text
+            current_scores  = baseline_scores
+            current_avg     = baseline_avg
 
-                # ── Step 2: Rewrite ─────────────────────────────────────────
-                await emit({"type": "stage", "message": "Rewriting resume to align with JD...", "stage": "rewrite"})
-                current_resume = await rewrite_resume(
+            for _iter in range(1, MAX_ITERATIONS + 1):
+                await emit({"type": "stage",
+                            "message": f"Starting agentic optimization (iteration {_iter}/{MAX_ITERATIONS})...",
+                            "stage": "agent"})
+                agent_result = await run_optimization_async(
+                    job_id=job_id,
                     resume_text=current_resume,
                     jd_keywords=jd_keywords,
-                    consolidated_feedback=consolidated_feedback,
                     claims_ledger=ledger,
+                    scores=current_scores,
+                    on_event=_on_agent_event,
                 )
+                optimized_text = agent_result["text"]
+                total_input_tokens  += agent_result.get("input_tokens", 0)
+                total_output_tokens += agent_result.get("output_tokens", 0)
 
-                # ── Fabrication guard — verify the rewrite ──────────────────
-                guard = await asyncio.to_thread(fabrication_guard, current_resume, ledger, resume_text)
-                current_resume = guard.text
-                if guard.stripped or guard.gaps:
-                    await emit({
-                        "type":    "guard",
-                        "message": f"Fabrication guard: removed {len(guard.stripped)} unverified claim(s).",
-                        "stripped": guard.stripped[:10],
-                        "gaps":     guard.gaps[:5],
-                    })
+                if not optimized_text or optimized_text.strip() == current_resume.strip():
+                    break  # no improvement, stop early
 
-                await emit({"type": "stage", "message": "Resume rewrite complete.", "stage": "rewrite"})
+                current_resume = optimized_text
 
-                # ── Step 3: Humanize ────────────────────────────────────────
-                if not is_fast_iter:
-                    await emit({"type": "stage", "message": "Humanizing resume language...", "stage": "humanize"})
-                    current_resume = await humanize_resume(current_resume)
-                    await emit({"type": "stage", "message": "Humanization complete.", "stage": "humanize"})
+                # Re-score to check if target reached
+                iter_score_dict   = await score_combined(
+                    current_resume,
+                    jd_text,
+                    jd_keywords=jd_keywords,
+                    seniority_level=seniority_level,
+                    required_hard_skills=required_hard_skills,
+                )
+                current_scores = iter_score_dict.get("text", iter_score_dict)
+                iter_tokens    = iter_score_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
+                total_input_tokens  += iter_tokens["input_tokens"]
+                total_output_tokens += iter_tokens["output_tokens"]
+                current_avg = round(
+                    sum(current_scores[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")) / 4
+                )
+                await emit({"type": "average", "score": current_avg, "iteration": _iter,
+                            "scores": {k: current_scores[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")},
+                            "message": f"Score after iteration {_iter}: {current_avg}"})
 
-                # ── Step 4: Score ───────────────────────────────────────────
-                await emit({"type": "stage", "message": "Running all 4 scorers...", "stage": "score"})
-                combined = await score_combined(current_resume, jd_text, jd_keywords)
-
-                ats_result         = combined["ats"]
-                impact_result      = combined["impact"]
-                skills_result      = combined["skills_gap"]
-                readability_result = combined["readability"]
-
-                await emit({"type": "score", "platform": "ATS Match",
-                            "score": ats_result["score"],
-                            "feedback": ats_result.get("missing_keywords", [])[:3],
-                            "matched": ats_result.get("matched_keywords", [])[:3]})
-                await emit({"type": "score", "platform": "Impact Score",
-                            "score": impact_result["score"],
-                            "feedback": impact_result.get("suggestions", [])[:3],
-                            "weak_bullets": impact_result.get("weak_bullets", [])[:3]})
-                await emit({"type": "score", "platform": "Skills Gap",
-                            "score": skills_result["score"],
-                            "feedback": skills_result.get("missing_skills", [])[:3],
-                            "matched": skills_result.get("matched_skills", [])[:3]})
-                await emit({"type": "score", "platform": "Readability",
-                            "score": readability_result["score"],
-                            "feedback": readability_result.get("issues", [])[:3],
-                            "strengths": readability_result.get("strengths", [])[:3]})
-
-                average = round((
-                    ats_result.get("score", 0) +
-                    impact_result.get("score", 0) +
-                    skills_result.get("score", 0) +
-                    readability_result.get("score", 0)
-                ) / 4)
-                prev_average = average
-                scores = {
-                    "ats": ats_result, "impact": impact_result,
-                    "skills_gap": skills_result, "readability": readability_result,
-                    "average": average,
-                }
-
-                await emit({
-                    "type": "average", "score": average, "iteration": iteration,
-                    "scores": {
-                        "ats": ats_result.get("score", 0),
-                        "impact": impact_result.get("score", 0),
-                        "skills_gap": skills_result.get("score", 0),
-                        "readability": readability_result.get("score", 0),
-                    },
-                })
-
-                if average >= SCORE_TARGET:
-                    await emit({"type": "stage",
-                                "message": f"Target score {SCORE_TARGET} reached (average: {average}). Finalizing...",
-                                "stage": "finalize"})
+                if current_avg >= _WORK_THRESHOLD:
                     break
 
-                if iteration >= MAX_ITERATIONS:
-                    await emit({"type": "stage",
-                                "message": f"Maximum iterations ({MAX_ITERATIONS}) reached. Average score: {average}. Finalizing...",
-                                "stage": "finalize"})
-                    break
+            # Update scores dict to reflect final iteration scores
+            scores = {**current_scores, "average": current_avg}
+        else:
+            current_resume = resume_text
 
-                consolidated_feedback = {
-                    "ats": ats_result, "impact": impact_result,
-                    "skills_gap": skills_result, "readability": readability_result,
-                }
-                await emit({"type": "stage",
-                            "message": f"Score {average} < {SCORE_TARGET}. Consolidating feedback for iteration {iteration + 1}...",
-                            "stage": "consolidate"})
+        # ── Fabrication guard — flag unverified claims before rendering ────
+        guard_result = fabrication_guard(current_resume, ledger, resume_text)
+        if guard_result.gaps:
+            _logger.warning(
+                "fabrication_guard flagged %d unverified claims for job %s",
+                len(guard_result.gaps),
+                job_id,
+            )
+        current_resume = guard_result.text
 
-            # ── Step 5: Generate .docx ──────────────────────────────────────
-            await emit({"type": "stage", "message": "Generating optimized .docx file...", "stage": "generate"})
-            output_path = str(OUTPUTS_DIR / f"{job_id}.docx")
-            generate_docx(current_resume, output_path)
+        # ── Humanize after optimization + guard ────────────────────────────
+        await emit({"type": "stage", "message": "Humanizing resume language...", "stage": "humanize"})
+        try:
+            humanize_result = await humanize_resume(
+                current_resume,
+                industry=industry,
+                seniority_level=seniority_level,
+            )
+            current_resume = humanize_result.get("text", current_resume)
+            humanize_tokens = humanize_result.get("tokens", {"input_tokens": 0, "output_tokens": 0})
+            total_input_tokens  += humanize_tokens["input_tokens"]
+            total_output_tokens += humanize_tokens["output_tokens"]
+        except Exception:
+            _logger.exception("job=%s: humanize_resume failed — skipping humanization", job_id)
 
-            # ── Persist Resume record ───────────────────────────────────────
-            resume_record = None
-            if user_id:
-                try:
+        # ── Phase 3: Generate .docx (no DB held during file I/O) ───────────
+        await emit({"type": "stage", "message": "Generating optimized .docx file...", "stage": "generate"})
+        blob_name = f"{job_id}.docx"
+        tmp_docx = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as _f:
+                tmp_docx = _f.name
+            await asyncio.to_thread(generate_docx, current_resume, tmp_docx)
+            docx_bytes = await asyncio.to_thread(Path(tmp_docx).read_bytes)
+            await asyncio.to_thread(_storage.upload_output, docx_bytes, blob_name)
+        finally:
+            if tmp_docx is not None:
+                os.unlink(tmp_docx)
+
+        # ── Persist Resume record (short-lived session) ────────────────
+        resume_record = None
+        if user_id:
+            try:
+                async with AsyncSessionLocal() as db:
                     ver_q = await db.execute(
                         select(func.coalesce(func.max(Resume.version), 0) + 1)
                         .where(Resume.user_id == user_id)
                     )
                     next_version = ver_q.scalar() or 1
-
                     resume_record = Resume(
                         user_id=user_id,
-                        original_filename=job_row.original_filename,
-                        file_path=output_path,
+                        original_filename=original_filename,
+                        file_path=blob_name,
                         jd_text=jd_text,
-                        final_score=float(scores.get("average", 0)),
+                        final_score=float(scores.get("average", baseline_avg)),
                         scores_json=scores,
-                        iterations=iteration,
+                        iterations=max(_iter, 1),
                         version=next_version,
                     )
                     db.add(resume_record)
                     await db.commit()
                     await db.refresh(resume_record)
-                except Exception:
-                    pass
+            except Exception:
+                _logger.exception(
+                    "job=%s: Resume record save failed — download URL will use job_id fallback",
+                    job_id,
+                )
 
-            # ── Update PipelineJob ──────────────────────────────────────────
-            await update_job(
-                status=JobStatus.done,
-                download_path=output_path,
-                scores_json=scores,
-                iteration=iteration,
-            )
+        await update_job(
+            status=JobStatus.done,
+            download_path=blob_name,
+            scores_json=scores,
+            iteration=max(_iter, 1),
+        )
 
-            # ── Write Delta usage ───────────────────────────────────────────
-            if user_id:
-                try:
-                    await asyncio.to_thread(write_daily_usage, {
-                        "user_id":       user_id,
-                        "date":          date_type.today().isoformat(),
-                        "pipeline_runs": 1,
-                        "uploads":       1,
-                        "tokens_used":   0,
-                    })
-                except Exception:
-                    pass
+        # ── Calculate cost (short-lived session) ─────────────────────
+        cost_cents = 0
+        try:
+            async with AsyncSessionLocal() as db:
+                cost_result = await db.execute(
+                    select(ProviderCost).where(
+                        (ProviderCost.provider == "google") & (ProviderCost.active == True)
+                    )
+                )
+                cost_row = cost_result.scalar_one_or_none()
+                if cost_row:
+                    input_cost_dollars  = (total_input_tokens  / 1_000_000) * cost_row.input_cost_per_1m_tokens
+                    output_cost_dollars = (total_output_tokens / 1_000_000) * cost_row.output_cost_per_1m_tokens
+                    cost_cents = int((input_cost_dollars + output_cost_dollars) * 100)
+        except Exception:
+            pass
 
-            # download_url points to the persisted Resume so it's durable across restarts
-            download_url = (
-                f"/download/{resume_record.id}" if resume_record else f"/download/{job_id}"
-            )
-            await emit({
-                "type": "done",
-                "message": "Resume optimization complete! Your optimized resume is ready.",
-                "download_url": download_url,
-                "final_score": scores.get("average", 0),
-                "iterations": iteration,
-            })
+        # ── Write Delta analytics (fire-and-forget, not rate limiting) ─────
+        if user_id:
+            try:
+                await asyncio.to_thread(write_daily_usage, {
+                    "user_id":       user_id,
+                    "date":          date_type.today().isoformat(),
+                    "pipeline_runs": 1,
+                    "uploads":       1,
+                    "input_tokens":  total_input_tokens,
+                    "output_tokens": total_output_tokens,
+                    "tokens_used":   total_input_tokens + total_output_tokens,
+                })
+            except Exception:
+                pass
 
-        except Exception as e:
-            await update_job(status=JobStatus.error, error_message=str(e))
-            await emit({"type": "error", "message": f"Pipeline error: {str(e)}"})
+        download_url = (
+            f"/download/{resume_record.id}" if resume_record else f"/download/{job_id}"
+        )
+        await emit({
+            "type":         "done",
+            "message":      "Resume optimization complete! Your optimized resume is ready.",
+            "download_url": download_url,
+            "final_score":  scores.get("average", baseline_avg),
+            "iterations":   max(_iter, 1),
+            "cost_cents":   cost_cents,
+            "tokens":       {"input": total_input_tokens, "output": total_output_tokens},
+        })
+
+    except Exception as e:
+        await update_job(status=JobStatus.error, error_message=str(e))
+        await emit({"type": "error", "message": f"Pipeline error: {str(e)}"})
