@@ -66,12 +66,12 @@ resource "azurerm_role_assignment" "terraform_tfstate" {
 # Fill in resource_group_name from:
 #   terraform output tfstate_resource_group_name
 
-terraform {
-  backend "azurerm" {
-    resource_group_name  = "resumai-rg-dev"     # from output above
-    storage_account_name = "resumeaitfstg28nr1" # from output above
-    container_name       = "tfstate"
-    key                  = "resume-optimizer/dev/terraform.tfstate"
-    use_azuread_auth     = true # no shared key needed
-  }
-}
+#terraform {
+#  backend "azurerm" {
+#    resource_group_name  = "resumai-rg-dev"     # from output above
+#    storage_account_name = "resumeaitfstg28nr1" # from output above
+#    container_name       = "tfstate"
+#    key                  = "resume-optimizer/dev/terraform.tfstate"
+#    use_azuread_auth     = true # no shared key needed
+#  }
+#}
