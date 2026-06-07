@@ -43,7 +43,7 @@ variable "postgres_db_name" {
 variable "postgres_sku" {
   description = "PostgreSQL Flexible Server SKU (student account: Standard_B1ms ~$12/mo)"
   type        = string
-  default     = "Standard_B1ms"
+  default     = "B_Standard_B1ms"
 }
 
 variable "postgres_storage_mb" {
