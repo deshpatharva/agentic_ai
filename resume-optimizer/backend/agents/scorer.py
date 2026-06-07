@@ -8,6 +8,7 @@ All 4 scores returned from a single LLM call via MODEL_SCORER.
 """
 
 import json
+from typing import List, Optional
 import spacy
 from sklearn.feature_extraction.text import TfidfVectorizer
 from llm import complete
@@ -48,83 +49,149 @@ def _extract_jd_keywords(jd_text: str, jd_keywords: list) -> list:
     return [k for k in all_kw if len(k) > 2]
 
 
+async def _llm_complete(prompt: str, system: str = None, schema: dict = None) -> dict:
+    """
+    Thin wrapper around llm.complete that accepts system/schema kwargs and
+    returns a parsed dict.  The `system` prompt is prepended to the user
+    prompt; `schema` is accepted for interface compatibility but LiteLLM
+    structured-output enforcement is optional — callers must apply defaults.
+    """
+    full_prompt = f"{system}\n\n{prompt}" if system else prompt
+    response = await complete(full_prompt, MODEL_SCORER)
+    raw = response["text"]
+    try:
+        return json.loads(_clean_json(raw))
+    except (json.JSONDecodeError, ValueError):
+        return {}
+
+
 # ── All 4 scores in one LLM call ─────────────────────────────────────────────
 
 async def score_combined(
     resume_text: str,
     jd_text: str,
-    jd_keywords: list = None,
+    jd_keywords: Optional[List[str]] = None,
+    seniority_level: str = "mid",
+    required_hard_skills: Optional[List[str]] = None,
 ) -> dict:
-    """
-    Score resume on 4 dimensions: ATS, Impact, Skills Gap, Readability.
-    Returns a dict with "text" (the scores) and "tokens" (accumulated token counts).
-    """
-    cached = result_cache.get("combined", resume_text, jd_text)
-    if cached is not None:
-        return cached
+    """Return structured scoring across 4 dimensions with calibration rubric."""
+    required_block = ""
+    if required_hard_skills:
+        required_block = (
+            f"\nRequired hard skills for this role: {', '.join(required_hard_skills[:20])}."
+            " If any of these are missing from the resume, they MUST appear in critical_missing."
+        )
 
-    accumulated = {"input_tokens": 0, "output_tokens": 0}
-
-    # Build keyword list for ATS scoring context
-    kw_list = _extract_jd_keywords(jd_text, jd_keywords or [])
-    keywords_str = ", ".join(kw_list[:50]) if kw_list else "see job description"
-
-    prompt = f"""You are a professional resume evaluator. Score this resume on 4 dimensions against the job description.
-
-Job Description:
-{jd_text}
-
-Extracted JD Keywords (for ATS scoring):
-{keywords_str}
-
-Resume:
-{resume_text}
-
-Return ONLY a valid JSON object. No explanation, no markdown. Max 3 items per list.
-Example:
-{{
-  "ats": {{"score": 74, "missing_keywords": ["docker", "ci/cd"], "matched_keywords": ["python", "sql"]}},
-  "impact": {{"score": 68, "weak_bullets": ["responsible for reports"], "suggestions": ["add metrics"]}},
-  "skills_gap": {{"score": 72, "missing_skills": ["kubernetes"], "matched_skills": ["python"]}},
-  "readability": {{"score": 85, "issues": ["missing summary"], "strengths": ["clear sections"]}}
-}}
-
-Scoring criteria:
-- ats (0-100): how many of the extracted JD keywords appear in the resume (keyword coverage)
-- impact (0-100): quantified achievements, strong action verbs, measurable outcomes
-- skills_gap (0-100): required JD skills vs skills demonstrated in resume
-- readability (0-100): section completeness, formatting consistency, professional tone
-
-JSON:"""
-
-    response = await complete(prompt, MODEL_SCORER)
-    raw = response["text"]
-    accumulated["input_tokens"] += response.get("input_tokens", 0)
-    accumulated["output_tokens"] += response.get("output_tokens", 0)
-
-    try:
-        data = json.loads(_clean_json(raw))
-        for key, defaults in [
-            ("ats",         {"missing_keywords": [], "matched_keywords": []}),
-            ("impact",      {"weak_bullets": [], "suggestions": []}),
-            ("skills_gap",  {"missing_skills": [], "matched_skills": []}),
-            ("readability", {"issues": [], "strengths": []}),
-        ]:
-            if key not in data:
-                data[key] = {"score": 50, **defaults}
-            data[key]["score"] = max(0, min(100, int(data[key].get("score", 50))))
-            for field, default in defaults.items():
-                data[key].setdefault(field, default)
-    except (json.JSONDecodeError, ValueError, TypeError):
-        data = {
-            "ats":         {"score": 50, "missing_keywords": [], "matched_keywords": []},
-            "impact":      {"score": 50, "weak_bullets": [], "suggestions": []},
-            "skills_gap":  {"score": 50, "missing_skills": [], "matched_skills": []},
-            "readability": {"score": 50, "issues": [], "strengths": []},
-        }
-
-    result_cache.set("combined", resume_text, jd_text, value=data)
-    return {
-        "text": data,
-        "tokens": accumulated,
+    seniority_map = {
+        "entry":  "0-2 years experience expected; penalise missing summary heavily",
+        "mid":    "3-6 years; expects quantified bullets and clear progression",
+        "senior": "7+ years; expects leadership indicators, architecture mentions, metrics at scale",
+        "lead":   "10+ years; expects team-building language, org-level impact",
     }
+    seniority_note = seniority_map.get(seniority_level, seniority_map["mid"])
+
+    system = f"""You are an expert ATS and resume evaluator. Score strictly using this rubric:
+
+ATS score (0-100):
+  90-100 = >90% of JD keywords present, all critical skills matched
+  70-89  = 70-89% keyword match, minor gaps only
+  50-69  = 50-69% match, several important keywords missing
+  <50    = <50% match, fundamental misalignment
+
+Impact score (0-100):
+  90-100 = Every bullet has a metric (%, $, count, time-saved); strong action verbs
+  70-89  = >70% bullets quantified; some passive voice
+  50-69  = Mixed; many bullets describe duties not achievements
+  <50    = Mostly duty-description, few/no metrics
+
+Skills gap (0-100):
+  90-100 = All required and preferred skills present
+  70-89  = All required present, some preferred missing
+  50-69  = 1-2 required skills missing
+  <50    = Multiple required skills absent
+
+Readability (0-100):
+  90-100 = Consistent past tense, clear sections, concise bullets, strong summary
+  70-89  = Minor inconsistencies; summary present but weak
+  50-69  = Tense mixing, dense paragraphs, weak/missing summary
+  <50    = Major formatting issues; no clear summary
+
+Seniority context: {seniority_note}
+{required_block}
+
+Return ONLY valid JSON matching the schema. No prose, no markdown fences."""
+
+    kw_hint = f"\nKnown JD keywords: {', '.join(jd_keywords[:30])}" if jd_keywords else ""
+
+    prompt = f"""Evaluate this resume against the job description.{kw_hint}
+
+--- RESUME ---
+{resume_text[:6000]}
+
+--- JOB DESCRIPTION ---
+{jd_text[:3000]}
+
+Return JSON with ALL fields populated. For lists, include every item found — do not truncate."""
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "ats": {
+                "type": "object",
+                "properties": {
+                    "score": {"type": "integer"},
+                    "missing_keywords": {"type": "array", "items": {"type": "string"}},
+                    "matched_keywords": {"type": "array", "items": {"type": "string"}},
+                    "keyword_coverage_pct": {"type": "number"},
+                },
+                "required": ["score", "missing_keywords", "matched_keywords", "keyword_coverage_pct"],
+            },
+            "impact": {
+                "type": "object",
+                "properties": {
+                    "score": {"type": "integer"},
+                    "weak_bullets": {"type": "array", "items": {"type": "string"}},
+                    "strong_bullets": {"type": "array", "items": {"type": "string"}},
+                    "has_quantified_achievements": {"type": "boolean"},
+                },
+                "required": ["score", "weak_bullets", "strong_bullets", "has_quantified_achievements"],
+            },
+            "skills_gap": {
+                "type": "object",
+                "properties": {
+                    "score": {"type": "integer"},
+                    "missing_skills": {"type": "array", "items": {"type": "string"}},
+                    "matched_skills": {"type": "array", "items": {"type": "string"}},
+                    "critical_missing": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["score", "missing_skills", "matched_skills", "critical_missing"],
+            },
+            "readability": {
+                "type": "object",
+                "properties": {
+                    "score": {"type": "integer"},
+                    "issues": {"type": "array", "items": {"type": "string"}},
+                    "worst_section": {"type": "string"},
+                    "has_summary": {"type": "boolean"},
+                    "tense_consistent": {"type": "boolean"},
+                },
+                "required": ["score", "issues", "worst_section", "has_summary", "tense_consistent"],
+            },
+            "overall": {"type": "integer"},
+        },
+        "required": ["ats", "impact", "skills_gap", "readability", "overall"],
+    }
+
+    result = await _llm_complete(prompt, system=system, schema=schema)
+
+    defaults = {
+        "ats":         {"missing_keywords": [], "matched_keywords": [], "keyword_coverage_pct": 0.0},
+        "impact":      {"weak_bullets": [], "strong_bullets": [], "has_quantified_achievements": False},
+        "skills_gap":  {"missing_skills": [], "matched_skills": [], "critical_missing": []},
+        "readability": {"issues": [], "worst_section": "experience", "has_summary": False, "tense_consistent": False},
+    }
+    for section, defs in defaults.items():
+        for key, val in defs.items():
+            result.setdefault(section, {}).setdefault(key, val)
+    result.setdefault("overall", 0)
+    return result

@@ -20,22 +20,38 @@ def _clean_json(text: str) -> str:
     return text.strip()
 
 
-async def humanize_resume(resume_text: str) -> dict:
+async def humanize_resume(
+    resume_text: str,
+    industry: str = "",
+    seniority_level: str = "mid",
+) -> dict:
     """
     Humanize resume text by polishing language, removing buzzwords, and improving readability.
+    Optionally scoped to a target industry and seniority level for more focused output.
     Returns a dict with "text" (the humanized resume) and "tokens" (accumulated token counts).
     """
     accumulated = {"input_tokens": 0, "output_tokens": 0}
 
+    industry_note = f" Write in the voice of a credible {industry} professional." if industry else ""
+    seniority_note = {
+        "entry":  " Tone should be eager, growth-focused.",
+        "mid":    " Tone should be confident and results-oriented.",
+        "senior": " Tone should be authoritative, strategic, outcome-driven.",
+        "lead":   " Tone should be visionary, org-level impact, team multiplier.",
+    }.get(seniority_level, "")
+
+    step1_system = f"""You are a professional resume writer.{industry_note}{seniority_note}
+
+Improve the resume text on exactly THREE dimensions:
+1. Voice variety — vary sentence openings; avoid starting consecutive bullets with the same verb
+2. Confident assertions — replace hedges ("helped with", "assisted in", "worked on") with direct ownership ("led", "built", "delivered", "owned")
+3. Industry tone — use vocabulary natural to the target industry; avoid generic filler phrases
+
+Preserve every metric, company name, job title, and date exactly as written.
+Return ONLY the improved resume text. No commentary."""
+
     # ── Step 1: Humanize ─────────────────────────────────────────────────────
-    response = await complete(f"""You are an expert resume editor. Polish this resume so it:
-1. Sounds natural and conversational — eliminate robotic or AI-sounding phrases
-2. Removes hollow buzzwords (e.g., "dynamic", "synergize", "leverage" used gratuitously)
-3. Uses varied sentence structures and strong action verbs
-4. Maintains confident, professional tone
-5. Preserves all factual content — do NOT change names, dates, companies, or metrics
-6. Keeps plain-text structure (no markdown, no tables)
-7. STRICT LENGTH LIMIT: Keep the resume within 2 pages (max 600 words). Do not add new content — only refine what exists.
+    response = await complete(f"""{step1_system}
 
 Resume:
 \"\"\"
@@ -47,9 +63,16 @@ Return ONLY the polished resume text.""", MODEL_HUMANIZER)
     accumulated["input_tokens"] += response.get("input_tokens", 0)
     accumulated["output_tokens"] += response.get("output_tokens", 0)
 
+    step2_system = f"""You are a senior hiring manager reviewing a resume for a {seniority_level}-level {industry or "technology"} role.
+
+Critique the revised resume below. Be specific: quote the exact phrases that still feel weak, robotic, or generic.
+State what should be different and why. Include every issue you find — no limit on feedback items."""
+
     # ── Step 2: Critic ───────────────────────────────────────────────────────
-    response = await complete(f"""Review this resume and return ONLY a JSON object with issues.
-No explanation, no markdown. Max 3 items per list.
+    response = await complete(f"""{step2_system}
+
+Review this resume and return ONLY a JSON object with issues.
+No explanation, no markdown.
 Example: {{"robotic_phrases": ["responsible for"], "weak_bullets": ["helped team"], "improvements": ["add metrics"]}}
 
 Resume:

@@ -1,23 +1,17 @@
 """
 JD Analyzer Agent
-Extracts keywords, requirements, and skills from a job description
-using spaCy, TF-IDF, and an LLM (configured via MODEL_JD_ANALYZER in config.py).
+Extracts structured metadata from a job description using an LLM
+(configured via MODEL_JD_ANALYZER in config.py).
+
+Returns a rich schema with required vs preferred skills, seniority level,
+industry, tech stack, and ATS-critical keywords — plus legacy keys
+(keywords, requirements, skills) for backward compatibility.
 """
 
 import json
-import spacy
-from sklearn.feature_extraction.text import TfidfVectorizer
 from llm import complete
 from config import MODEL_JD_ANALYZER
 from utils import cache as result_cache
-
-try:
-    nlp = spacy.load("en_core_web_sm")
-except OSError:
-    raise RuntimeError(
-        "spaCy model 'en_core_web_sm' not found. "
-        "Run: python -m spacy download en_core_web_sm"
-    )
 
 
 def _clean_json(text: str) -> str:
@@ -30,74 +24,79 @@ def _clean_json(text: str) -> str:
     return text.strip()
 
 
+async def _llm_complete(prompt: str, system: str = None, schema: dict = None) -> dict:
+    """
+    Thin wrapper around llm.complete that accepts system/schema kwargs and
+    returns a parsed dict.  The `system` prompt is prepended to the user
+    prompt; `schema` is accepted for interface compatibility but LiteLLM
+    structured-output enforcement is optional — callers must apply defaults.
+    """
+    full_prompt = f"{system}\n\n{prompt}" if system else prompt
+    response = await complete(full_prompt, MODEL_JD_ANALYZER)
+    raw = response["text"]
+    try:
+        return json.loads(_clean_json(raw))
+    except (json.JSONDecodeError, ValueError):
+        return {}
+
+
 async def analyze_jd(jd_text: str) -> dict:
-    """
-    Analyze job description and extract keywords, requirements, and skills.
-    Returns a dict with "text" (the analysis result) and "tokens" (accumulated token counts).
-    """
+    """Extract structured metadata from a job description."""
     cached = result_cache.get("jd_analysis", jd_text)
     if cached is not None:
         return cached
 
-    accumulated = {"input_tokens": 0, "output_tokens": 0}
+    system = """You are an expert technical recruiter. Extract structured data from job descriptions.
 
-    # ── spaCy + TF-IDF extraction ────────────────────────────────────────────
-    doc = nlp(jd_text)
-    spacy_keywords = [chunk.text.lower() for chunk in doc.noun_chunks]
-    spacy_keywords += [
-        token.text.lower()
-        for token in doc
-        if token.pos_ in ("NOUN", "PROPN") and not token.is_stop and len(token.text) > 2
-    ]
-    spacy_keywords = list(dict.fromkeys(spacy_keywords))
+Seniority levels: entry (0-2 yrs), mid (3-6 yrs), senior (7+ yrs), lead (10+ yrs, manages teams).
+Industry examples: fintech, healthtech, e-commerce, saas, gaming, enterprise-software, consulting.
 
-    tfidf_keywords = []
-    try:
-        tfidf = TfidfVectorizer(ngram_range=(1, 2), stop_words="english", max_features=30)
-        tfidf.fit([jd_text])
-        tfidf_keywords = list(tfidf.get_feature_names_out())
-    except Exception:
-        pass
+Distinguish required vs preferred:
+- required_hard_skills: explicitly required technical skills ("must have", "required", "X+ years of")
+- preferred_soft_skills: "nice to have", "preferred", or behavioural traits
+- critical_keywords: 3-8 ATS-critical terms that MUST appear on a resume to pass screening
 
-    merged_keywords = list(dict.fromkeys(spacy_keywords + tfidf_keywords))
-    merged_keywords = [k for k in merged_keywords if len(k) > 2]
+Return ONLY valid JSON. No prose."""
 
-    # ── LLM extraction ───────────────────────────────────────────────────────
-    prompt = f"""Extract structured information from this job description.
-Return ONLY a valid JSON object. No explanation, no markdown.
-Example: {{"keywords": ["python", "ml"], "requirements": ["3+ years"], "skills": ["pytorch"]}}
-Max 20 keywords, 10 requirements, 10 skills.
+    prompt = f"""Extract structured metadata from this job description:
 
-Job Description:
-{jd_text}
+{jd_text[:4000]}
 
-JSON:"""
+Return JSON with all fields. For seniority_level use: entry | mid | senior | lead."""
 
-    response = await complete(prompt, MODEL_JD_ANALYZER)
-    raw = response["text"]
-    accumulated["input_tokens"] += response.get("input_tokens", 0)
-    accumulated["output_tokens"] += response.get("output_tokens", 0)
-
-    try:
-        llm_data = json.loads(_clean_json(raw))
-    except (json.JSONDecodeError, ValueError):
-        llm_data = {"keywords": [], "requirements": [], "skills": []}
-
-    all_keywords = list(dict.fromkeys(
-        merged_keywords + [k.lower() for k in llm_data.get("keywords", [])]
-    ))
-
-    result = {
-        "keywords": all_keywords[:50],
-        "requirements": llm_data.get("requirements", []),
-        "skills": llm_data.get("skills", []),
+    schema = {
+        "type": "object",
+        "properties": {
+            "required_hard_skills":    {"type": "array", "items": {"type": "string"}},
+            "preferred_soft_skills":   {"type": "array", "items": {"type": "string"}},
+            "critical_keywords":       {"type": "array", "items": {"type": "string"}},
+            "tech_stack":              {"type": "array", "items": {"type": "string"}},
+            "seniority_level":         {"type": "string", "enum": ["entry", "mid", "senior", "lead"]},
+            "industry":                {"type": "string"},
+            "required_certifications": {"type": "array", "items": {"type": "string"}},
+            "keywords":                {"type": "array", "items": {"type": "string"}},
+            "requirements":            {"type": "array", "items": {"type": "string"}},
+            "skills":                  {"type": "array", "items": {"type": "string"}},
+        },
+        "required": [
+            "required_hard_skills", "preferred_soft_skills", "critical_keywords",
+            "tech_stack", "seniority_level", "industry", "required_certifications",
+            "keywords", "requirements", "skills",
+        ],
     }
 
-    # Cache the result without tokens for direct access
+    result = await _llm_complete(prompt, system=system, schema=schema)
+
+    result.setdefault("required_hard_skills", [])
+    result.setdefault("preferred_soft_skills", [])
+    result.setdefault("critical_keywords", [])
+    result.setdefault("tech_stack", [])
+    result.setdefault("seniority_level", "mid")
+    result.setdefault("industry", "")
+    result.setdefault("required_certifications", [])
+    result.setdefault("keywords", result.get("required_hard_skills", [])[:20])
+    result.setdefault("requirements", [])
+    result.setdefault("skills", result.get("required_hard_skills", []))
+
     result_cache.set("jd_analysis", jd_text, value=result)
-
-    # Return with tokens wrapped
-    return {
-        "text": result,
-        "tokens": accumulated,
-    }
+    return result

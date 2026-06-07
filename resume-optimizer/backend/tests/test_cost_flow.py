@@ -85,18 +85,19 @@ async def test_humanizer_returns_dict_with_text_and_tokens():
 
 @pytest.mark.asyncio
 async def test_jd_analyzer_returns_dict_with_text_and_tokens():
-    """Test that analyze_jd returns {"text": {...}, "tokens": {"input_tokens": X, "output_tokens": Y}}."""
-    mock_response = MagicMock()
-    mock_response.content = [MagicMock()]
-    mock_response.content[0].text = '{"keywords": ["python", "sql"], "requirements": [], "skills": []}'
-    mock_response.usage.input_tokens = 150
-    mock_response.usage.output_tokens = 75
+    """Test that analyze_jd returns a flat structured dict with legacy keys present."""
+    llm_payload = (
+        '{"keywords": ["python", "sql"], "requirements": [], "skills": [],'
+        ' "required_hard_skills": ["Python", "SQL"], "preferred_soft_skills": [],'
+        ' "critical_keywords": ["python", "sql"], "tech_stack": ["Python"],'
+        ' "seniority_level": "mid", "industry": "saas", "required_certifications": []}'
+    )
 
     async def mock_complete(prompt, model, cached_prefix=None):
         return {
-            "text": mock_response.content[0].text,
-            "input_tokens": mock_response.usage.input_tokens,
-            "output_tokens": mock_response.usage.output_tokens,
+            "text": llm_payload,
+            "input_tokens": 150,
+            "output_tokens": 75,
         }
 
     with patch("agents.jd_analyzer.complete", side_effect=mock_complete):
@@ -106,70 +107,46 @@ async def test_jd_analyzer_returns_dict_with_text_and_tokens():
 
         result = await analyze_jd("Sample JD with Python and SQL requirements.")
 
-        # Verify result structure
+        # Verify result is a flat dict (new schema)
         assert isinstance(result, dict)
-        assert "text" in result
-        assert "tokens" in result
 
-        # Verify the text contains the parsed analysis
-        text = result["text"]
-        assert isinstance(text, dict)
-        assert "keywords" in text
-        assert "requirements" in text
-        assert "skills" in text
+        # Legacy keys still present for backward compatibility
+        assert "keywords" in result
+        assert "requirements" in result
+        assert "skills" in result
 
-        # Verify tokens
-        tokens = result["tokens"]
-        assert tokens["input_tokens"] == 150
-        assert tokens["output_tokens"] == 75
+        # New structured keys
+        assert "required_hard_skills" in result
+        assert "seniority_level" in result
+        assert "industry" in result
+        assert "tech_stack" in result
 
 
 # ── Scorer tests ──────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_scorer_returns_dict_with_text_and_tokens():
-    """Test that score_combined returns {"text": {...}, "tokens": {...}}."""
-    mock_response = MagicMock()
-    mock_response.content = [MagicMock()]
-    mock_response.content[0].text = """{
-        "ats": {"score": 75, "missing_keywords": [], "matched_keywords": []},
-        "impact": {"score": 70, "weak_bullets": [], "suggestions": []},
-        "skills_gap": {"score": 80, "missing_skills": [], "matched_skills": []},
-        "readability": {"score": 85, "issues": [], "strengths": []}
-    }"""
-    mock_response.usage.input_tokens = 200
-    mock_response.usage.output_tokens = 100
+    """Test that score_combined returns a flat dict with scoring sections."""
+    fake_scores = {
+        "ats": {"score": 75, "missing_keywords": [], "matched_keywords": [], "keyword_coverage_pct": 50.0},
+        "impact": {"score": 70, "weak_bullets": [], "strong_bullets": [], "has_quantified_achievements": False},
+        "skills_gap": {"score": 80, "missing_skills": [], "matched_skills": [], "critical_missing": []},
+        "readability": {"score": 85, "issues": [], "worst_section": "experience", "has_summary": True, "tense_consistent": True},
+        "overall": 77,
+    }
 
-    async def mock_complete(prompt, model, cached_prefix=None):
-        return {
-            "text": mock_response.content[0].text,
-            "input_tokens": mock_response.usage.input_tokens,
-            "output_tokens": mock_response.usage.output_tokens,
-        }
+    async def mock_llm_complete(prompt, system=None, schema=None):
+        return fake_scores
 
-    with patch("agents.scorer.complete", side_effect=mock_complete):
-        # Clear cache
-        from utils import cache
-        cache.clear()
-
+    with patch("agents.scorer._llm_complete", side_effect=mock_llm_complete):
         result = await score_combined("Resume text.", "JD text.", ["python"])
 
-        # Verify result structure
+        # Verify result structure — flat dict with scoring sections
         assert isinstance(result, dict)
-        assert "text" in result
-        assert "tokens" in result
-
-        # Verify the text contains scores
-        text = result["text"]
-        assert "ats" in text
-        assert "impact" in text
-        assert "skills_gap" in text
-        assert "readability" in text
-
-        # Verify tokens
-        tokens = result["tokens"]
-        assert tokens["input_tokens"] == 200
-        assert tokens["output_tokens"] == 100
+        assert "ats" in result
+        assert "impact" in result
+        assert "skills_gap" in result
+        assert "readability" in result
 
 
 # ── Rewriter tests ────────────────────────────────────────────────────────────
