@@ -2,6 +2,11 @@ import {
   to = azurerm_storage_account.tfstate
   id = "/subscriptions/6beb02cf-15a2-4da3-bf0d-e18eeb75d08b/resourceGroups/resumeai-rg-dev/providers/Microsoft.Storage/storageAccounts/resumeaitfstdevnp"
 }
+
+import {
+  to = azurerm_storage_container.tfstate
+  id = "/subscriptions/6beb02cf-15a2-4da3-bf0d-e18eeb75d08b/resourceGroups/resumeai-rg-dev/providers/Microsoft.Storage/storageAccounts/resumeaitfstdevnp/blobServices/default/containers/tfstate"
+}
 # ── Storage Account ───────────────────────────────────────────────────────────
 
 resource "azurerm_storage_account" "main" {
