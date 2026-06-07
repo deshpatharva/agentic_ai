@@ -214,4 +214,4 @@ jobs:
           path: resume-optimizer/infra
 
       - name: Terraform Apply
-        run: terraform apply -auto-approve -no-color tfplan
+        run: terraform apply -auto-approve #-no-color tfplan
