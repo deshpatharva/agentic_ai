@@ -121,6 +121,11 @@ variable "stripe_secret_key" {
   default     = "REPLACE_ME"
 }
 
+variable "client_id" {
+  type        = string
+  description = "The Application (client) ID of the existing App Registration"
+}
+
 # ── Blob lifecycle / retention ────────────────────────────────────────────────
 
 variable "output_blob_retention_days" {
