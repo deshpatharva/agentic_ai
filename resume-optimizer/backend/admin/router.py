@@ -144,10 +144,10 @@ async def get_stats(
     avg_cost_per_run = 0.0
 
     try:
-        # Fetch active provider costs
+        # Fetch active google provider costs (all pipeline models are Gemini/Groq)
         cost_result = await db.execute(
             select(ProviderCost).where(
-                (ProviderCost.provider == "anthropic") & (ProviderCost.active == True)
+                (ProviderCost.provider == "google") & (ProviderCost.active == True)
             )
         )
         cost_row = cost_result.scalar_one_or_none()
@@ -295,10 +295,10 @@ async def get_analytics(
         daily_costs_by_date[current_date.isoformat()] = 0
 
     try:
-        # Fetch active anthropic provider costs
+        # Fetch active google provider costs (all pipeline models are Gemini/Groq)
         cost_result = await db.execute(
             select(ProviderCost).where(
-                (ProviderCost.provider == "anthropic") & (ProviderCost.active == True)
+                (ProviderCost.provider == "google") & (ProviderCost.active == True)
             )
         )
         cost_row = cost_result.scalar_one_or_none()

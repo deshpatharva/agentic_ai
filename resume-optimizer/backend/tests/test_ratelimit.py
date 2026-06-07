@@ -8,8 +8,8 @@ import pytest_asyncio
 os.environ.setdefault("JWT_SECRET", "test-secret-32-chars-long-enough-x")
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./test_ratelimit.db")
 os.environ.setdefault("ANTHROPIC_API_KEY", "test")
-os.environ.setdefault("google_ai_studio_api_key", "test")
-os.environ.setdefault("groq_api_key", "test")
+os.environ.setdefault("GOOGLE_AI_STUDIO_API_KEY", "test")
+os.environ.setdefault("GROQ_API_KEY", "test")
 
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))

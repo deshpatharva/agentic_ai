@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # ── Agent & utility imports ──────────────────────────────────────────────────
 from agents.jd_analyzer import analyze_jd
 from utils import cache as result_cache
-from config import MAX_ITERATIONS, SCORE_TARGET, BACKEND_URL, FRONTEND_URL, MODEL_SCORER, MAX_UPLOAD_BYTES, MAX_RESUME_CHARS, MAX_JD_CHARS, STUCK_JOB_TIMEOUT_MINUTES
+from config import MAX_ITERATIONS, SCORE_TARGET, BACKEND_URL, FRONTEND_URL, MODEL_SCORER, MAX_UPLOAD_BYTES, MAX_RESUME_CHARS, MAX_JD_CHARS, STUCK_JOB_TIMEOUT_MINUTES, DATABASE_URL
 from agents.scorer import score_combined
 from agents.fact_extractor import extract_claims
 from agents.fabrication_guard import fabrication_guard
@@ -62,6 +62,7 @@ from admin.router import router as admin_router
 
 _EVENT_TTL_HOURS = 24  # delete PipelineEvent rows older than this
 _last_vacuum_ts: float = 0.0
+_is_postgres = DATABASE_URL.startswith("postgresql")
 
 
 async def _cleanup_events():
@@ -436,32 +437,66 @@ async def stream_status(
 
     async def event_generator():
         nonlocal last_event_id
-        while True:
-            async with AsyncSessionLocal() as db:
-                evts_result = await db.execute(
-                    select(PipelineEvent)
-                    .where(PipelineEvent.job_id == job_uuid, PipelineEvent.id > last_event_id)
-                    .order_by(PipelineEvent.id)
-                    .limit(100)
+        _notify = asyncio.Event()
+        _pg_conn = None
+
+        if _is_postgres:
+            try:
+                import asyncpg as _asyncpg
+                _pg_dsn = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://", 1)
+                _pg_conn = await _asyncpg.connect(_pg_dsn)
+                await _pg_conn.add_listener(
+                    f"pipeline_{job_id}",
+                    lambda _c, _pid, _ch, _payload: _notify.set(),
                 )
-                events = evts_result.scalars().all()
+            except Exception:
+                _pg_conn = None
 
-                for evt in events:
-                    last_event_id = evt.id
-                    yield {"id": str(evt.id), "data": json.dumps(evt.event_json)}
-                    if evt.event_json.get("type") in ("done", "error"):
-                        return
-
-                # No new events — check if job already finished (handles post-restart reconnect)
-                if not events:
-                    status_result = await db.execute(
-                        select(PipelineJob.status).where(PipelineJob.id == job_uuid)
+        try:
+            while True:
+                got_events = False
+                async with AsyncSessionLocal() as db:
+                    evts_result = await db.execute(
+                        select(PipelineEvent)
+                        .where(PipelineEvent.job_id == job_uuid, PipelineEvent.id > last_event_id)
+                        .order_by(PipelineEvent.id)
+                        .limit(100)
                     )
-                    current_status = status_result.scalar()
-                    if current_status in (JobStatus.done, JobStatus.error):
-                        return
+                    events = evts_result.scalars().all()
 
-            await asyncio.sleep(2.0)
+                    for evt in events:
+                        got_events = True
+                        last_event_id = evt.id
+                        yield {"id": str(evt.id), "data": json.dumps(evt.event_json)}
+                        if evt.event_json.get("type") in ("done", "error"):
+                            return
+
+                    # No new events — check if job already finished (handles post-restart reconnect)
+                    if not events:
+                        status_result = await db.execute(
+                            select(PipelineJob.status).where(PipelineJob.id == job_uuid)
+                        )
+                        current_status = status_result.scalar()
+                        if current_status in (JobStatus.done, JobStatus.error):
+                            return
+
+                if got_events:
+                    continue  # more events may have arrived, re-query immediately
+
+                if _pg_conn:
+                    _notify.clear()
+                    try:
+                        await asyncio.wait_for(_notify.wait(), timeout=30.0)
+                    except asyncio.TimeoutError:
+                        pass
+                else:
+                    await asyncio.sleep(2.0)
+        finally:
+            if _pg_conn:
+                try:
+                    await _pg_conn.close()
+                except Exception:
+                    pass
 
     return EventSourceResponse(event_generator())
 
@@ -616,6 +651,11 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
         async with AsyncSessionLocal() as db:
             evt = PipelineEvent(job_id=job_uuid, event_json=event)
             db.add(evt)
+            if _is_postgres:
+                await db.execute(
+                    text("SELECT pg_notify(:ch, '')"),
+                    {"ch": f"pipeline_{job_id}"},
+                )
             await db.commit()
 
     async def update_job(**kwargs):
@@ -638,26 +678,6 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             resume_text: str = job_row.resume_text[:MAX_RESUME_CHARS]
             jd_text: str     = job_row.jd_text[:MAX_JD_CHARS]
             original_filename = job_row.original_filename
-
-        # ── Increment rate-limit counter at job START (transactional) ──────
-        # Upsert so the first run of the day creates the row atomically.
-        # Counter is read in check_plan_limit before this runs, so incrementing
-        # at start (not end) prevents concurrent bypass of daily limits.
-        if user_id:
-            try:
-                async with AsyncSessionLocal() as db:
-                    await db.execute(
-                        text(
-                            "INSERT INTO daily_usage_counters (user_id, date, runs) "
-                            "VALUES (:uid, :date, 1) "
-                            "ON CONFLICT (user_id, date) DO UPDATE "
-                            "SET runs = daily_usage_counters.runs + 1"
-                        ),
-                        {"uid": user_id, "date": date_type.today().isoformat()},
-                    )
-                    await db.commit()
-            except Exception:
-                _logger.warning("job=%s: failed to increment daily usage counter", job_id)
 
         total_input_tokens  = 0
         total_output_tokens = 0
@@ -767,7 +787,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             async with AsyncSessionLocal() as db:
                 cost_result = await db.execute(
                     select(ProviderCost).where(
-                        (ProviderCost.provider == "Google") & (ProviderCost.active == True)
+                        (ProviderCost.provider == "google") & (ProviderCost.active == True)
                     )
                 )
                 cost_row = cost_result.scalar_one_or_none()

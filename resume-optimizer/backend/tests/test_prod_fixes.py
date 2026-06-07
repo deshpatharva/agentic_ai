@@ -156,11 +156,11 @@ def test_promo_increment_is_atomic():
 # ── Task 7: Email update race ─────────────────────────────────────────────────
 
 def test_email_update_conflict_returns_400_not_500():
-    """update_me must catch IntegrityError and return HTTP 400."""
-    from auth.router import update_me
-    source = inspect.getsource(update_me)
+    """update_profile must catch IntegrityError and return HTTP 400."""
+    from auth.router import update_profile
+    source = inspect.getsource(update_profile)
     assert "IntegrityError" in source, (
-        "update_me must catch IntegrityError — without this, email conflicts return HTTP 500."
+        "update_profile must catch IntegrityError — without this, email conflicts return HTTP 500."
     )
 
 

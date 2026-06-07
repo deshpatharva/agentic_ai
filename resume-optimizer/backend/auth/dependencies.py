@@ -8,7 +8,7 @@ from datetime import date, datetime, timezone
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import JWT_ALGORITHM, JWT_SECRET
@@ -113,21 +113,35 @@ async def check_plan_limit(
         return user
 
     today_str = date.today().isoformat()
+
+    # Atomically increment the counter (upsert). The increment is part of the
+    # request's DB transaction — if the handler raises (including this 429), the
+    # transaction never commits and the increment is rolled back automatically.
+    await db.execute(
+        text(
+            "INSERT INTO daily_usage_counters (user_id, date, runs) "
+            "VALUES (:uid, :date, 1) "
+            "ON CONFLICT (user_id, date) DO UPDATE "
+            "SET runs = daily_usage_counters.runs + 1"
+        ),
+        {"uid": str(user.id), "date": today_str},
+    )
+
     counter_result = await db.execute(
         select(DailyUsageCounter.runs).where(
             DailyUsageCounter.user_id == user.id,
             DailyUsageCounter.date == today_str,
         )
     )
-    used = counter_result.scalar() or 0
+    used = counter_result.scalar() or 1
 
-    if used >= limits.daily_uploads:
+    if used > limits.daily_uploads:
         raise HTTPException(
             status_code=429,
             detail={
                 "error": "limit_reached",
                 "limit": limits.daily_uploads,
-                "used": used,
+                "used": used - 1,
                 "plan": user.plan.value,
                 "upgrade_message": "Upgrade to Pro for 20 uploads/day",
             },

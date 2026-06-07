@@ -79,6 +79,10 @@ class TokenResponse(BaseModel):
     user: dict
 
 
+class RedeemPromoRequest(BaseModel):
+    code: str
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _make_token(user_id: str) -> str:
@@ -235,12 +239,12 @@ async def get_sse_token(current_user: User = Depends(get_current_user)):
 
 @user_router.post("/redeem-promo-code")
 async def redeem_promo_code(
-    body: dict,
+    body: RedeemPromoRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Redeem a promo code."""
-    code_str = body.get("code", "").strip()
+    code_str = body.code.strip()
     if not code_str:
         raise HTTPException(status_code=400, detail="Code is required")
 
