@@ -61,8 +61,8 @@ resource "azurerm_linux_web_app" "backend" {
     AZURE_STORAGE_ACCOUNT_NAME = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.azure_storage_account_name.versionless_id})"
 
     # ── Non-secret bootstrap values ────────────────────────────────────────────
-    SCM_DO_BUILD_DURING_DEPLOYMENT     = "true"
-    WEBSITES_PORT                      = "8000"
+    SCM_DO_BUILD_DURING_DEPLOYMENT = "true"
+    WEBSITES_PORT                  = "8000"
   }
 
   tags = local.tags
