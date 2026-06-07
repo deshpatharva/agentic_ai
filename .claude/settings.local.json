@@ -91,7 +91,9 @@
       "Bash(python -m pytest backend/tests/test_delta_writer.py::test_empty_user_id_returns_all_rows backend/tests/test_delta_writer.py::test_non_empty_user_id_filters_rows -v --tb=short)",
       "Bash(python -m pytest backend/tests/test_delta_writer.py -v --tb=short -q)",
       "Bash(python -m pytest backend/tests/test_cost_tracking.py backend/tests/test_delta_writer.py backend/tests/test_migrations.py -v --tb=short -q)",
-      "Bash(git rm *)"
+      "Bash(git rm *)",
+      "Bash(.venv/Scripts/python -m pytest backend/tests/test_migrations.py backend/tests/test_cost_tracking.py -v --tb=short -q)",
+      "Bash(python -m pytest backend/tests/test_migrations.py backend/tests/test_cost_tracking.py -v --tb=short -q)"
     ],
     "additionalDirectories": [
       "c:\\Users\\deshp\\Documents\\github_repo\\agentic_ai\\resume-optimizer\\docs\\superpowers",
