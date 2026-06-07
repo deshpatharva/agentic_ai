@@ -35,7 +35,7 @@ def test_migrations_create_all_tables(tmp_path, monkeypatch):
     }
     conn.close()
 
-    assert tables == {"users", "resumes", "pipeline_jobs", "pipeline_events", "plan_limits", "promo_codes", "user_promo_redemptions", "provider_costs", "daily_usage_counters"}
+    assert tables == {"users", "resumes", "pipeline_jobs", "pipeline_events", "plan_limits", "promo_codes", "user_promo_redemptions", "provider_costs", "daily_usage_counters", "token_blocklist"}
 
 
 def test_migrations_idempotent(tmp_path, monkeypatch):
@@ -59,4 +59,4 @@ def test_migrations_stamped_after_run(tmp_path, monkeypatch):
     conn.close()
 
     assert len(rows) == 1
-    assert rows[0][0] == "0010"
+    assert rows[0][0] == "0011"

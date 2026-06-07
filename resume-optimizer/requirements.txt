@@ -27,8 +27,6 @@ azure-identity>=1.15.0
 pyarrow
 # Database migrations
 alembic>=1.13.0
-# passlib 1.7.4 + bcrypt 4.x compat shim applied in auth/router.py
-passlib[bcrypt]
 email-validator
 python-jose[cryptography]
 # Job scraper

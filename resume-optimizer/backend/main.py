@@ -51,7 +51,7 @@ import storage as _storage
 from delta.writer import write_daily_usage, write_job_match, vacuum_old_matches
 from scraper.scraper import scrape_jobs
 from db.session import get_db, init_db, AsyncSessionLocal
-from db.models import JobStatus, PipelineEvent, PipelineJob, Resume, User, ProviderCost
+from db.models import JobStatus, PipelineEvent, PipelineJob, Resume, User, ProviderCost, TokenBlocklist
 from auth.router import router as auth_router, user_router
 from auth.dependencies import decode_token, decode_sse_token, get_current_user, check_plan_limit
 from dashboard.router import router as dashboard_router
@@ -112,6 +112,13 @@ async def _reap_stuck_jobs():
                 ids = await _reap_once(db)
                 if ids:
                     _logger.warning("Reaped %d stuck jobs: %s", len(ids), ids)
+                # Clean up expired blocklist entries
+                await db.execute(
+                    delete(TokenBlocklist).where(
+                        TokenBlocklist.expires_at < datetime.now(timezone.utc)
+                    )
+                )
+                await db.commit()
             try:
                 from agents.optimizer_agent import cleanup_stale_sessions
                 stale = cleanup_stale_sessions()

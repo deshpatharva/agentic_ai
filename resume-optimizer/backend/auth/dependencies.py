@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import JWT_ALGORITHM, JWT_SECRET
-from db.models import DailyUsageCounter, PlanLimit, User
+from db.models import DailyUsageCounter, PlanLimit, User, TokenBlocklist
 from db.session import get_db
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
@@ -68,8 +68,16 @@ async def get_current_user(
         user_id: str = payload.get("sub")
         if not user_id:
             raise credentials_exc
+        jti: str = payload.get("jti")
     except JWTError:
         raise credentials_exc
+
+    if jti:
+        blocked = await db.scalar(
+            select(TokenBlocklist).where(TokenBlocklist.jti == jti)
+        )
+        if blocked:
+            raise credentials_exc
 
     try:
         user_uuid = _uuid_module.UUID(user_id)

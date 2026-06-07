@@ -171,3 +171,15 @@ class DailyUsageCounter(Base):
     user_id = Column(Uuid(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     date    = Column(String(10), nullable=False)   # ISO date "YYYY-MM-DD"
     runs    = Column(Integer, nullable=False, default=0)
+
+
+class TokenBlocklist(Base):
+    """Revoked JWT tokens. Checked on every authenticated request.
+    Expired entries cleaned up by the stuck-job reaper.
+    """
+    __tablename__ = "token_blocklist"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    jti        = Column(String(36), unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)

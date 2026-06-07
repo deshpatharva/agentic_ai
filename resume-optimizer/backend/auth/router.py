@@ -2,19 +2,12 @@
 Auth endpoints — register, login, me.
 """
 
+import re as _re
 from datetime import datetime, timedelta, timezone
 
+import bcrypt as _bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from jose import jwt
-
-# passlib 1.7.4 looks for bcrypt.__about__.__version__ which bcrypt 4.x removed
-import bcrypt as _bcrypt
-if not hasattr(_bcrypt, "__about__"):
-    class _About:
-        __version__ = _bcrypt.__version__
-    _bcrypt.__about__ = _About()
-
-from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -22,13 +15,44 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import JWT_ALGORITHM, JWT_EXPIRE_DAYS, JWT_SECRET, RATE_LIMIT_AUTH, TRIAL_DAYS
 from limiter import limiter
-from db.models import PlanLimit, PlanType, PromoCode, User, UserPromoRedemption
+from db.models import PlanLimit, PlanType, PromoCode, User, UserPromoRedemption, TokenBlocklist
 from db.session import get_db
-from auth.dependencies import get_current_user
+from auth.dependencies import get_current_user, oauth2_scheme
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 user_router = APIRouter(prefix="/user", tags=["user"])
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def _hash_password(password: str) -> str:
+    return _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
+
+
+def _verify_password(plain: str, hashed: str) -> bool:
+    return _bcrypt.checkpw(plain.encode(), hashed.encode())
+
+
+def _validate_password(password: str) -> None:
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+    if len(password) > 128:
+        raise HTTPException(status_code=400, detail="Password too long (max 128 characters).")
+    if not any(c.isupper() for c in password):
+        raise HTTPException(status_code=400, detail="Password must contain at least one uppercase letter.")
+    if not any(c.isdigit() for c in password):
+        raise HTTPException(status_code=400, detail="Password must contain at least one digit.")
+    if password != password.strip():
+        raise HTTPException(status_code=400, detail="Password cannot start or end with whitespace.")
+
+
+def _sanitize_full_name(name: str) -> str:
+    name = name.strip()
+    if not name:
+        return name
+    if len(name) > 255:
+        raise HTTPException(status_code=400, detail="Name too long (max 255 characters).")
+    if not _re.match(r"^[\w\s\-'.]+$", name, _re.UNICODE):
+        raise HTTPException(status_code=400, detail="Name contains invalid characters.")
+    return name
 
 
 # ── Request / response schemas ────────────────────────────────────────────────
@@ -58,8 +82,13 @@ class TokenResponse(BaseModel):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _make_token(user_id: str) -> str:
+    import uuid as _uuid_lib
     expire = datetime.now(timezone.utc) + timedelta(days=JWT_EXPIRE_DAYS)
-    return jwt.encode({"sub": user_id, "exp": expire}, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    return jwt.encode(
+        {"sub": user_id, "exp": expire, "jti": str(_uuid_lib.uuid4())},
+        JWT_SECRET,
+        algorithm=JWT_ALGORITHM,
+    )
 
 
 def _user_dict(user: User, limits: PlanLimit = None) -> dict:
@@ -92,14 +121,12 @@ async def register(request: Request, body: RegisterRequest, db: AsyncSession = D
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered.")
 
-    if len(body.password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
-    if len(body.password) > 128:
-        raise HTTPException(status_code=400, detail="Password too long (max 128 characters).")
+    _validate_password(body.password)
+    body.full_name = _sanitize_full_name(body.full_name)
 
     user = User(
         email=body.email,
-        password_hash=pwd_context.hash(body.password),
+        password_hash=_hash_password(body.password),
         full_name=body.full_name,
         trial_expires_at=datetime.now(timezone.utc) + timedelta(days=TRIAL_DAYS),
     )
@@ -117,7 +144,7 @@ async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends
     result = await db.execute(select(User).where(User.email == body.email, User.is_active == True))
     user = result.scalar_one_or_none()
 
-    if not user or not pwd_context.verify(body.password, user.password_hash):
+    if not user or not _verify_password(body.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password.",
@@ -143,6 +170,8 @@ async def update_profile(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    request.full_name = _sanitize_full_name(request.full_name)
+
     if request.email != user.email:
         existing = await db.execute(select(User).where(User.email == request.email))
         if existing.scalar_one_or_none():
@@ -160,6 +189,27 @@ async def update_profile(
     result = await db.execute(select(PlanLimit).where(PlanLimit.plan == user.plan.value))
     limits = result.scalar_one_or_none()
     return _user_dict(user, limits)
+
+
+@router.post("/logout")
+async def logout(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db),
+):
+    """Revoke the current JWT by adding it to the blocklist."""
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        jti = payload.get("jti")
+        if jti:
+            expires_at = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+            db.add(TokenBlocklist(jti=jti, expires_at=expires_at))
+            try:
+                await db.commit()
+            except Exception:
+                await db.rollback()
+    except Exception:
+        pass
+    return {"detail": "Logged out"}
 
 
 # ── User routes ────────────────────────────────────────────────────────────────
@@ -246,7 +296,11 @@ async def redeem_promo_code(
     redemption = UserPromoRedemption(user_id=user.id, promo_code_id=promo.id)
     db.add(redemption)
 
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Already redeemed")
 
     return {
         "message": message,
