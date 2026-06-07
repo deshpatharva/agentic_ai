@@ -53,7 +53,6 @@ resource "azurerm_linux_web_app" "backend" {
 
     SCM_DO_BUILD_DURING_DEPLOYMENT     = "true"
     WEBSITES_PORT                      = "8000"
-    WEBSITE_HTTPLOGGING_RETENTION_DAYS = "3"
   }
 
   tags = local.tags
