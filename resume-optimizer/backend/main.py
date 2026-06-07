@@ -731,6 +731,16 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
         else:
             current_resume = resume_text
 
+        # ── Fabrication guard — flag unverified claims before rendering ────
+        guard_result = fabrication_guard(current_resume, ledger, resume_text)
+        if guard_result.gaps:
+            _logger.warning(
+                "fabrication_guard flagged %d unverified claims for job %s",
+                len(guard_result.gaps),
+                job_id,
+            )
+        current_resume = guard_result.text
+
         # ── Phase 3: Generate .docx (no DB held during file I/O) ───────────
         await emit({"type": "stage", "message": "Generating optimized .docx file...", "stage": "generate"})
         blob_name = f"{job_id}.docx"
