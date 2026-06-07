@@ -1,13 +1,3 @@
-# ── Globally-unique suffix ────────────────────────────────────────────────────
-# Appended to Key Vault and Storage Account names, which must be globally unique.
-# Stable within a state file; different workspaces get different suffixes.
-
-resource "random_string" "suffix" {
-  length  = 6
-  upper   = false
-  special = false
-}
-
 # ── JWT secret ────────────────────────────────────────────────────────────────
 
 resource "random_password" "jwt_secret" {

@@ -19,7 +19,7 @@
 resource "azurerm_storage_account" "tfstate" {
   # Standard StorageV2 WITHOUT hierarchical namespace — ADLS Gen2 breaks
   # Terraform's state locking (lease operations require flat blob semantics).
-  name                     = "${var.prefix}tfst${random_string.suffix.result}"
+  name                     = local.tfstate_storage_account_name
   resource_group_name      = azurerm_resource_group.main.name
   location                 = azurerm_resource_group.main.location
   account_tier             = "Standard"
@@ -45,7 +45,7 @@ resource "azurerm_storage_account" "tfstate" {
 
 resource "azurerm_storage_container" "tfstate" {
   name                  = "tfstate"
-  storage_account_id = azurerm_storage_account.tfstate.id
+  storage_account_id    = azurerm_storage_account.tfstate.id
   container_access_type = "private"
 }
 
@@ -66,12 +66,12 @@ resource "azurerm_role_assignment" "terraform_tfstate" {
 # Fill in resource_group_name from:
 #   terraform output tfstate_resource_group_name
 
-# terraform {
-#   backend "azurerm" {
-#     resource_group_name  = "resumai-rg-dev"          # from output above
-#     storage_account_name = "resumaitfst<suffix>"     # from output above
-#     container_name       = "tfstate"
-#     key                  = "resume-optimizer/dev/terraform.tfstate"
-#     use_azuread_auth     = true                       # no shared key needed
-#   }
-# }
+#terraform {
+#  backend "azurerm" {
+#    resource_group_name  = "resumeai-rg-dev"    # from output above
+#    storage_account_name = "resumeaitfstdevnp"  # fixed name — no random suffix
+#    container_name       = "tfstate"
+#    key                  = "resume-optimizer/dev/terraform.tfstate"
+#    use_azuread_auth     = true # no shared key needed
+#  }
+#}

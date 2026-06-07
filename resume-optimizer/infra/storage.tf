@@ -1,3 +1,12 @@
+import {
+  to = azurerm_storage_account.tfstate
+  id = "/subscriptions/6beb02cf-15a2-4da3-bf0d-e18eeb75d08b/resourceGroups/resumeai-rg-dev/providers/Microsoft.Storage/storageAccounts/resumeaitfstdevnp"
+}
+
+import {
+  to = azurerm_storage_container.tfstate
+  id = "/subscriptions/6beb02cf-15a2-4da3-bf0d-e18eeb75d08b/resourceGroups/resumeai-rg-dev/providers/Microsoft.Storage/storageAccounts/resumeaitfstdevnp/blobServices/default/containers/tfstate"
+}
 # ── Storage Account ───────────────────────────────────────────────────────────
 
 resource "azurerm_storage_account" "main" {
@@ -5,7 +14,7 @@ resource "azurerm_storage_account" "main" {
   resource_group_name      = azurerm_resource_group.main.name
   location                 = azurerm_resource_group.main.location
   account_tier             = "Standard"
-  account_replication_type = "LRS"   # Locally redundant — cheapest, fine for dev
+  account_replication_type = "LRS" # Locally redundant — cheapest, fine for dev
   account_kind             = "StorageV2"
   access_tier              = "Hot"
 
@@ -33,19 +42,19 @@ resource "azurerm_storage_account" "main" {
 
 resource "azurerm_storage_container" "uploads" {
   name                  = local.uploads_container
-  storage_account_id = azurerm_storage_account.main.id
+  storage_account_id    = azurerm_storage_account.main.id
   container_access_type = "private"
 }
 
 resource "azurerm_storage_container" "outputs" {
   name                  = local.outputs_container
-  storage_account_id = azurerm_storage_account.main.id
+  storage_account_id    = azurerm_storage_account.main.id
   container_access_type = "private"
 }
 
 resource "azurerm_storage_container" "delta" {
   name                  = local.delta_container
-  storage_account_id = azurerm_storage_account.main.id
+  storage_account_id    = azurerm_storage_account.main.id
   container_access_type = "private"
 }
 
@@ -56,5 +65,5 @@ resource "azurerm_storage_container" "delta" {
 resource "azurerm_role_assignment" "sp_storage_contributor" {
   scope                = azurerm_storage_account.main.id
   role_definition_name = "Storage Blob Data Contributor"
-  principal_id         = azuread_service_principal.app.object_id
+  principal_id         = var.sp_object_id
 }

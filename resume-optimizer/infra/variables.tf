@@ -6,7 +6,7 @@ variable "subscription_id" {
 variable "location" {
   description = "Azure region for all resources"
   type        = string
-  default     = "eastus"
+  default     = "centralus"
 }
 
 variable "prefix" {
@@ -43,7 +43,7 @@ variable "postgres_db_name" {
 variable "postgres_sku" {
   description = "PostgreSQL Flexible Server SKU (student account: Standard_B1ms ~$12/mo)"
   type        = string
-  default     = "Standard_B1ms"
+  default     = "B_Standard_B1ms"
 }
 
 variable "postgres_storage_mb" {
@@ -119,6 +119,21 @@ variable "stripe_secret_key" {
   type        = string
   sensitive   = true
   default     = "REPLACE_ME"
+}
+
+variable "client_id" {
+  type        = string
+  description = "The Application (client) ID of the existing App Registration"
+}
+
+variable "app_object_id" {
+  type        = string
+  description = "The Object ID of the App Registration (used for federated identity credentials)"
+}
+
+variable "sp_object_id" {
+  type        = string
+  description = "The Object ID of the Service Principal assigned to this App Registration (used for RBAC role assignments)"
 }
 
 # ── Blob lifecycle / retention ────────────────────────────────────────────────

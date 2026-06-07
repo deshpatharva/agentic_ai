@@ -115,6 +115,8 @@
     "additionalDirectories": [
       "c:\\Users\\deshp\\Documents\\github_repo\\agentic_ai\\resume-optimizer\\docs\\superpowers",
       "c:\\Users\\deshp\\Documents\\github_repo\\agentic_ai\\docs\\superpowers\\plans"
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

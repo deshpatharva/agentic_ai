@@ -6,22 +6,25 @@ locals {
     managed_by  = "terraform"
   }
 
-  # Prefix for resource naming — imported from variables for consistency
-  prefix = local.prefix
+  # Environment suffix used in all globally-unique resource names.
+  # No hyphens — Azure storage/keyvault names are lowercase alphanumeric only.
+  # Logical names: dev-np → devnp, stg-np → stgnp, prod-p → prodp
+  env_suffix = lookup({
+    dev     = "devnp"
+    staging = "stgnp"
+    prod    = "prodp"
+  }, var.environment, "${var.environment}np")
 
   # Resource names — centralised here so changes ripple everywhere.
-  #
-  # Key Vault and Storage Account names must be globally unique across all of
-  # Azure, so a random 6-char suffix is appended.  All other names are scoped
-  # to the subscription/resource-group and don't need the suffix.
-  resource_group_name   = "${local.prefix}-rg-${var.environment}"
-  key_vault_name        = "${local.prefix}kv${var.environment}${random_string.suffix.result}"  # max 24 chars
-  storage_account_name  = "${local.prefix}st${var.environment}${random_string.suffix.result}"  # max 24 chars, lowercase alphanumeric
-  postgres_server_name  = "${local.prefix}-pg-${var.environment}"
-  app_service_plan_name = "${local.prefix}-asp-${var.environment}"
-  app_service_name      = "${local.prefix}-api-${var.environment}"
-  static_web_app_name   = "${local.prefix}-web-${var.environment}"
-  sp_app_name           = "${local.prefix}-sp-${var.environment}"
+  resource_group_name          = "${var.prefix}-rg-${var.environment}"
+  key_vault_name               = "${var.prefix}kv${local.env_suffix}"   # max 24 chars
+  storage_account_name         = "${var.prefix}st${local.env_suffix}"   # max 24 chars, lowercase alphanumeric
+  tfstate_storage_account_name = "${var.prefix}tfst${local.env_suffix}" # max 24 chars
+  postgres_server_name         = "${var.prefix}-pg-${var.environment}"
+  app_service_plan_name        = "${var.prefix}-asp-${var.environment}"
+  app_service_name             = "${var.prefix}-api-${var.environment}"
+  static_web_app_name          = "${var.prefix}-web-${var.environment}"
+  sp_app_name                  = "${var.prefix}-sp-${var.environment}"
 
   # Blob container names
   uploads_container = "uploads"
