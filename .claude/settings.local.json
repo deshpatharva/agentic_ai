@@ -93,7 +93,11 @@
       "Bash(python -m pytest backend/tests/test_cost_tracking.py backend/tests/test_delta_writer.py backend/tests/test_migrations.py -v --tb=short -q)",
       "Bash(git rm *)",
       "Bash(.venv/Scripts/python -m pytest backend/tests/test_migrations.py backend/tests/test_cost_tracking.py -v --tb=short -q)",
-      "Bash(python -m pytest backend/tests/test_migrations.py backend/tests/test_cost_tracking.py -v --tb=short -q)"
+      "Bash(python -m pytest backend/tests/test_migrations.py backend/tests/test_cost_tracking.py -v --tb=short -q)",
+      "Bash(python -m pytest backend/tests/test_migrations.py backend/tests/test_prod_fixes.py backend/tests/test_cost_tracking.py backend/tests/test_delta_writer.py -x -q --tb=short)",
+      "Bash(python -m pytest backend/tests/test_migrations.py backend/tests/test_cost_tracking.py backend/tests/test_delta_writer.py -q --tb=short)",
+      "Bash(python -c \"import ast, sys; [ast.parse\\(open\\(f\\).read\\(\\)\\) or print\\(f, 'OK'\\) for f in ['auth/dependencies.py','auth/router.py','admin/router.py']] and print\\('all OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('main.py'\\).read\\(\\)\\); print\\('main.py OK'\\)\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\deshp\\Documents\\github_repo\\agentic_ai\\resume-optimizer\\docs\\superpowers",
