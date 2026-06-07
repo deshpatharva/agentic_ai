@@ -1,7 +1,7 @@
 # ── Virtual Network ───────────────────────────────────────────────────────────
 
 resource "azurerm_virtual_network" "main" {
-  name                = "${local.prefix}-vnet"
+  name                = "${var.prefix}-vnet"
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
   address_space       = ["10.0.0.0/16"]
@@ -58,7 +58,7 @@ resource "azurerm_private_dns_zone" "postgres" {
 }
 
 resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
-  name                  = "${local.prefix}-postgres-dns-link"
+  name                  = "${var.prefix}-postgres-dns-link"
   resource_group_name   = azurerm_resource_group.main.name
   private_dns_zone_name = azurerm_private_dns_zone.postgres.name
   virtual_network_id    = azurerm_virtual_network.main.id

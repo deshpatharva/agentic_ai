@@ -4,7 +4,7 @@
 # PerGB2018: first 5 GB/month free, ~$2.30/GB after.
 
 resource "azurerm_log_analytics_workspace" "main" {
-  name                = "${local.prefix}-logs"
+  name                = "${var.prefix}-logs"
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
   sku                 = "PerGB2018"
@@ -17,7 +17,7 @@ resource "azurerm_log_analytics_workspace" "main" {
 # AppServiceHTTPLogs:    platform-level HTTP access log (redundant backup).
 
 resource "azurerm_monitor_diagnostic_setting" "app_service" {
-  name                       = "${local.prefix}-app-diag"
+  name                       = "${var.prefix}-app-diag"
   target_resource_id         = azurerm_linux_web_app.backend.id
   log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
 
