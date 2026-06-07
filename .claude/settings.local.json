@@ -6,7 +6,9 @@
       "Bash(python -m spacy download en_core_web_sm)",
       "Bash(python -c \"from db.models import User, Resume, PlanLimit; from db.session import init_db, get_db; from auth.router import router; from dashboard.router import router as dr; print\\(''All imports OK''\\)\")",
       "Bash(npm install:*)",
-      "Bash(npx tailwindcss:*)"
+      "Bash(npx tailwindcss:*)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
