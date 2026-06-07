@@ -51,8 +51,8 @@ resource "azurerm_linux_web_app" "backend" {
     AZURE_CLIENT_ID = var.client_id
     KEY_VAULT_URL   = azurerm_key_vault.main.vault_uri
 
-    SCM_DO_BUILD_DURING_DEPLOYMENT     = "true"
-    WEBSITES_PORT                      = "8000"
+    SCM_DO_BUILD_DURING_DEPLOYMENT = "true"
+    WEBSITES_PORT                  = "8000"
   }
 
   tags = local.tags
