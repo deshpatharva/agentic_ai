@@ -43,7 +43,8 @@ from config import MAX_ITERATIONS, SCORE_TARGET, BACKEND_URL, FRONTEND_URL, MODE
 from agents.scorer import score_combined
 from agents.fact_extractor import extract_claims
 from agents.fabrication_guard import fabrication_guard
-from orchestration.optimizer import run_optimization_async
+from agents.humanizer import humanize_resume
+from orchestration.optimizer import run_optimization_async, _WORK_THRESHOLD
 from parsers.pdf_parser import parse_pdf
 from parsers.docx_parser import parse_docx
 from generators.docx_generator import generate_docx
@@ -689,14 +690,23 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
         jd_result_dict = await analyze_jd(jd_text)
         jd_result  = jd_result_dict.get("text", jd_result_dict)
         jd_tokens  = jd_result_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
-        jd_keywords: list[str] = jd_result.get("keywords", [])
+        jd_keywords: list[str]     = jd_result.get("keywords", [])
+        required_hard_skills: list = jd_result.get("required_hard_skills", [])
+        seniority_level: str       = jd_result.get("seniority_level", "mid")
+        industry: str              = jd_result.get("industry", "")
         total_input_tokens  += jd_tokens["input_tokens"]
         total_output_tokens += jd_tokens["output_tokens"]
         await emit({"type": "stage", "message": f"JD analyzed — {len(jd_keywords)} keywords extracted.",
                     "stage": "jd_analysis", "keywords": jd_keywords[:20]})
 
         await emit({"type": "stage", "message": "Scoring original resume...", "stage": "score"})
-        baseline_dict   = await score_combined(resume_text, jd_text, jd_keywords)
+        baseline_dict   = await score_combined(
+            resume_text,
+            jd_text,
+            jd_keywords=jd_keywords,
+            seniority_level=seniority_level,
+            required_hard_skills=required_hard_skills,
+        )
         baseline_scores = baseline_dict.get("text", baseline_dict)
         baseline_tokens = baseline_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
         total_input_tokens  += baseline_tokens["input_tokens"]
@@ -715,19 +725,57 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                         "stage": "agent"})
 
         # ── Phase 2: Agentic optimization (no DB held) ─────────────────
+        _iter = 0
         if baseline_avg < SCORE_TARGET:
-            await emit({"type": "stage", "message": "Starting agentic optimization...", "stage": "agent"})
-            agent_result = await run_optimization_async(
-                job_id=job_id,
-                resume_text=resume_text,
-                jd_keywords=jd_keywords,
-                claims_ledger=ledger,
-                scores=baseline_scores,
-                on_event=_on_agent_event,
-            )
-            current_resume      = agent_result["text"]
-            total_input_tokens  += agent_result.get("input_tokens", 0)
-            total_output_tokens += agent_result.get("output_tokens", 0)
+            current_resume  = resume_text
+            current_scores  = baseline_scores
+            current_avg     = baseline_avg
+
+            for _iter in range(1, MAX_ITERATIONS + 1):
+                await emit({"type": "stage",
+                            "message": f"Starting agentic optimization (iteration {_iter}/{MAX_ITERATIONS})...",
+                            "stage": "agent"})
+                agent_result = await run_optimization_async(
+                    job_id=job_id,
+                    resume_text=current_resume,
+                    jd_keywords=jd_keywords,
+                    claims_ledger=ledger,
+                    scores=current_scores,
+                    on_event=_on_agent_event,
+                )
+                optimized_text = agent_result["text"]
+                total_input_tokens  += agent_result.get("input_tokens", 0)
+                total_output_tokens += agent_result.get("output_tokens", 0)
+
+                if not optimized_text or optimized_text.strip() == current_resume.strip():
+                    break  # no improvement, stop early
+
+                current_resume = optimized_text
+
+                # Re-score to check if target reached
+                iter_score_dict   = await score_combined(
+                    current_resume,
+                    jd_text,
+                    jd_keywords=jd_keywords,
+                    seniority_level=seniority_level,
+                    required_hard_skills=required_hard_skills,
+                )
+                current_scores = iter_score_dict.get("text", iter_score_dict)
+                iter_tokens    = iter_score_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
+                total_input_tokens  += iter_tokens["input_tokens"]
+                total_output_tokens += iter_tokens["output_tokens"]
+                current_avg = round(
+                    sum(current_scores[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")) / 4
+                )
+                await emit({"type": "average", "score": current_avg, "iteration": _iter,
+                            "scores": {k: current_scores[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")},
+                            "message": f"Score after iteration {_iter}: {current_avg}"})
+
+                if current_avg >= _WORK_THRESHOLD:
+                    break
+
+            # Update scores dict to reflect final iteration scores
+            scores = {**current_scores, "average": current_avg}
         else:
             current_resume = resume_text
 
@@ -740,6 +788,21 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                 job_id,
             )
         current_resume = guard_result.text
+
+        # ── Humanize after optimization + guard ────────────────────────────
+        await emit({"type": "stage", "message": "Humanizing resume language...", "stage": "humanize"})
+        try:
+            humanize_result = await humanize_resume(
+                current_resume,
+                industry=industry,
+                seniority_level=seniority_level,
+            )
+            current_resume = humanize_result.get("text", current_resume)
+            humanize_tokens = humanize_result.get("tokens", {"input_tokens": 0, "output_tokens": 0})
+            total_input_tokens  += humanize_tokens["input_tokens"]
+            total_output_tokens += humanize_tokens["output_tokens"]
+        except Exception:
+            _logger.exception("job=%s: humanize_resume failed — skipping humanization", job_id)
 
         # ── Phase 3: Generate .docx (no DB held during file I/O) ───────────
         await emit({"type": "stage", "message": "Generating optimized .docx file...", "stage": "generate"})
@@ -772,7 +835,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                         jd_text=jd_text,
                         final_score=float(scores.get("average", baseline_avg)),
                         scores_json=scores,
-                        iterations=1,
+                        iterations=max(_iter, 1),
                         version=next_version,
                     )
                     db.add(resume_record)
@@ -788,7 +851,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             status=JobStatus.done,
             download_path=blob_name,
             scores_json=scores,
-            iteration=1,
+            iteration=max(_iter, 1),
         )
 
         # ── Calculate cost (short-lived session) ─────────────────────
@@ -831,7 +894,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             "message":      "Resume optimization complete! Your optimized resume is ready.",
             "download_url": download_url,
             "final_score":  scores.get("average", baseline_avg),
-            "iterations":   1,
+            "iterations":   max(_iter, 1),
             "cost_cents":   cost_cents,
             "tokens":       {"input": total_input_tokens, "output": total_output_tokens},
         })
