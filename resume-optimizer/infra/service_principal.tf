@@ -1,9 +1,9 @@
-# ── OIDC Federated Identity Credentials (no stored secret) ───────────────────
-# GitHub Actions authenticates to Azure via OIDC — no client_secret is created,
-# stored, or rotated.  The SP is used only by CI/CD pipelines.
+# ── OIDC Federated Identity Credentials ──────────────────────────────────────
 
 resource "azuread_application_federated_identity_credential" "github_main" {
-  application_id = var.app_object_id
+  # Fix: Prepend the literal path segment before your variable string
+  application_id = "/applications/${var.app_object_id}"
+  
   display_name   = "github-main"
   description    = "GitHub Actions OIDC — deshpatharva/agentic_ai main branch"
   audiences      = ["api://AzureADTokenExchange"]
@@ -12,7 +12,9 @@ resource "azuread_application_federated_identity_credential" "github_main" {
 }
 
 resource "azuread_application_federated_identity_credential" "github_env_production" {
-  application_id = var.app_object_id
+  # Fix: Prepend the literal path segment before your variable string
+  application_id = "/applications/${var.app_object_id}"
+  
   display_name   = "github-env-production"
   description    = "GitHub Actions OIDC — deshpatharva/agentic_ai production environment"
   audiences      = ["api://AzureADTokenExchange"]
