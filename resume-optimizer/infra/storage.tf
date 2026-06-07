@@ -56,5 +56,5 @@ resource "azurerm_storage_container" "delta" {
 resource "azurerm_role_assignment" "sp_storage_contributor" {
   scope                = azurerm_storage_account.main.id
   role_definition_name = "Storage Blob Data Contributor"
-  principal_id         = azuread_service_principal.app.object_id
+  principal_id         = var.sp_object_id
 }

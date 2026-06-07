@@ -126,6 +126,16 @@ variable "client_id" {
   description = "The Application (client) ID of the existing App Registration"
 }
 
+variable "app_object_id" {
+  type        = string
+  description = "The Object ID of the App Registration (used for federated identity credentials)"
+}
+
+variable "sp_object_id" {
+  type        = string
+  description = "The Object ID of the Service Principal assigned to this App Registration (used for RBAC role assignments)"
+}
+
 # ── Blob lifecycle / retention ────────────────────────────────────────────────
 
 variable "output_blob_retention_days" {

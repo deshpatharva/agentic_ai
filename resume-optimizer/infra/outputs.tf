@@ -7,7 +7,7 @@ output "tenant_id" {
 
 output "service_principal_client_id" {
   description = "Service Principal Client ID (non-secret GUID) — add as AZURE_CLIENT_ID in GitHub Actions secrets"
-  value       = azuread_application.app.client_id
+  value       = var.client_id
 }
 
 # ── Key Vault ─────────────────────────────────────────────────────────────────
@@ -90,7 +90,7 @@ output "local_env_snippet" {
   description = "Copy these 3 lines into resume-optimizer/.env for local development"
   value       = <<-EOT
     AZURE_TENANT_ID=${data.azurerm_client_config.current.tenant_id}
-    AZURE_CLIENT_ID=${azuread_application.app.client_id}
+    AZURE_CLIENT_ID=${var.client_id}
     KEY_VAULT_URL=${azurerm_key_vault.main.vault_uri}
   EOT
 }
