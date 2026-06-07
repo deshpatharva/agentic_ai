@@ -5,7 +5,7 @@
 resource "azurerm_static_web_app" "frontend" {
   name                = local.static_web_app_name
   resource_group_name = azurerm_resource_group.main.name
-  location            = "eastus2" # Static Web Apps region availability varies; eastus2 is reliable
+  location            = var.location # Static Web Apps region availability varies; eastus2 is reliable
 
   tags = local.tags
 }
