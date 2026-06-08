@@ -77,7 +77,58 @@ jobs:
 
       - name: Terraform Validate
         run: terraform validate
-      
+
+      - name: Import existing resources (idempotent)
+        run: |
+          PREFIX="resumeai"
+          ENV="dev"
+          RG="${PREFIX}-rg-${ENV}"
+          case "$ENV" in
+            dev)     ENV_SUFFIX="devnp" ;;
+            staging) ENV_SUFFIX="stgnp" ;;
+            prod)    ENV_SUFFIX="prodp" ;;
+            *)       ENV_SUFFIX="${ENV}np" ;;
+          esac
+
+          import_if_missing() {
+            local addr="$1" id="$2"
+            terraform state show "$addr" > /dev/null 2>&1 && return 0
+            terraform import "$addr" "$id" || true
+          }
+
+          import_if_missing azurerm_resource_group.main \
+            "/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RG}"
+
+          import_if_missing azurerm_storage_account.tfstate \
+            "/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RG}/providers/Microsoft.Storage/storageAccounts/${PREFIX}tfst${ENV_SUFFIX}"
+
+          import_if_missing azurerm_storage_container.tfstate \
+            "/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RG}/providers/Microsoft.Storage/storageAccounts/${PREFIX}tfst${ENV_SUFFIX}/blobServices/default/containers/tfstate"
+
+          import_if_missing azurerm_key_vault.main \
+            "/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RG}/providers/Microsoft.KeyVault/vaults/${PREFIX}kv${ENV_SUFFIX}"
+
+          import_if_missing azurerm_storage_account.main \
+            "/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RG}/providers/Microsoft.Storage/storageAccounts/${PREFIX}st${ENV_SUFFIX}"
+
+          import_if_missing azurerm_service_plan.main \
+            "/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RG}/providers/Microsoft.Web/serverFarms/${PREFIX}-asp-${ENV}"
+
+          import_if_missing azurerm_postgresql_flexible_server.main \
+            "/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RG}/providers/Microsoft.DBforPostgreSQL/flexibleServers/${PREFIX}-pg-${ENV}"
+
+          import_if_missing azurerm_static_web_app.frontend \
+            "/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RG}/providers/Microsoft.Web/staticSites/${PREFIX}-web-${ENV}"
+
+          # Role assignment on tfstate account — ID is a GUID, look it up dynamically
+          TFSTATE_SCOPE="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RG}/providers/Microsoft.Storage/storageAccounts/${PREFIX}tfst${ENV_SUFFIX}"
+          RA_ID=$(az role assignment list --scope "$TFSTATE_SCOPE" \
+            --role "Storage Blob Data Contributor" \
+            --query "[0].id" -o tsv 2>/dev/null || true)
+          if [ -n "$RA_ID" ] && [ "$RA_ID" != "None" ]; then
+            import_if_missing azurerm_role_assignment.terraform_tfstate "$RA_ID"
+          fi
+
       - name: Terraform Plan
         id: plan
         run: |

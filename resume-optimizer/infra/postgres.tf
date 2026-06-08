@@ -18,6 +18,8 @@ resource "azurerm_postgresql_flexible_server" "main" {
   backup_retention_days        = 7
   geo_redundant_backup_enabled = false
 
+  public_network_access_enabled = false # required when delegated_subnet_id is set
+
   tags = local.tags
 }
 
