@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 
@@ -8,15 +8,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY ../requirements.txt /app/requirements.txt
+# requirements.txt lives one level up from backend/.
+# Build context must be resume-optimizer/ — run from there:
+#   docker build -f backend/Dockerfile -t resume-optimizer-backend .
+COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir \
         asyncpg \
-        sqlalchemy[asyncio]
+        "sqlalchemy[asyncio]"
 
 # spaCy model is installed via the pinned wheel in requirements.txt — no separate download needed
 
-COPY . /app/backend
+COPY backend/ /app/backend
 WORKDIR /app/backend
 
 # Runtime directories (outputs/uploads are ephemeral in prod; mount a volume or use blob storage)
