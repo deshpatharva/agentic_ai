@@ -34,6 +34,7 @@ jobs:
       ANTHROPIC_API_KEY: test
       google_ai_studio_api_key: test
       groq_api_key: test
+      BOOTSTRAP_SECRET: ci-bootstrap-secret-not-real
 
     steps:
       - uses: actions/checkout@v4
