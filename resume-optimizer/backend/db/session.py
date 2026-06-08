@@ -14,8 +14,8 @@ engine = create_async_engine(
     DATABASE_URL,
     echo=False,
     pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
+    pool_size=3,       # B1 has 1.75GB; keep idle connections low to avoid OOM
+    max_overflow=7,    # burst up to 10 total when needed
     pool_timeout=30,
 )
 AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
