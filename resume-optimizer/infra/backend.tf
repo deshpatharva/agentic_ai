@@ -57,21 +57,23 @@ resource "azurerm_role_assignment" "terraform_tfstate" {
   principal_id         = data.azurerm_client_config.current.object_id
 }
 
-# ── Backend Configuration ─────────────────────────────────────────────────────
-# Uncomment after Step 1 apply and run: terraform init -migrate-state
+# ── Backend Configuration (partial config) ───────────────────────────────────
+# All values are supplied at runtime via -backend-config flags in CI
+# (see .github/workflows/terraform.yml — "Terraform Init" step).
 #
-# Fill in storage_account_name from:
-#   terraform output tfstate_storage_account_name
+# For local bootstrap (first time per environment):
+#   terraform init -backend=false                 # step 1: local state
+#   terraform apply -target=azurerm_storage_account.tfstate \
+#                   -target=azurerm_storage_container.tfstate \
+#                   -target=azurerm_role_assignment.terraform_tfstate
 #
-# Fill in resource_group_name from:
-#   terraform output tfstate_resource_group_name
+#   terraform init -migrate-state \               # step 2: migrate to remote
+#     -backend-config="resource_group_name=resumeai-rg-<env>" \
+#     -backend-config="storage_account_name=resumeaitfst<envnp|stgnp|prodp>" \
+#     -backend-config="container_name=tfstate" \
+#     -backend-config="key=resume-optimizer/<env>/terraform.tfstate" \
+#     -backend-config="use_azuread_auth=true"
 
 terraform {
-  backend "azurerm" {
-    resource_group_name  = "resumeai-rg-dev"   # from output above
-    storage_account_name = "resumeaitfstdevnp" # fixed name — no random suffix
-    container_name       = "tfstate"
-    key                  = "resume-optimizer/dev/terraform.tfstate"
-    use_azuread_auth     = true # no shared key needed
-  }
+  backend "azurerm" {}
 }

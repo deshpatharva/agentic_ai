@@ -8,15 +8,21 @@ on:
       - ".github/workflows/terraform.yml"
   workflow_dispatch:
     inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options: [dev, staging, prod]
+        default: dev
       action:
-        description: "plan-only → inspect the plan; apply → deploy after reviewer approval"
+        description: "plan-only → inspect the plan; apply → deploy after approval"
         required: true
         type: choice
         options: [plan-only, apply]
         default: plan-only
 
 concurrency:
-  group: terraform
+  group: terraform-${{ inputs.environment || 'dev' }}
   cancel-in-progress: false
 
 permissions:
@@ -29,20 +35,22 @@ env:
   ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
   ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
   ARM_USE_OIDC:        "true"
+  TF_ENV:              ${{ inputs.environment || 'dev' }}
 
 jobs:
   # ── Plan ─────────────────────────────────────────────────────────────────────
   plan:
-    name: Terraform Plan
+    name: Terraform Plan (${{ inputs.environment || 'dev' }})
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: resume-optimizer/infra
 
     env:
-      TF_VAR_google_ai_api_key:  ${{ secrets.TF_VAR_GOOGLE_AI_API_KEY }}
-      TF_VAR_groq_api_key:       ${{ secrets.TF_VAR_GROQ_API_KEY }}
-      TF_VAR_anthropic_api_key:  ${{ secrets.TF_VAR_ANTHROPIC_API_KEY }}
+      TF_VAR_environment:       ${{ inputs.environment || 'dev' }}
+      TF_VAR_google_ai_api_key: ${{ secrets.TF_VAR_GOOGLE_AI_API_KEY }}
+      TF_VAR_groq_api_key:      ${{ secrets.TF_VAR_GROQ_API_KEY }}
+      TF_VAR_anthropic_api_key: ${{ secrets.TF_VAR_ANTHROPIC_API_KEY }}
 
     steps:
       - uses: actions/checkout@v4
@@ -64,15 +72,22 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "style: auto-format terraform files"
-          # file_pattern: "*.tf *.tfvars"
+
+      - name: Resolve backend config
+        run: |
+          case "$TF_ENV" in
+            dev)     echo "ENV_SUFFIX=devnp" >> $GITHUB_ENV ;;
+            staging) echo "ENV_SUFFIX=stgnp" >> $GITHUB_ENV ;;
+            prod)    echo "ENV_SUFFIX=prodp" >> $GITHUB_ENV ;;
+          esac
 
       - name: Terraform Init
         run: |
           terraform init \
-            -backend-config="resource_group_name=${{ secrets.AZURE_RESOURCE_GROUP }}" \
-            -backend-config="storage_account_name=${{ secrets.TFSTATE_STORAGE_ACCOUNT_NAME }}" \
+            -backend-config="resource_group_name=resumeai-rg-${TF_ENV}" \
+            -backend-config="storage_account_name=resumeaitfst${ENV_SUFFIX}" \
             -backend-config="container_name=tfstate" \
-            -backend-config="key=resume-optimizer/dev/terraform.tfstate" \
+            -backend-config="key=resume-optimizer/${TF_ENV}/terraform.tfstate" \
             -backend-config="use_azuread_auth=true"
 
       - name: Terraform Validate
@@ -81,14 +96,7 @@ jobs:
       - name: Import existing resources (idempotent)
         run: |
           PREFIX="resumeai"
-          ENV="dev"
-          RG="${PREFIX}-rg-${ENV}"
-          case "$ENV" in
-            dev)     ENV_SUFFIX="devnp" ;;
-            staging) ENV_SUFFIX="stgnp" ;;
-            prod)    ENV_SUFFIX="prodp" ;;
-            *)       ENV_SUFFIX="${ENV}np" ;;
-          esac
+          RG="${PREFIX}-rg-${TF_ENV}"
 
           import_if_missing() {
             local addr="$1" id="$2"
@@ -112,15 +120,15 @@ jobs:
             "/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RG}/providers/Microsoft.Storage/storageAccounts/${PREFIX}st${ENV_SUFFIX}"
 
           import_if_missing azurerm_service_plan.main \
-            "/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RG}/providers/Microsoft.Web/serverFarms/${PREFIX}-asp-${ENV}"
+            "/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RG}/providers/Microsoft.Web/serverFarms/${PREFIX}-asp-${TF_ENV}"
 
           import_if_missing azurerm_postgresql_flexible_server.main \
-            "/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RG}/providers/Microsoft.DBforPostgreSQL/flexibleServers/${PREFIX}-pg-${ENV}"
+            "/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RG}/providers/Microsoft.DBforPostgreSQL/flexibleServers/${PREFIX}-pg-${TF_ENV}"
 
           import_if_missing azurerm_static_web_app.frontend \
-            "/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RG}/providers/Microsoft.Web/staticSites/${PREFIX}-web-${ENV}"
+            "/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RG}/providers/Microsoft.Web/staticSites/${PREFIX}-web-${TF_ENV}"
 
-          # Role assignment on tfstate account — ID is a GUID, look it up dynamically
+          # Role assignment on tfstate account — GUID-based ID, look it up dynamically
           TFSTATE_SCOPE="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${RG}/providers/Microsoft.Storage/storageAccounts/${PREFIX}tfst${ENV_SUFFIX}"
           RA_ID=$(az role assignment list --scope "$TFSTATE_SCOPE" \
             --role "Storage Blob Data Contributor" \
@@ -187,18 +195,19 @@ jobs:
               body,
             });
 
-  # ── Apply ─────────────────────────────────────────────────────────────────────
+  # ── Apply ────────────────────────────────────────────────────────────────────
   apply:
-    name: Terraform Apply
+    name: Terraform Apply (${{ inputs.environment }})
     needs: plan
     if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply'
     runs-on: ubuntu-latest
-    environment: prod
+    environment: ${{ inputs.environment }}   # maps to GitHub env → required reviewers per env
     defaults:
       run:
         working-directory: resume-optimizer/infra
 
     env:
+      TF_VAR_environment:       ${{ inputs.environment }}
       TF_VAR_google_ai_api_key: ${{ secrets.TF_VAR_GOOGLE_AI_API_KEY }}
       TF_VAR_groq_api_key:      ${{ secrets.TF_VAR_GROQ_API_KEY }}
       TF_VAR_anthropic_api_key: ${{ secrets.TF_VAR_ANTHROPIC_API_KEY }}
@@ -216,13 +225,21 @@ jobs:
         with:
           terraform_version: "~> 1.5"
 
+      - name: Resolve backend config
+        run: |
+          case "$TF_ENV" in
+            dev)     echo "ENV_SUFFIX=devnp" >> $GITHUB_ENV ;;
+            staging) echo "ENV_SUFFIX=stgnp" >> $GITHUB_ENV ;;
+            prod)    echo "ENV_SUFFIX=prodp" >> $GITHUB_ENV ;;
+          esac
+
       - name: Terraform Init
         run: |
           terraform init \
-            -backend-config="resource_group_name=${{ secrets.AZURE_RESOURCE_GROUP }}" \
-            -backend-config="storage_account_name=${{ secrets.TFSTATE_STORAGE_ACCOUNT_NAME }}" \
+            -backend-config="resource_group_name=resumeai-rg-${TF_ENV}" \
+            -backend-config="storage_account_name=resumeaitfst${ENV_SUFFIX}" \
             -backend-config="container_name=tfstate" \
-            -backend-config="key=resume-optimizer/dev/terraform.tfstate" \
+            -backend-config="key=resume-optimizer/${TF_ENV}/terraform.tfstate" \
             -backend-config="use_azuread_auth=true"
 
       - name: Download plan artifact
