@@ -36,25 +36,33 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       # ── Prepare deployment package ────────────────────────────────────────────
-      # App Service (Oryx) runs pip install from the package root.
       # requirements.txt lives one level above backend/ in the repo, so we copy
-      # it in before zipping.  The spaCy model wheel URL in requirements.txt
-      # ensures Oryx installs en_core_web_sm without a separate download step.
+      # it in before zipping.
       - name: Prepare package
         run: |
           cp resume-optimizer/requirements.txt resume-optimizer/backend/requirements.txt
 
-      # ── Deploy to App Service via Oryx (code deploy, not container) ───────────
-      # Deployment method: code-based Oryx build.
-      # Evidence: app_service.tf sets application_stack { python_version = "3.11" }
-      # and SCM_DO_BUILD_DURING_DEPLOYMENT = "true"; no container registry is
-      # provisioned in Terraform.
-      #
-      # Oryx will:
-      #   1. pip install -r requirements.txt  (including the spaCy model wheel)
-      #   2. Start the app with the startup command set in app_settings:
-      #      uvicorn main:app --host 0.0.0.0 --port 8000
-      - uses: azure/webapps-deploy@v3
-        with:
-          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
-          package:  resume-optimizer/backend
+      # ── Create deployment zip ─────────────────────────────────────────────────
+      - name: Zip package
+        run: |
+          cd resume-optimizer/backend
+          zip -r /tmp/backend-deploy.zip . \
+            --exclude="*.pyc" \
+            --exclude="*/__pycache__/*"
+
+      # ── Deploy via classic ZipDeploy (always triggers Oryx server-side build) ─
+      # azure/webapps-deploy@v3 uses OneDeploy (/api/publish) which only rebuilds
+      # when requirements.txt changes. The classic zip deploy endpoint
+      # (/api/zipdeploy) always triggers Oryx when SCM_DO_BUILD_DURING_DEPLOYMENT
+      # is true, regardless of which files changed.
+      - name: Deploy to App Service
+        run: |
+          RESOURCE_GROUP=$(az webapp show \
+            --name "${{ secrets.AZURE_WEBAPP_NAME }}" \
+            --query resourceGroup \
+            --output tsv)
+
+          az webapp deployment source config-zip \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "${{ secrets.AZURE_WEBAPP_NAME }}" \
+            --src /tmp/backend-deploy.zip
