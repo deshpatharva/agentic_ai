@@ -49,12 +49,6 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install \
-            asyncpg \
-            "sqlalchemy[asyncio]" \
-            "python-jose[cryptography]" \
-            bcrypt \
-            passlib \
-            httpx \
             pytest \
             pytest-asyncio \
             aiosqlite \

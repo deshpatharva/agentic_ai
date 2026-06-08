@@ -26,6 +26,10 @@ pandas
 azure-storage-blob>=12.19.0
 azure-identity>=1.15.0
 pyarrow
+# Database
+asyncpg                   # PostgreSQL async driver (postgresql+asyncpg:// URL)
+sqlalchemy[asyncio]       # asyncio extra adds greenlet, required by create_async_engine
+bcrypt                    # password hashing in auth/router.py
 # Database migrations
 alembic>=1.13.0
 email-validator
