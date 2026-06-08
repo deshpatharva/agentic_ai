@@ -44,4 +44,4 @@ jobs:
           # The action runs 'npm ci && npm run build' internally.
           # VITE_API_URL is read by src/api/client.js at build time via import.meta.env.
         env:
-          VITE_API_URL: https://${{ vars.AZURE_WEBAPP_NAME }}.azurewebsites.net
+          VITE_API_URL: https://${{ secrets.AZURE_WEBAPP_NAME }}.azurewebsites.net
