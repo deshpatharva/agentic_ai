@@ -32,7 +32,7 @@ resource "azurerm_linux_web_app" "backend" {
     always_on = true # Required: keeps the worker alive for SSE streams and in-flight pipeline jobs
 
     application_stack {
-      python_version = "3.11"
+      python_version = "3.12"
     }
 
     app_command_line = "uvicorn main:app --host 0.0.0.0 --port 8000"
