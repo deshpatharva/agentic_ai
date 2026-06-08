@@ -57,12 +57,11 @@ jobs:
       # is true, regardless of which files changed.
       - name: Deploy to App Service
         run: |
-          RESOURCE_GROUP=$(az webapp show \
-            --name "${{ secrets.AZURE_WEBAPP_NAME }}" \
-            --query resourceGroup \
-            --output tsv)
+          APP_NAME="${{ secrets.AZURE_WEBAPP_NAME }}"
+          ENV="${APP_NAME##*-}"
+          RESOURCE_GROUP="resumeai-rg-${ENV}"
 
           az webapp deployment source config-zip \
             --resource-group "$RESOURCE_GROUP" \
-            --name "${{ secrets.AZURE_WEBAPP_NAME }}" \
+            --name "$APP_NAME" \
             --src /tmp/backend-deploy.zip
