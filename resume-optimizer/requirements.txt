@@ -13,6 +13,7 @@ scikit-learn
 anthropic
 litellm
 crewai>=1.0.0,<2.0
+pysqlite3-binary  # ChromaDB (CrewAI dep) requires sqlite3 >= 3.35.0; Bullseye ships 3.34.x
 python-multipart
 sse-starlette
 python-dotenv

@@ -18,6 +18,15 @@ from datetime import date as date_type
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+# Azure App Service (Debian Bullseye) ships sqlite3 3.34.x but ChromaDB (pulled
+# in by CrewAI) requires >= 3.35.0. pysqlite3-binary bundles a newer sqlite3 and
+# this swap must happen before any crewai import resolves chromadb.
+try:
+    __import__("pysqlite3")
+    sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
+except ImportError:
+    pass  # local dev / non-Bullseye environments have a recent enough sqlite3
+
 # Ensure backend/ is on the path regardless of where uvicorn is launched from
 sys.path.insert(0, str(Path(__file__).parent))
 from logging_config import setup_logging
