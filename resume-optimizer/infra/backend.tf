@@ -67,11 +67,11 @@ resource "azurerm_role_assignment" "terraform_tfstate" {
 #   terraform output tfstate_resource_group_name
 
 terraform {
- backend "azurerm" {
-   resource_group_name  = "resumeai-rg-dev"    # from output above
-   storage_account_name = "resumeaitfstdevnp"  # fixed name — no random suffix
-   container_name       = "tfstate"
-   key                  = "resume-optimizer/dev/terraform.tfstate"
-   use_azuread_auth     = true # no shared key needed
- }
+  backend "azurerm" {
+    resource_group_name  = "resumeai-rg-dev"   # from output above
+    storage_account_name = "resumeaitfstdevnp" # fixed name — no random suffix
+    container_name       = "tfstate"
+    key                  = "resume-optimizer/dev/terraform.tfstate"
+    use_azuread_auth     = true # no shared key needed
+  }
 }
