@@ -117,6 +117,12 @@ variable "stripe_secret_key" {
   default     = "REPLACE_ME"
 }
 
+variable "bootstrap_secret" {
+  description = "Bootstrap secret used for initial admin setup — generate with: python -c \"import secrets; print(secrets.token_hex(32))\""
+  type        = string
+  sensitive   = true
+}
+
 
 
 

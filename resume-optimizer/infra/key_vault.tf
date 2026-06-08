@@ -161,3 +161,11 @@ resource "azurerm_key_vault_secret" "sp_client_id" {
   depends_on   = [time_sleep.wait_for_kv_rbac]
   tags         = local.tags
 }
+
+resource "azurerm_key_vault_secret" "bootstrap_secret" {
+  name         = "BOOTSTRAP-SECRET"
+  value        = var.bootstrap_secret
+  key_vault_id = azurerm_key_vault.main.id
+  depends_on   = [time_sleep.wait_for_kv_rbac]
+  tags         = local.tags
+}
