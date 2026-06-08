@@ -62,10 +62,10 @@ resource "azurerm_linux_web_app" "backend" {
     AZURE_STORAGE_ACCOUNT_NAME = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.azure_storage_account_name.versionless_id})"
 
     # ── Non-secret bootstrap values ────────────────────────────────────────────
-    SCM_DO_BUILD_DURING_DEPLOYMENT       = "true"
-    WEBSITES_PORT                        = "8000"
-    WEBSITES_CONTAINER_START_TIME_LIMIT  = "600"  # spaCy + CrewAI import takes >230s default
-    WEBSITE_SKIP_SECRETRESOLUTION_CACHE  = "1"    # KV secret updates take effect immediately
+    SCM_DO_BUILD_DURING_DEPLOYMENT      = "true"
+    WEBSITES_PORT                       = "8000"
+    WEBSITES_CONTAINER_START_TIME_LIMIT = "600" # spaCy + CrewAI import takes >230s default
+    WEBSITE_SKIP_SECRETRESOLUTION_CACHE = "1"   # KV secret updates take effect immediately
   }
 
   tags = local.tags
