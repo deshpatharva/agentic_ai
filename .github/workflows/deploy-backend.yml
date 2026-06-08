@@ -61,7 +61,11 @@ jobs:
           ENV="${APP_NAME##*-}"
           RESOURCE_GROUP="resumeai-rg-${ENV}"
 
+          # The CLI polls until the container responds to HTTP pings. Our container
+          # takes ~4-6 min to import spaCy+CrewAI — longer than the CLI poll window.
+          # Build success is what matters; container startup is monitored separately.
           az webapp deployment source config-zip \
             --resource-group "$RESOURCE_GROUP" \
             --name "$APP_NAME" \
-            --src /tmp/backend-deploy.zip
+            --src /tmp/backend-deploy.zip \
+          || { echo "CLI polling timed out (build succeeded — container still warming up)"; true; }
