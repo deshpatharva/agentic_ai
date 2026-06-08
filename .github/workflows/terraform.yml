@@ -42,6 +42,7 @@ jobs:
   plan:
     name: Terraform Plan (${{ inputs.environment || 'dev' }})
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'dev' }}
     defaults:
       run:
         working-directory: resume-optimizer/infra

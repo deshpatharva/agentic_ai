@@ -23,7 +23,7 @@ jobs:
   deploy:
     name: Deploy to Azure App Service
     runs-on: ubuntu-latest
-    environment: production  # requires reviewer approval + OIDC environment credential
+    environment: prod
 
     steps:
       - uses: actions/checkout@v4
