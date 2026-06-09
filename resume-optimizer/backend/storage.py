@@ -117,5 +117,7 @@ def ping_storage() -> str:
     try:
         _blob_service_client().get_account_information()
         return "ok"
-    except Exception:
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).error("ping_storage failed: %s", exc, exc_info=True)
         return "error"
