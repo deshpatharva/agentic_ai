@@ -185,13 +185,17 @@ Return JSON with ALL fields populated. For lists, include every item found — d
     result = await _llm_complete(prompt, system=system, schema=schema)
 
     defaults = {
-        "ats":         {"missing_keywords": [], "matched_keywords": [], "keyword_coverage_pct": 0.0},
-        "impact":      {"weak_bullets": [], "strong_bullets": [], "has_quantified_achievements": False},
-        "skills_gap":  {"missing_skills": [], "matched_skills": [], "critical_missing": []},
-        "readability": {"issues": [], "worst_section": "experience", "has_summary": False, "tense_consistent": False},
+        "ats":         {"score": 0, "missing_keywords": [], "matched_keywords": [], "keyword_coverage_pct": 0.0},
+        "impact":      {"score": 0, "weak_bullets": [], "strong_bullets": [], "has_quantified_achievements": False},
+        "skills_gap":  {"score": 0, "missing_skills": [], "matched_skills": [], "critical_missing": []},
+        "readability": {"score": 0, "issues": [], "worst_section": "experience", "has_summary": False, "tense_consistent": False},
     }
     for section, defs in defaults.items():
+        # LLM sometimes returns flat integers instead of objects e.g. {"ats": 75, ...}
+        if isinstance(result.get(section), (int, float)):
+            result[section] = {"score": int(result[section])}
+        result.setdefault(section, {})
         for key, val in defs.items():
-            result.setdefault(section, {}).setdefault(key, val)
+            result[section].setdefault(key, val)
     result.setdefault("overall", 0)
     return result
