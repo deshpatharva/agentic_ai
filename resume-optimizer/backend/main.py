@@ -527,36 +527,54 @@ async def stream_status(
 @app.get("/download/{resume_id}")
 async def download_resume(
     resume_id: str,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    request: Request,
+    token: str = Query(None),
 ):
     """
     Download a completed optimized resume by Resume.id.
-    Works for both pipeline-generated downloads and dashboard links.
+    Accepts auth via Authorization header OR ?token= query param so that
+    a plain <a href="…?token=…"> works — browsers can't set headers on navigation.
     """
-    try:
-        resume_uuid = uuid.UUID(resume_id)
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Resume not found.")
+    # Resolve token from query param or Authorization header
+    raw_token = token
+    if not raw_token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            raw_token = auth_header[7:]
+    if not raw_token:
+        raise HTTPException(status_code=401, detail="Authentication required.")
 
-    result = await db.execute(select(Resume).where(Resume.id == resume_uuid))
-    resume = result.scalar_one_or_none()
-    if not resume or str(resume.user_id) != str(current_user.id):
-        raise HTTPException(status_code=404, detail="Resume not found.")
+    user_id = decode_token(raw_token)  # raises 401 on invalid token
 
-    if not resume.file_path:
-        raise HTTPException(status_code=404, detail="Output file not found.")
+    async with AsyncSessionLocal() as db:
+        user_result = await db.execute(
+            select(User).where(User.id == uuid.UUID(user_id), User.is_active == True)
+        )
+        current_user = user_result.scalar_one_or_none()
+        if not current_user:
+            raise HTTPException(status_code=401, detail="User not found.")
+
+        try:
+            resume_uuid = uuid.UUID(resume_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="Resume not found.")
+
+        result = await db.execute(select(Resume).where(Resume.id == resume_uuid))
+        resume = result.scalar_one_or_none()
+        if not resume or str(resume.user_id) != str(current_user.id):
+            raise HTTPException(status_code=404, detail="Resume not found.")
+
+        if not resume.file_path:
+            raise HTTPException(status_code=404, detail="Output file not found.")
+
+        original_filename = resume.original_filename
 
     url = await asyncio.to_thread(_storage.generate_download_url, resume.file_path)
     if url.startswith("http"):
-        # Return the SAS URL as JSON — frontend navigates to it directly.
-        # A 302 redirect causes the browser to make a cross-origin fetch to
-        # blob storage which CORS would block. Direct navigation has no such restriction.
-        filename = f"optimized_{resume.original_filename or 'resume'}.docx"
-        return {"url": url, "filename": filename}
+        return RedirectResponse(url, status_code=302)
     return FileResponse(
         path=url,
-        filename=f"optimized_{resume.original_filename or 'resume'}.docx",
+        filename=f"optimized_{original_filename or 'resume'}.docx",
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
 

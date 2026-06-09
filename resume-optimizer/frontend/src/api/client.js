@@ -47,39 +47,11 @@ client.interceptors.response.use(
 export default client;
 
 /**
- * Authenticated file download.
- *
- * Cloud (prod): backend returns { url, filename } — a SAS URL pointing at blob
- * storage. We navigate directly to it; the browser downloads without CORS issues
- * because navigation bypasses the same-origin restriction.
- *
- * Local dev: backend returns a FileResponse (binary). We read it as a blob and
- * trigger save-as.
+ * Build an authenticated download URL for a /download/{id} path.
+ * The backend accepts ?token= so the browser can navigate directly
+ * (302 → SAS URL → blob storage) without needing an Authorization header.
  */
-export async function downloadFile(path, fallbackFilename = 'download') {
-  const response = await client.get(path, { responseType: 'blob' });
-
-  // If the response is JSON (Content-Type application/json) it's a SAS redirect object
-  const contentType = response.headers?.['content-type'] || '';
-  if (contentType.includes('application/json')) {
-    const text = await response.data.text();
-    const { url, filename } = JSON.parse(text);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename || fallbackFilename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    return;
-  }
-
-  // Local dev — binary blob from FileResponse
-  const url = window.URL.createObjectURL(new Blob([response.data]));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fallbackFilename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  window.URL.revokeObjectURL(url);
+export function buildDownloadUrl(path) {
+  const token = localStorage.getItem('token') || '';
+  return `${API_URL}${path}?token=${encodeURIComponent(token)}`;
 }

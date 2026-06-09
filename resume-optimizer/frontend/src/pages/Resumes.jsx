@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Download, FileText, ChevronLeft, ChevronRight } from 'lucide-react';
 import Sidebar from '../components/layout/Sidebar';
 import Card from '../components/ui/Card';
-import client, { downloadFile } from '../api/client';
+import client, { buildDownloadUrl } from '../api/client';
 
 function scoreColor(s) {
   if (s >= 85) return 'text-green-600 bg-green-50';
@@ -83,12 +83,12 @@ export default function Resumes() {
                         {new Date(r.created_at).toLocaleDateString()}
                       </td>
                       <td className="py-3">
-                        <button
-                          onClick={() => downloadFile(r.download_url, `optimized_${r.filename || 'resume'}.docx`)}
+                        <a
+                          href={buildDownloadUrl(r.download_url)}
                           className="flex items-center gap-1 text-primary hover:text-primary-dark text-xs font-medium"
                         >
                           <Download className="w-3 h-3" /> Download
-                        </button>
+                        </a>
                       </td>
                     </tr>
                   ))}
