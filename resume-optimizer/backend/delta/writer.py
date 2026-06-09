@@ -12,6 +12,7 @@ Prod: set DELTA_STORAGE_PATH=s3://your-bucket/delta/
 
 import os
 import threading
+import time as _time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -25,6 +26,25 @@ from config import AZURE_STORAGE_ACCOUNT_NAME, DELTA_STORAGE_PATH
 # Per-table write locks — prevents transaction log corruption on concurrent writes
 _usage_lock   = threading.Lock()
 _matches_lock = threading.Lock()
+
+# Bearer token cache — deltalake's Rust object_store can't use App Service MSI
+# directly (it tries IMDS at 169.254.169.254 which is refused). We get the token
+# via Python's DefaultAzureCredential (which handles App Service MSI correctly)
+# and pass it as a static bearer_token. Cached for 50 min (tokens last 60 min).
+_token_cache: dict = {"token": None, "expiry": 0.0}
+_token_lock = threading.Lock()
+
+
+def _get_bearer_token() -> str:
+    now = _time.monotonic()
+    with _token_lock:
+        if _token_cache["token"] and now < _token_cache["expiry"]:
+            return _token_cache["token"]
+        from azure.identity import DefaultAzureCredential
+        token = DefaultAzureCredential().get_token("https://storage.azure.com/.default")
+        _token_cache["token"] = token.token
+        _token_cache["expiry"] = now + 3000  # 50 minutes
+        return token.token
 
 # ── Path and storage helpers ──────────────────────────────────────────────────
 
@@ -51,10 +71,17 @@ def _matches_path() -> str:
 def _storage_options() -> dict:
     """Return storage_options dict for deltalake calls. Empty dict for local dev."""
     if AZURE_STORAGE_ACCOUNT_NAME:
-        return {
-            "account_name": AZURE_STORAGE_ACCOUNT_NAME,
-            "use_azure_managed_identity": "true",
-        }
+        try:
+            return {
+                "account_name": AZURE_STORAGE_ACCOUNT_NAME,
+                "bearer_token": _get_bearer_token(),
+            }
+        except Exception:
+            # Fallback — works in environments where IMDS is reachable
+            return {
+                "account_name": AZURE_STORAGE_ACCOUNT_NAME,
+                "use_azure_managed_identity": "true",
+            }
     return {}
 
 
