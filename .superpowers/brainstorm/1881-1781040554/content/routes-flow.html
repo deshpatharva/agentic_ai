@@ -1,0 +1,106 @@
+<h2>Page & Route Map</h2>
+<p class="subtitle">New routes added, old routes kept or redirected</p>
+
+<div class="section">
+  <h3>Sidebar Navigation (updated)</h3>
+  <div style="display:flex;gap:24px;flex-wrap:wrap">
+    <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;width:200px;padding:16px;font-size:13px">
+      <div style="font-weight:700;color:#7F77DD;margin-bottom:12px;font-size:14px">Resume Optimizer</div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <div style="padding:8px 10px;border-radius:8px;color:#555">📊 Dashboard</div>
+        <div style="padding:8px 10px;border-radius:8px;background:#f3f2ff;color:#7F77DD;font-weight:600">💬 Optimize  <span style="font-size:10px;background:#7F77DD;color:#fff;padding:1px 6px;border-radius:10px;margin-left:4px">new</span></div>
+        <div style="padding:8px 10px;border-radius:8px;color:#555">👤 Profiles  <span style="font-size:10px;background:#10b981;color:#fff;padding:1px 6px;border-radius:10px;margin-left:4px">new</span></div>
+        <div style="padding:8px 10px;border-radius:8px;color:#555">📄 Resumes</div>
+        <div style="padding:8px 10px;border-radius:8px;color:#555">⚙️ Settings</div>
+      </div>
+    </div>
+
+    <div style="flex:1;min-width:280px">
+      <table style="width:100%;font-size:12px;border-collapse:collapse">
+        <thead>
+          <tr style="background:#f9fafb;text-align:left">
+            <th style="padding:8px 10px;color:#888;font-weight:600">Route</th>
+            <th style="padding:8px 10px;color:#888;font-weight:600">Page</th>
+            <th style="padding:8px 10px;color:#888;font-weight:600">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-bottom:1px solid #f3f4f6">
+            <td style="padding:8px 10px;font-family:monospace;color:#555">/dashboard</td>
+            <td style="padding:8px 10px;color:#333">Dashboard (+ onboarding banner)</td>
+            <td style="padding:8px 10px"><span style="color:#f59e0b;font-size:11px">updated</span></td>
+          </tr>
+          <tr style="border-bottom:1px solid #f3f4f6;background:#fafffe">
+            <td style="padding:8px 10px;font-family:monospace;color:#7F77DD">/optimize</td>
+            <td style="padding:8px 10px;color:#333">Chat Optimize (new)</td>
+            <td style="padding:8px 10px"><span style="color:#10b981;font-size:11px">new</span></td>
+          </tr>
+          <tr style="border-bottom:1px solid #f3f4f6">
+            <td style="padding:8px 10px;font-family:monospace;color:#555">/app</td>
+            <td style="padding:8px 10px;color:#888">→ redirect to /optimize</td>
+            <td style="padding:8px 10px"><span style="color:#6b7280;font-size:11px">redirect</span></td>
+          </tr>
+          <tr style="border-bottom:1px solid #f3f4f6;background:#fafffe">
+            <td style="padding:8px 10px;font-family:monospace;color:#7F77DD">/profiles</td>
+            <td style="padding:8px 10px;color:#333">Profile list</td>
+            <td style="padding:8px 10px"><span style="color:#10b981;font-size:11px">new</span></td>
+          </tr>
+          <tr style="border-bottom:1px solid #f3f4f6;background:#fafffe">
+            <td style="padding:8px 10px;font-family:monospace;color:#7F77DD">/profiles/new/upload</td>
+            <td style="padding:8px 10px;color:#333">Upload → Parse → Edit</td>
+            <td style="padding:8px 10px"><span style="color:#10b981;font-size:11px">new</span></td>
+          </tr>
+          <tr style="border-bottom:1px solid #f3f4f6;background:#fafffe">
+            <td style="padding:8px 10px;font-family:monospace;color:#7F77DD">/profiles/new/interview</td>
+            <td style="padding:8px 10px;color:#333">AI Chat Interview</td>
+            <td style="padding:8px 10px"><span style="color:#10b981;font-size:11px">new</span></td>
+          </tr>
+          <tr style="border-bottom:1px solid #f3f4f6;background:#fafffe">
+            <td style="padding:8px 10px;font-family:monospace;color:#7F77DD">/profiles/:id</td>
+            <td style="padding:8px 10px;color:#333">Profile detail + editor</td>
+            <td style="padding:8px 10px"><span style="color:#10b981;font-size:11px">new</span></td>
+          </tr>
+          <tr style="border-bottom:1px solid #f3f4f6">
+            <td style="padding:8px 10px;font-family:monospace;color:#555">/dashboard/resumes</td>
+            <td style="padding:8px 10px;color:#333">Optimization history (unchanged)</td>
+            <td style="padding:8px 10px"><span style="color:#6b7280;font-size:11px">unchanged</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Onboarding Banner (Dashboard — first-time users)</h3>
+  <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;max-width:620px">
+    <div style="background:linear-gradient(135deg,#f3f2ff,#ede9fe);border-radius:10px;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;gap:16px">
+      <div>
+        <div style="font-weight:600;color:#4c3dbc;margin-bottom:4px">👋 Welcome! Let's set up your first profile.</div>
+        <div style="font-size:12px;color:#6d5bd0">A profile stores your resume details so the optimizer can tailor it to any job.</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-shrink:0">
+        <button style="padding:8px 14px;background:#7F77DD;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">Upload resume</button>
+        <button style="padding:8px 14px;background:#fff;color:#7F77DD;border:1px solid #c4c0f5;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">Start from scratch</button>
+      </div>
+    </div>
+    <div style="font-size:11px;color:#aaa;margin-top:8px;text-align:right;cursor:pointer">Dismiss ×</div>
+  </div>
+</div>
+
+<div class="options" style="margin-top:24px">
+  <div class="option" data-choice="good" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content">
+      <h3>Looks good</h3>
+      <p>Routes and onboarding banner are correct. Continue to next section.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="change" onclick="toggleSelect(this)">
+    <div class="letter">✎</div>
+    <div class="content">
+      <h3>Need changes</h3>
+      <p>I want to adjust the routes or the onboarding banner. Tell me in the terminal.</p>
+    </div>
+  </div>
+</div>

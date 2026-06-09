@@ -1,0 +1,136 @@
+<h2>Design Section 5 — Profiles Page & Backend</h2>
+<p class="subtitle">The /profiles page and a summary of all new backend endpoints.</p>
+
+<div class="section">
+  <h3>Profiles List Page (/profiles)</h3>
+  <div style="background:#fff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;max-width:640px;font-size:12px">
+    <div style="padding:16px 20px;border-bottom:1px solid #f3f4f6;display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div style="font-size:16px;font-weight:700;color:#1f2937">My Profiles</div>
+        <div style="font-size:11px;color:#9ca3af;margin-top:2px">3 profiles · each tailored to a role type</div>
+      </div>
+      <button style="background:#7F77DD;color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer">+ New Profile</button>
+    </div>
+
+    <div style="padding:12px 20px;display:flex;flex-direction:column;gap:10px">
+
+      <!-- Profile card 1 -->
+      <div style="border:1.5px solid #c4c0f5;border-radius:12px;padding:14px 16px;background:#faf9ff;display:flex;align-items:center;gap:14px">
+        <div style="width:40px;height:40px;background:#f3f2ff;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">💻</div>
+        <div style="flex:1">
+          <div style="font-weight:700;color:#4c3dbc;font-size:13px">Web Developer</div>
+          <div style="font-size:11px;color:#7c6fc9;margin-top:2px">React · TypeScript · Node.js · 4 yrs exp</div>
+          <div style="font-size:10px;color:#aaa;margin-top:3px">Created Jun 1 · Used 5 times</div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button style="padding:5px 10px;background:#f3f2ff;color:#7F77DD;border:none;border-radius:6px;font-size:11px;cursor:pointer">Edit</button>
+          <button style="padding:5px 10px;background:#fff;color:#ef4444;border:1px solid #fca5a5;border-radius:6px;font-size:11px;cursor:pointer">Delete</button>
+        </div>
+      </div>
+
+      <!-- Profile card 2 -->
+      <div style="border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;background:#fff;display:flex;align-items:center;gap:14px">
+        <div style="width:40px;height:40px;background:#f0fdf4;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">⚙️</div>
+        <div style="flex:1">
+          <div style="font-weight:700;color:#374151;font-size:13px">Full Stack Engineer</div>
+          <div style="font-size:11px;color:#6b7280;margin-top:2px">React · Python · AWS · 6 yrs exp</div>
+          <div style="font-size:10px;color:#aaa;margin-top:3px">Created May 22 · Used 2 times</div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button style="padding:5px 10px;background:#f9fafb;color:#374151;border:1px solid #e5e7eb;border-radius:6px;font-size:11px;cursor:pointer">Edit</button>
+          <button style="padding:5px 10px;background:#fff;color:#ef4444;border:1px solid #fca5a5;border-radius:6px;font-size:11px;cursor:pointer">Delete</button>
+        </div>
+      </div>
+
+      <!-- Profile card 3 -->
+      <div style="border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;background:#fff;display:flex;align-items:center;gap:14px">
+        <div style="width:40px;height:40px;background:#fffbeb;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">📊</div>
+        <div style="flex:1">
+          <div style="font-weight:700;color:#374151;font-size:13px">Data Engineer</div>
+          <div style="font-size:11px;color:#6b7280;margin-top:2px">Python · Spark · dbt · 3 yrs exp</div>
+          <div style="font-size:10px;color:#aaa;margin-top:3px">Created May 10 · Used 1 time</div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button style="padding:5px 10px;background:#f9fafb;color:#374151;border:1px solid #e5e7eb;border-radius:6px;font-size:11px;cursor:pointer">Edit</button>
+          <button style="padding:5px 10px;background:#fff;color:#ef4444;border:1px solid #fca5a5;border-radius:6px;font-size:11px;cursor:pointer">Delete</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>New Backend Endpoints</h3>
+  <table style="width:100%;font-size:12px;border-collapse:collapse;max-width:640px">
+    <thead>
+      <tr style="background:#f9fafb;text-align:left">
+        <th style="padding:8px 10px;color:#6b7280;font-weight:600">Method + Route</th>
+        <th style="padding:8px 10px;color:#6b7280;font-weight:600">Purpose</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr style="border-bottom:1px solid #f3f4f6">
+        <td style="padding:8px 10px;font-family:monospace;color:#7F77DD">POST /profile/parse</td>
+        <td style="padding:8px 10px;color:#374151">Raw text → structured sections JSON (LLM)</td>
+      </tr>
+      <tr style="border-bottom:1px solid #f3f4f6;background:#fafafa">
+        <td style="padding:8px 10px;font-family:monospace;color:#7F77DD">POST /profile/ai-interview/message</td>
+        <td style="padding:8px 10px;color:#374151">One turn of the AI interview (stateless, history in body)</td>
+      </tr>
+      <tr style="border-bottom:1px solid #f3f4f6">
+        <td style="padding:8px 10px;font-family:monospace;color:#7F77DD">POST /profile/ai-interview/finish</td>
+        <td style="padding:8px 10px;color:#374151">Synthesize full conversation → sections JSON</td>
+      </tr>
+      <tr style="border-bottom:1px solid #f3f4f6;background:#fafafa">
+        <td style="padding:8px 10px;font-family:monospace;color:#7F77DD">POST /profiles</td>
+        <td style="padding:8px 10px;color:#374151">Create profile (saves sections JSON + label)</td>
+      </tr>
+      <tr style="border-bottom:1px solid #f3f4f6">
+        <td style="padding:8px 10px;font-family:monospace;color:#374151">GET /profiles</td>
+        <td style="padding:8px 10px;color:#374151">List user's profiles</td>
+      </tr>
+      <tr style="border-bottom:1px solid #f3f4f6;background:#fafafa">
+        <td style="padding:8px 10px;font-family:monospace;color:#374151">GET /profiles/:id</td>
+        <td style="padding:8px 10px;color:#374151">Get profile detail (full sections)</td>
+      </tr>
+      <tr style="border-bottom:1px solid #f3f4f6">
+        <td style="padding:8px 10px;font-family:monospace;color:#374151">PUT /profiles/:id</td>
+        <td style="padding:8px 10px;color:#374151">Update label or sections (bullet edits)</td>
+      </tr>
+      <tr style="border-bottom:1px solid #f3f4f6;background:#fafafa">
+        <td style="padding:8px 10px;font-family:monospace;color:#374151">DELETE /profiles/:id</td>
+        <td style="padding:8px 10px;color:#374151">Delete profile</td>
+      </tr>
+      <tr style="border-bottom:1px solid #f3f4f6">
+        <td style="padding:8px 10px;font-family:monospace;color:#7F77DD">POST /profile/match</td>
+        <td style="padding:8px 10px;color:#374151">Given JD text → ranked profile list with match %</td>
+      </tr>
+      <tr style="border-bottom:1px solid #f3f4f6;background:#fafafa">
+        <td style="padding:8px 10px;font-family:monospace;color:#7F77DD">POST /jd/scrape</td>
+        <td style="padding:8px 10px;color:#374151">URL → JD text (generic scraper, 24h cache)</td>
+      </tr>
+      <tr style="background:#fafafa">
+        <td style="padding:8px 10px;font-family:monospace;color:#f59e0b">PUT /run-pipeline</td>
+        <td style="padding:8px 10px;color:#374151">Updated to accept profile_id (in addition to job_id)</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="options" style="margin-top:20px">
+  <div class="option" data-choice="good" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content">
+      <h3>Looks good — full design approved</h3>
+      <p>Profiles list and backend endpoints are correct. Ready to write the spec doc.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="change" onclick="toggleSelect(this)">
+    <div class="letter">✎</div>
+    <div class="content">
+      <h3>Need changes</h3>
+      <p>Something needs adjusting before we write the spec.</p>
+    </div>
+  </div>
+</div>

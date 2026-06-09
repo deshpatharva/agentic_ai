@@ -1,0 +1,171 @@
+<h2>Design Section 3 — Profile Creation Flows</h2>
+<p class="subtitle">Two paths to creating a profile: Upload or AI Interview</p>
+
+<div class="section">
+  <h3>Path A — Upload → Parse → Edit</h3>
+  <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
+
+    <!-- Step 1 -->
+    <div style="text-align:center;flex:1;min-width:140px">
+      <div style="background:#f3f2ff;border-radius:12px;padding:14px;font-size:12px;margin-bottom:6px">
+        <div style="font-size:20px;margin-bottom:6px">📄</div>
+        <div style="font-weight:600;color:#4c3dbc;margin-bottom:4px">1. Upload</div>
+        <div style="color:#666">Drop PDF / DOCX<br/>→ /upload endpoint<br/>parses to text</div>
+      </div>
+      <div style="color:#bbb;font-size:18px">→</div>
+    </div>
+
+    <!-- Step 2 -->
+    <div style="text-align:center;flex:1;min-width:140px">
+      <div style="background:#f3f2ff;border-radius:12px;padding:14px;font-size:12px;margin-bottom:6px">
+        <div style="font-size:20px;margin-bottom:6px">🤖</div>
+        <div style="font-weight:600;color:#4c3dbc;margin-bottom:4px">2. AI Parse</div>
+        <div style="color:#666">/profile/parse<br/>converts text →<br/>structured JSON sections</div>
+      </div>
+      <div style="color:#bbb;font-size:18px">→</div>
+    </div>
+
+    <!-- Step 3 -->
+    <div style="text-align:center;flex:1;min-width:140px">
+      <div style="background:#f3f2ff;border-radius:12px;padding:14px;font-size:12px;margin-bottom:6px">
+        <div style="font-size:20px;margin-bottom:6px">✏️</div>
+        <div style="font-weight:600;color:#4c3dbc;margin-bottom:4px">3. Review & Edit</div>
+        <div style="color:#666">Bullet-level editor<br/>AI suggests label<br/>User can edit all</div>
+      </div>
+      <div style="color:#bbb;font-size:18px">→</div>
+    </div>
+
+    <!-- Step 4 -->
+    <div style="text-align:center;flex:1;min-width:140px">
+      <div style="background:#ecfdf5;border-radius:12px;padding:14px;font-size:12px;margin-bottom:6px">
+        <div style="font-size:20px;margin-bottom:6px">✅</div>
+        <div style="font-weight:600;color:#059669;margin-bottom:4px">4. Save Profile</div>
+        <div style="color:#666">POST /profiles<br/>→ redirect to<br/>/profiles/:id</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Path B — AI Chat Interview</h3>
+  <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
+
+    <div style="text-align:center;flex:1;min-width:120px">
+      <div style="background:#fff7ed;border-radius:12px;padding:14px;font-size:12px;margin-bottom:6px">
+        <div style="font-size:20px;margin-bottom:6px">💬</div>
+        <div style="font-weight:600;color:#c2410c;margin-bottom:4px">1. AI Asks</div>
+        <div style="color:#666">"What's your most recent role?" etc. Questions one at a time</div>
+      </div>
+      <div style="color:#bbb;font-size:18px">→</div>
+    </div>
+
+    <div style="text-align:center;flex:1;min-width:120px">
+      <div style="background:#fff7ed;border-radius:12px;padding:14px;font-size:12px;margin-bottom:6px">
+        <div style="font-size:20px;margin-bottom:6px">🗣️</div>
+        <div style="font-weight:600;color:#c2410c;margin-bottom:4px">2. User Answers</div>
+        <div style="color:#666">Conversational turns — 6–10 questions covering all resume sections</div>
+      </div>
+      <div style="color:#bbb;font-size:18px">→</div>
+    </div>
+
+    <div style="text-align:center;flex:1;min-width:120px">
+      <div style="background:#fff7ed;border-radius:12px;padding:14px;font-size:12px;margin-bottom:6px">
+        <div style="font-size:20px;margin-bottom:6px">🤖</div>
+        <div style="font-weight:600;color:#c2410c;margin-bottom:4px">3. AI Synthesizes</div>
+        <div style="color:#666">/profile/ai-interview/finish → builds sections JSON from conversation</div>
+      </div>
+      <div style="color:#bbb;font-size:18px">→</div>
+    </div>
+
+    <div style="text-align:center;flex:1;min-width:120px">
+      <div style="background:#f3f2ff;border-radius:12px;padding:14px;font-size:12px;margin-bottom:6px">
+        <div style="font-size:20px;margin-bottom:6px">✏️</div>
+        <div style="font-weight:600;color:#4c3dbc;margin-bottom:4px">4. Review & Edit</div>
+        <div style="color:#666">Same bullet editor as upload path — AI label suggestion + save</div>
+      </div>
+      <div style="color:#bbb;font-size:18px">→</div>
+    </div>
+
+    <div style="text-align:center;flex:1;min-width:120px">
+      <div style="background:#ecfdf5;border-radius:12px;padding:14px;font-size:12px;margin-bottom:6px">
+        <div style="font-size:20px;margin-bottom:6px">✅</div>
+        <div style="font-weight:600;color:#059669;margin-bottom:4px">5. Save Profile</div>
+        <div style="color:#666">POST /profiles → /profiles/:id</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Profile Editor Screen (step 3 in both paths)</h3>
+  <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;max-width:560px;font-size:12px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div>
+        <div style="font-size:11px;color:#aaa;margin-bottom:3px">PROFILE LABEL</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:16px;font-weight:700;color:#1f2937">Web Developer</span>
+          <span style="font-size:10px;background:#f3f2ff;color:#7F77DD;padding:2px 8px;border-radius:10px">AI suggested ✏</span>
+        </div>
+      </div>
+      <button style="padding:8px 16px;background:#7F77DD;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">Save Profile</button>
+    </div>
+
+    <!-- Experience section -->
+    <div style="border:1px solid #f0f0f0;border-radius:10px;margin-bottom:10px">
+      <div style="padding:10px 14px;display:flex;justify-content:space-between;cursor:pointer;align-items:center">
+        <span style="font-weight:600;color:#374151">💼 Work Experience</span>
+        <span style="color:#aaa;font-size:11px">▾ 2 jobs</span>
+      </div>
+      <div style="padding:0 14px 12px;border-top:1px solid #f3f4f6">
+        <div style="margin-top:10px">
+          <div style="font-weight:500;color:#1f2937;font-size:12px">Senior Frontend Dev @ Acme Corp</div>
+          <div style="color:#9ca3af;font-size:11px;margin-bottom:6px">2021 – 2024</div>
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+            <span style="color:#7F77DD">•</span>
+            <span style="flex:1;border-bottom:1px dashed #e5e7eb;padding:2px 4px;color:#4b5563">Led migration to React 18</span>
+            <span style="color:#d1d5db;cursor:pointer">✏</span><span style="color:#fca5a5;cursor:pointer">✕</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+            <span style="color:#7F77DD">•</span>
+            <span style="flex:1;border-bottom:1px dashed #e5e7eb;padding:2px 4px;color:#4b5563">Improved load time by 40%</span>
+            <span style="color:#d1d5db;cursor:pointer">✏</span><span style="color:#fca5a5;cursor:pointer">✕</span>
+          </div>
+          <div style="margin-top:6px;color:#7F77DD;cursor:pointer;font-size:11px">+ Add bullet</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Skills -->
+    <div style="border:1px solid #f0f0f0;border-radius:10px;margin-bottom:10px">
+      <div style="padding:10px 14px;display:flex;justify-content:space-between;cursor:pointer">
+        <span style="font-weight:600;color:#374151">🛠 Skills</span>
+        <span style="color:#aaa;font-size:11px">▾</span>
+      </div>
+      <div style="padding:0 14px 12px;border-top:1px solid #f3f4f6">
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px">
+          <span style="background:#f3f2ff;color:#7F77DD;padding:4px 10px;border-radius:20px;font-size:11px">React ✕</span>
+          <span style="background:#f3f2ff;color:#7F77DD;padding:4px 10px;border-radius:20px;font-size:11px">TypeScript ✕</span>
+          <span style="background:#f3f2ff;color:#7F77DD;padding:4px 10px;border-radius:20px;font-size:11px">Node.js ✕</span>
+          <span style="background:#f0fdf4;color:#16a34a;padding:4px 10px;border-radius:20px;font-size:11px;border:1px dashed #86efac;cursor:pointer">+ Add skill</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="options" style="margin-top:24px">
+  <div class="option" data-choice="good" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content">
+      <h3>Looks good</h3>
+      <p>Both creation flows and the editor layout are correct.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="change" onclick="toggleSelect(this)">
+    <div class="letter">✎</div>
+    <div class="content">
+      <h3>Need changes</h3>
+      <p>Something in the flows or editor needs adjustment. Tell me in the terminal.</p>
+    </div>
+  </div>
+</div>
