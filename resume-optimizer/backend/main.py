@@ -549,7 +549,11 @@ async def download_resume(
 
     url = await asyncio.to_thread(_storage.generate_download_url, resume.file_path)
     if url.startswith("http"):
-        return RedirectResponse(url, status_code=302)
+        # Return the SAS URL as JSON — frontend navigates to it directly.
+        # A 302 redirect causes the browser to make a cross-origin fetch to
+        # blob storage which CORS would block. Direct navigation has no such restriction.
+        filename = f"optimized_{resume.original_filename or 'resume'}.docx"
+        return {"url": url, "filename": filename}
     return FileResponse(
         path=url,
         filename=f"optimized_{resume.original_filename or 'resume'}.docx",

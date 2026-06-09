@@ -47,16 +47,37 @@ client.interceptors.response.use(
 export default client;
 
 /**
- * Authenticated file download — fetches with the Bearer token,
- * then triggers a browser save-as dialog.
- * Use this instead of <a href download> for any protected endpoint.
+ * Authenticated file download.
+ *
+ * Cloud (prod): backend returns { url, filename } — a SAS URL pointing at blob
+ * storage. We navigate directly to it; the browser downloads without CORS issues
+ * because navigation bypasses the same-origin restriction.
+ *
+ * Local dev: backend returns a FileResponse (binary). We read it as a blob and
+ * trigger save-as.
  */
-export async function downloadFile(path, filename = 'download') {
+export async function downloadFile(path, fallbackFilename = 'download') {
   const response = await client.get(path, { responseType: 'blob' });
+
+  // If the response is JSON (Content-Type application/json) it's a SAS redirect object
+  const contentType = response.headers?.['content-type'] || '';
+  if (contentType.includes('application/json')) {
+    const text = await response.data.text();
+    const { url, filename } = JSON.parse(text);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || fallbackFilename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    return;
+  }
+
+  // Local dev — binary blob from FileResponse
   const url = window.URL.createObjectURL(new Blob([response.data]));
   const a = document.createElement('a');
   a.href = url;
-  a.download = filename;
+  a.download = fallbackFilename;
   document.body.appendChild(a);
   a.click();
   a.remove();
