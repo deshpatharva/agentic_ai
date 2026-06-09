@@ -148,7 +148,35 @@ Changed `ping_storage()` in [backend/storage.py](../backend/storage.py) to use `
 _blob_service_client().get_account_information()
 
 # After (data-plane, works with Storage Blob Data Contributor)
+next(iter(_blob_service_client().list_containers()), None)
+```
+
+---
+
+## Error 6 — `list_containers(max_results=1)` TypeError
+
+### Symptom
+
+After switching `ping_storage` to `list_containers`, the health check still returned `"error"`:
+
+```
+TypeError: Session.request() got an unexpected keyword argument 'max_results'
+```
+
+### Root Cause
+
+`max_results` is not a valid keyword argument for `BlobServiceClient.list_containers()` in the installed version of `azure-storage-blob`. The SDK's `ItemPaged` plumbing passed the unknown kwarg all the way down to the underlying `requests.Session.request()`, which raised `TypeError`.
+
+### Fix
+
+Dropped `max_results=1` — calling `list_containers()` with no arguments is valid in all SDK versions. The `ItemPaged` iterator is lazy, so a single `next()` call still makes exactly one HTTP request regardless of page size.
+
+```python
+# Before (broken — max_results leaks to HTTP layer)
 next(iter(_blob_service_client().list_containers(max_results=1)), None)
+
+# After
+next(iter(_blob_service_client().list_containers()), None)
 ```
 
 ---
