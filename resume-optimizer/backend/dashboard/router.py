@@ -14,8 +14,6 @@ from auth.dependencies import get_current_user
 from db.models import PlanLimit, Resume, User, ProviderCost
 from db.session import get_db
 from delta.writer import read_job_matches, read_usage_last_n_days
-from config import BACKEND_URL
-
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
@@ -107,7 +105,7 @@ async def summary(
                 "iterations":   r.iterations,
                 "version":      r.version,
                 "created_at":   r.created_at.isoformat(),
-                "download_url": f"{BACKEND_URL}/download/{r.id}",
+                "download_url": f"/download/{r.id}",
             }
             for r in recent
         ],
@@ -145,7 +143,7 @@ async def list_resumes(
                 "iterations":   r.iterations,
                 "version":      r.version,
                 "created_at":   r.created_at.isoformat(),
-                "download_url": f"{BACKEND_URL}/download/{r.id}",
+                "download_url": f"/download/{r.id}",
             }
             for r in resumes
         ],
