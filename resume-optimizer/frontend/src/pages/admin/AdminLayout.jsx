@@ -1,11 +1,12 @@
 import { NavLink, Outlet, Link } from 'react-router-dom';
-import { LayoutDashboard, Users, BarChart2, ArrowLeft } from 'lucide-react';
+import { LayoutDashboard, Users, BarChart2, Tag, ArrowLeft } from 'lucide-react';
 import useAuthStore from '../../store/authStore';
 
 const navItems = [
-  { to: '/admin',           end: true,  icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/admin/users',     end: false, icon: Users,           label: 'Users' },
-  { to: '/admin/analytics', end: false, icon: BarChart2,        label: 'Analytics' },
+  { to: '/admin',              end: true,  icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/admin/users',        end: false, icon: Users,           label: 'Users' },
+  { to: '/admin/promo-codes',  end: false, icon: Tag,             label: 'Promo Codes' },
+  { to: '/admin/analytics',    end: false, icon: BarChart2,       label: 'Analytics' },
 ];
 
 export default function AdminLayout() {

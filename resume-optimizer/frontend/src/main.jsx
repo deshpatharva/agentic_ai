@@ -18,6 +18,7 @@ import AdminDashboard from './pages/admin/AdminDashboard';
 import UserList from './pages/admin/UserList';
 import UserDetail from './pages/admin/UserDetail';
 import AdminAnalytics from './pages/AdminAnalytics';
+import PromoCodes from './pages/admin/PromoCodes';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
@@ -42,6 +43,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
           <Route index element={<AdminDashboard />} />
           <Route path="users" element={<UserList />} />
           <Route path="users/:id" element={<UserDetail />} />
+          <Route path="promo-codes" element={<PromoCodes />} />
           <Route path="analytics" element={<AdminAnalytics />} />
         </Route>
 
