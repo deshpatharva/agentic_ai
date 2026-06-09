@@ -42,9 +42,8 @@ ReactDOM.createRoot(document.getElementById('root')).render(
           <Route index element={<AdminDashboard />} />
           <Route path="users" element={<UserList />} />
           <Route path="users/:id" element={<UserDetail />} />
+          <Route path="analytics" element={<AdminAnalytics />} />
         </Route>
-
-        <Route path="/admin/analytics" element={<AdminRoute><AdminAnalytics /></AdminRoute>} />
 
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>

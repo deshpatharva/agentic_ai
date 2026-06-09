@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import client from '../api/client';
 import UserGrowthChart from '../components/UserGrowthChart';
 import PlanDistributionChart from '../components/PlanDistributionChart';
 import CostTrendChart from '../components/CostTrendChart';
@@ -14,42 +15,25 @@ export default function AdminAnalytics() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    const fetchAnalytics = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch(`/api/admin/analytics?days=${days}`);
-        if (!res.ok) {
-          if (res.status === 403) {
-            navigate('/dashboard');
-            return;
-          }
-          throw new Error('Failed to fetch analytics');
-        }
-        const data = await res.json();
-        setAnalytics(data);
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchAnalytics();
+    setLoading(true);
+    setError(null);
+    client.get(`/admin/analytics?days=${days}`)
+      .then(r => setAnalytics(r.data))
+      .catch(err => {
+        if (err.response?.status === 403) { navigate('/dashboard'); return; }
+        setError(err.response?.data?.detail || 'Failed to fetch analytics');
+      })
+      .finally(() => setLoading(false));
   }, [days, navigate]);
 
-  if (loading) return <div className="p-8 text-center">Loading analytics...</div>;
-  if (error) return <div className="p-8 text-red-600">Error: {error}</div>;
-  if (!analytics) return <div className="p-8 text-gray-600">No analytics available</div>;
-
   return (
-    <div className="max-w-7xl mx-auto p-8">
+    <div className="p-8">
       <div className="flex justify-between items-center mb-8">
-        <h1 className="text-3xl font-bold">Admin Analytics</h1>
+        <h1 className="text-xl font-bold text-white">Analytics</h1>
         <select
           value={days}
           onChange={(e) => setDays(parseInt(e.target.value))}
-          className="px-4 py-2 border rounded-lg"
+          className="px-4 py-2 bg-gray-900 border border-gray-700 text-white rounded-lg text-sm focus:outline-none focus:border-gray-500"
         >
           <option value={7}>Last 7 days</option>
           <option value={30}>Last 30 days</option>
@@ -58,17 +42,17 @@ export default function AdminAnalytics() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <UserGrowthChart data={analytics.user_growth} />
-        <PlanDistributionChart data={analytics.plan_distribution} />
+        <UserGrowthChart data={analytics?.user_growth} isLoading={loading} error={error} />
+        <PlanDistributionChart data={analytics?.plan_distribution} isLoading={loading} error={error} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <CostTrendChart data={analytics.daily_costs} />
-        <SourceBreakdownChart data={analytics.source_counts} />
+        <CostTrendChart data={analytics?.daily_costs} isLoading={loading} error={error} />
+        <SourceBreakdownChart data={analytics?.source_counts} isLoading={loading} error={error} />
       </div>
 
       <div className="mb-6">
-        <PipelineHealthChart data={analytics.pipeline_health} />
+        <PipelineHealthChart data={analytics?.pipeline_health} isLoading={loading} error={error} />
       </div>
     </div>
   );
