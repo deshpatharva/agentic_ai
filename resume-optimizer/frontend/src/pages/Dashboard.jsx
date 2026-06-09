@@ -9,7 +9,7 @@ import Badge from '../components/ui/Badge';
 import UsageTrendsChart from '../components/UsageTrendsChart';
 import CostTrendChart from '../components/CostTrendChart';
 import MatchAnalytics from '../components/MatchAnalytics';
-import client from '../api/client';
+import client, { downloadFile } from '../api/client';
 import useAuthStore from '../store/authStore';
 
 function scoreColor(s) {
@@ -165,9 +165,9 @@ export default function Dashboard() {
                       <td className="py-3 text-gray-500">{r.iterations}</td>
                       <td className="py-3 text-gray-400 text-xs">{new Date(r.created_at).toLocaleDateString()}</td>
                       <td className="py-3">
-                        <a href={r.download_url} download className="flex items-center gap-1 text-primary hover:text-primary-dark text-xs font-medium">
+                        <button onClick={() => downloadFile(r.download_url, 'optimized_resume.docx')} className="flex items-center gap-1 text-primary hover:text-primary-dark text-xs font-medium">
                           <Download className="w-3 h-3" />Download
-                        </a>
+                        </button>
                       </td>
                     </tr>
                   ))}

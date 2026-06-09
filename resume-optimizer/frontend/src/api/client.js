@@ -45,3 +45,20 @@ client.interceptors.response.use(
 );
 
 export default client;
+
+/**
+ * Authenticated file download — fetches with the Bearer token,
+ * then triggers a browser save-as dialog.
+ * Use this instead of <a href download> for any protected endpoint.
+ */
+export async function downloadFile(path, filename = 'download') {
+  const response = await client.get(path, { responseType: 'blob' });
+  const url = window.URL.createObjectURL(new Blob([response.data]));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
+}

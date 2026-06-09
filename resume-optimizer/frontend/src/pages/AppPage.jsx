@@ -6,7 +6,7 @@ import Button from '../components/ui/Button';
 import ScoreCard from '../components/ui/ScoreCard';
 import PipelineStep from '../components/ui/PipelineStep';
 import CircularProgress from '../components/ui/CircularProgress';
-import client from '../api/client';
+import client, { downloadFile } from '../api/client';
 import useAuthStore from '../store/authStore';
 import usePipelineStore from '../store/pipelineStore';
 
@@ -249,10 +249,11 @@ export default function AppPage() {
                   <ScoreCard label="Readability" score={scores.scores?.readability || 0} />
                 </div>
                 {downloadUrl && (
-                  <a href={`${client.defaults.baseURL}${downloadUrl}`} download
+                  <button
+                    onClick={() => downloadFile(downloadUrl, 'optimized_resume.docx').catch(() => toast.error('Download failed'))}
                     className="mt-5 flex items-center justify-center gap-2 w-full bg-primary hover:bg-primary-dark text-white py-3 rounded-xl font-medium transition-colors">
                     <Download className="w-4 h-4" /> Download Optimized Resume
-                  </a>
+                  </button>
                 )}
               </div>
             )}
