@@ -175,9 +175,7 @@ export default function AppPage() {
             <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
               <div className="flex items-center justify-between mb-3">
                 <label className="text-sm font-medium text-gray-700">Job Description</label>
-                <span className={`text-xs ${jdText.length > 8000 ? 'text-amber-500' : 'text-gray-400'}`}>
-                  {jdText.length} chars{jdText.length > 8000 ? ' (first 8000 used)' : ''}
-                </span>
+                <span className="text-xs text-gray-400">{jdText.length} chars</span>
               </div>
               <textarea value={jdText} onChange={e => setJdText(e.target.value)}
                 className="w-full h-40 text-sm resize-none border-0 focus:outline-none text-gray-700 placeholder-gray-300"
