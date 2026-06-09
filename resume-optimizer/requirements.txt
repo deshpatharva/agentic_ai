@@ -3,6 +3,7 @@ uvicorn
 python-docx
 pdfplumber
 pypdf
+numpy<2.0          # thinc (spaCy dep) compiled against numpy 1.x ABI — numpy 2.x breaks it
 spacy==3.7.5
 # spaCy model pinned as a wheel so Oryx installs it via pip during App Service build.
 # `python -m spacy download` only works interactively — it won't run in Oryx.
