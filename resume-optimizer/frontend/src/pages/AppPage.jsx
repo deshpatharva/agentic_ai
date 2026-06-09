@@ -113,8 +113,11 @@ export default function AppPage() {
     setStage('upload', 'done');
 
     try {
-      await client.post('/run-pipeline', { job_id: jobIdLocal, jd_text: jdText });
-      const es = new EventSource(`${client.defaults.baseURL}/status/${jobIdLocal}?token=${encodeURIComponent(token || '')}`);
+      const [, { data: sseData }] = await Promise.all([
+        client.post('/run-pipeline', { job_id: jobIdLocal, jd_text: jdText }),
+        client.post('/user/sse-token'),
+      ]);
+      const es = new EventSource(`${client.defaults.baseURL}/status/${jobIdLocal}?token=${encodeURIComponent(sseData.sse_token)}`);
       esRef.current = es;
       es.onmessage = handleSSE;
       es.onerror = () => { es.close(); if (status !== 'done') setStatus('error'); };
