@@ -20,7 +20,7 @@ def upgrade() -> None:
     if dialect == "postgresql":
         op.execute(
             text(
-                "ALTER TABLE provider_costs ADD CONSTRAINT IF NOT EXISTS chk_provider_lower "
+                "ALTER TABLE provider_costs ADD CONSTRAINT chk_provider_lower "
                 "CHECK (provider = lower(provider))"
             )
         )
