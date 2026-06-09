@@ -382,6 +382,7 @@ async def analyze_jd_endpoint(
         result_dict = await analyze_jd(request.jd_text[:MAX_JD_CHARS])
         result = result_dict.get("text", result_dict)
     except Exception as e:
+        _logger.exception("analyze_jd_endpoint failed")
         raise HTTPException(status_code=500, detail=f"JD analysis failed: {str(e)}")
 
     return result
