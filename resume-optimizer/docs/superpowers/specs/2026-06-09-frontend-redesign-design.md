@@ -268,6 +268,28 @@ Only one card is expanded at a time (others collapse when a new one opens).
 
 ---
 
+## Recommended Build Order
+
+Features depend on each other in this sequence:
+
+1. **DB migration** — `profiles` table + `resumes.profile_id` column
+2. **Profile CRUD endpoints** — `POST/GET/PUT/DELETE /profiles`
+3. **Profile parse endpoint** — `POST /profile/parse` (LLM structured extraction)
+4. **Profile creation UI** — `/profiles/new` page with upload path + editor + save
+5. **Profiles list page** — `/profiles` expandable accordion with inline editing
+6. **Dashboard onboarding banner**
+7. **JD scrape endpoint** — `POST /jd/scrape` with 24h cache
+8. **Profile match endpoint** — `POST /profile/match`
+9. **Run-pipeline update** — accept `profile_id`, reconstruct resume text from sections
+10. **AI interview endpoints** — `POST /profile/ai-interview/message` + `/finish`
+11. **Chat Optimize page** — `/optimize` replaces AppPage; wire scrape, match, pipeline SSE, chat narration
+12. **AI interview UI** — interview path in `/profiles/new`
+13. **Router updates** — `/app` redirect, default landing to `/optimize`, sidebar order
+
+Steps 1–6 can ship as a usable milestone (profiles exist, users can create and edit them). Steps 7–11 are the chat optimize milestone. Steps 12–13 polish.
+
+---
+
 ## Out of Scope
 
 - Resume comparison between versions
