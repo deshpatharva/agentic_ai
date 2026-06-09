@@ -4,6 +4,7 @@ const styles = {
   free:       'bg-gray-100 text-gray-600',
   pro:        'bg-violet-100 text-violet-700',
   enterprise: 'bg-amber-100 text-amber-700',
+  admin:      'bg-rose-100 text-rose-700',
   green:      'bg-green-100 text-green-700',
   amber:      'bg-amber-100 text-amber-700',
   red:        'bg-red-100 text-red-700',
