@@ -62,7 +62,7 @@ def _table_exists(path: str) -> bool:
     """Return True if a Delta table exists at path (local or cloud)."""
     if _is_cloud_path(path):
         try:
-            DeltaTable.from_uri(path, storage_options=_storage_options())
+            DeltaTable(path, storage_options=_storage_options())
             return True
         except TableNotFoundError:
             return False
@@ -193,7 +193,7 @@ def read_usage_last_n_days(user_id: str, days: int = 30) -> pd.DataFrame:
         return pd.DataFrame(columns=["date", "pipeline_runs", "uploads", "input_tokens", "output_tokens", "tokens_used"])
 
     cutoff = (date.today() - timedelta(days=days)).isoformat()
-    dt = DeltaTable.from_uri(path, storage_options=_storage_options())
+    dt = DeltaTable(path, storage_options=_storage_options())
 
     filters: list = [("date", ">=", cutoff)]
     if user_id:
@@ -236,7 +236,7 @@ def read_job_matches(
         return {"total": 0, "page": page, "per_page": per_page, "results": []}
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    dt = DeltaTable.from_uri(path, storage_options=_storage_options())
+    dt = DeltaTable(path, storage_options=_storage_options())
 
     filters: list = [("scraped_at", ">=", cutoff)]
     if user_id:
@@ -271,6 +271,6 @@ def vacuum_old_matches(retention_days: int = 90) -> None:
     cutoff_dt = datetime.now(timezone.utc) - timedelta(days=retention_days)
     cutoff_iso = cutoff_dt.strftime("%Y-%m-%dT%H:%M:%S")
 
-    dt = DeltaTable.from_uri(path, storage_options=_storage_options())
+    dt = DeltaTable(path, storage_options=_storage_options())
     dt.delete(f"scraped_at < '{cutoff_iso}'")
     dt.vacuum(retention_hours=168, dry_run=False)  # 7-day file retention
