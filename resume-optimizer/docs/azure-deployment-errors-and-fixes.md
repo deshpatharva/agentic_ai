@@ -181,6 +181,252 @@ next(iter(_blob_service_client().list_containers()), None)
 
 ---
 
+## Error 7 — `DeltaTable` has no attribute `from_uri`
+
+### Symptom
+
+Dashboard Analytics page showed:
+
+```
+Error: Failed to read match analytics: type object 'DeltaTable' has no attribute 'from_uri'
+```
+
+### Root Cause
+
+`deltalake` 1.2.1 removed the `DeltaTable.from_uri()` class method that existed in 0.x. The codebase had 4 call sites using `DeltaTable.from_uri(path, storage_options=...)`.
+
+### Fix
+
+Replaced all 4 occurrences in [backend/delta/writer.py](../backend/delta/writer.py):
+
+```python
+# Before (deltalake 0.x)
+DeltaTable.from_uri(path, storage_options=_storage_options())
+
+# After (deltalake 1.x)
+DeltaTable(path, storage_options=_storage_options())
+```
+
+---
+
+## Error 8 — Delta Lake MSI Token Acquisition Fails (Connection refused 111)
+
+### Symptom
+
+Dashboard Analytics showed:
+
+```
+Error: Failed to read match analytics: Kernel error → Generic MicrosoftAzure error
+Error performing token request
+Error performing GET http://169.254.169.254/metadata/identity/oauth2/token?...
+after 10 retries — Connection refused (os error 111)
+```
+
+### Root Cause
+
+The `deltalake` Rust library's `object_store` crate acquires Managed Identity tokens from the IMDS endpoint at `169.254.169.254`. Azure App Service does not expose IMDS — it uses a different internal MSI endpoint exposed via the `IDENTITY_ENDPOINT` and `IDENTITY_HEADER` environment variables. The Python `azure-identity` SDK handles both, but the Rust layer does not.
+
+### Fix
+
+Replaced `use_azure_managed_identity: true` with a Python-acquired `bearer_token` in [backend/delta/writer.py](../backend/delta/writer.py). A token cache (50 min TTL) prevents hammering the MSI endpoint:
+
+```python
+_token_cache: dict = {"token": None, "expiry": 0.0}
+_token_lock = threading.Lock()
+
+def _get_bearer_token() -> str:
+    now = _time.monotonic()
+    with _token_lock:
+        if _token_cache["token"] and now < _token_cache["expiry"]:
+            return _token_cache["token"]
+        from azure.identity import DefaultAzureCredential
+        token = DefaultAzureCredential().get_token("https://storage.azure.com/.default")
+        _token_cache["token"] = token.token
+        _token_cache["expiry"] = now + 3000  # 50 minutes
+        return token.token
+
+def _storage_options() -> dict:
+    if AZURE_STORAGE_ACCOUNT_NAME:
+        try:
+            return {"account_name": AZURE_STORAGE_ACCOUNT_NAME, "bearer_token": _get_bearer_token()}
+        except Exception:
+            return {"account_name": AZURE_STORAGE_ACCOUNT_NAME, "use_azure_managed_identity": "true"}
+    return {}
+```
+
+---
+
+## Error 9 — JD Analysis Returns 422 (Pydantic max_length)
+
+### Symptom
+
+Clicking "Extract Keywords" silently returned `422 Unprocessable Entity`. Nothing appeared in the App Service log stream. Toast showed "JD analysis failed".
+
+### Root Cause
+
+`AnalyzeJDRequest` had `jd_text: str = Field(..., max_length=MAX_JD_CHARS)` where `MAX_JD_CHARS = 8000`. Pydantic rejected the request before it reached the handler (so no Python logging fired). The user's JD was 8202 chars.
+
+### Fix
+
+Removed `max_length` from `AnalyzeJDRequest` in [backend/main.py](../backend/main.py) — the endpoint already truncates internally with `[:MAX_JD_CHARS]`. Also raised `MAX_JD_CHARS` to 20 000 in [backend/config.py](../backend/config.py) since Gemini's context window is 1 M tokens.
+
+```python
+# Before
+class AnalyzeJDRequest(BaseModel):
+    jd_text: str = Field(..., max_length=MAX_JD_CHARS)
+
+# After
+class AnalyzeJDRequest(BaseModel):
+    jd_text: str  # truncated to MAX_JD_CHARS in the endpoint
+```
+
+---
+
+## Error 10 — JD Analysis Returns 500 (Missing Gemini API Key)
+
+### Symptom
+
+`POST /analyze-jd` returned:
+
+```json
+{"detail": "JD analysis failed: litellm.APIConnectionError: Missing Gemini API key.
+Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable."}
+```
+
+### Root Cause
+
+The Azure App Service app setting was named `GOOGLE_AI_STUDIO_API_KEY`. LiteLLM looks for `GEMINI_API_KEY` or `GOOGLE_API_KEY` — it does not recognise the `GOOGLE_AI_STUDIO_API_KEY` name.
+
+### Fix
+
+Two-part fix in [backend/config.py](../backend/config.py):
+
+1. Accept any of the three env var names (operator can use whichever they prefer).
+2. Set both LiteLLM aliases at startup so they are always available regardless of which name was configured.
+
+```python
+GOOGLE_AI_STUDIO_API_KEY = (
+    os.environ.get("GOOGLE_AI_STUDIO_API_KEY")
+    or os.environ.get("GEMINI_API_KEY")
+    or os.environ.get("GOOGLE_API_KEY")
+    or ""
+)
+if GOOGLE_AI_STUDIO_API_KEY:
+    os.environ.setdefault("GEMINI_API_KEY", GOOGLE_AI_STUDIO_API_KEY)
+    os.environ.setdefault("GOOGLE_API_KEY", GOOGLE_AI_STUDIO_API_KEY)
+```
+
+**Immediate workaround (no redeploy needed):**
+```bash
+az webapp config appsettings set \
+  --name resumeai-api-dev --resource-group resumeai-rg-dev \
+  --settings GEMINI_API_KEY="<your-google-ai-studio-key>"
+```
+
+---
+
+## Error 11 — Quota Counter Increments on Failed Runs and on Upload
+
+### Symptom
+
+Users reported usage count increasing even when the pipeline failed or when they only clicked "Extract Keywords". A free-plan user (limit 2) could exhaust their daily quota with just 1 upload + 1 failed pipeline run.
+
+### Root Cause
+
+`check_plan_limit` (which atomically increments the counter) was applied as a FastAPI dependency to both `/upload` **and** `/run-pipeline`. This caused double-counting: each attempt consumed 2 quota units. Additionally, the increment happened at request time (before the background task ran), so failed pipeline runs still consumed quota.
+
+### Fix
+
+Three changes in [backend/auth/dependencies.py](../backend/auth/dependencies.py) and [backend/main.py](../backend/main.py):
+
+1. `/upload` now uses `get_current_user` — uploading a file is free.
+2. `check_plan_limit` only **checks** the counter (no increment).
+3. The counter is incremented inside `_run_pipeline_task` **only on success**.
+
+```python
+# check_plan_limit — check only, no increment
+used = counter_result.scalar() or 0
+if used >= limits.daily_uploads:
+    raise HTTPException(status_code=429, ...)
+
+# _run_pipeline_task — increment only on success, just before emitting "done"
+async with AsyncSessionLocal() as db:
+    await db.execute(
+        text("INSERT INTO daily_usage_counters ... ON CONFLICT DO UPDATE SET runs = runs + 1"),
+        {"uid": user_id, "date": date_type.today().isoformat()},
+    )
+    await db.commit()
+```
+
+---
+
+## Error 12 — SSE Status Stream Returns 401 (Wrong Token Type)
+
+### Symptom
+
+After clicking "Optimize Resume", the EventSource connection to `/status/{job_id}` immediately returned `401 Unauthorized` with:
+
+```json
+{"detail": "Invalid token for SSE — use POST /auth/sse-token"}
+```
+
+### Root Cause
+
+The frontend passed the regular 7-day session JWT directly in the EventSource URL (`?token=...`). The `/status` endpoint intentionally rejects session tokens — it requires a short-lived SSE token (60 s, `sse: true` claim) to prevent long-lived tokens from appearing in server access logs and browser history.
+
+### Fix
+
+In [frontend/src/pages/AppPage.jsx](../frontend/src/pages/AppPage.jsx), call `POST /user/sse-token` in parallel with `POST /run-pipeline` and use the returned `sse_token` for the EventSource:
+
+```javascript
+const [, { data: sseData }] = await Promise.all([
+  client.post('/run-pipeline', { job_id: jobIdLocal, jd_text: jdText }),
+  client.post('/user/sse-token'),
+]);
+const es = new EventSource(
+  `${client.defaults.baseURL}/status/${jobIdLocal}?token=${encodeURIComponent(sseData.sse_token)}`
+);
+```
+
+---
+
+## Error 13 — Pipeline Crashes with `'int' object has no attribute 'setdefault'`
+
+### Symptom
+
+SSE stream emitted:
+
+```json
+{"type": "error", "message": "Pipeline error: 'int' object has no attribute 'setdefault'"}
+```
+
+The pipeline failed immediately after the "Scoring original resume…" stage.
+
+### Root Cause
+
+In [backend/agents/scorer.py](../backend/agents/scorer.py), the post-processing loop applied defaults with:
+
+```python
+result.setdefault(section, {}).setdefault(key, val)
+```
+
+Gemini occasionally returns scores as flat integers — `{"ats": 75, "impact": 60, ...}` — instead of the expected nested objects `{"ats": {"score": 75, ...}, ...}`. When `result["ats"]` is `75`, `result.setdefault("ats", {})` returns `75` (the existing value), and calling `.setdefault(key, val)` on an integer crashes.
+
+### Fix
+
+Normalise flat integer section values to `{"score": n}` before applying defaults:
+
+```python
+for section, defs in defaults.items():
+    if isinstance(result.get(section), (int, float)):
+        result[section] = {"score": int(result[section])}
+    result.setdefault(section, {})
+    for key, val in defs.items():
+        result[section].setdefault(key, val)
+```
+
+---
+
 ## Supporting Changes Made During Debugging
 
 | File | Change | Reason |
