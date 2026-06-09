@@ -8,12 +8,16 @@ All 4 scores returned from a single LLM call via MODEL_SCORER.
 """
 
 import json
+import re
+import logging
 from typing import List, Optional
 import spacy
 from sklearn.feature_extraction.text import TfidfVectorizer
 from llm import complete
 from config import MODEL_SCORER
 from utils import cache as result_cache
+
+_logger = logging.getLogger(__name__)
 
 try:
     nlp = spacy.load("en_core_web_sm")
@@ -24,14 +28,23 @@ except OSError:
     )
 
 
-def _clean_json(text: str) -> str:
+def _extract_json(text: str) -> str:
+    """Extract the first JSON object from text, handling thinking tags, markdown fences, prose."""
     text = text.strip()
+    # Strip thinking tags (Gemini 2.5 thinking models)
+    text = re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL).strip()
+    # Try to pull the outermost {...} block
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match:
+        return match.group(0)
+    # Fallback: strip markdown fences
     if text.startswith("```"):
         parts = text.split("```")
-        text = parts[1] if len(parts) > 1 else text
-        if text.startswith("json"):
-            text = text[4:]
-    return text.strip()
+        candidate = parts[1] if len(parts) > 1 else text
+        if candidate.startswith("json"):
+            candidate = candidate[4:]
+        return candidate.strip()
+    return text
 
 
 def _extract_jd_keywords(jd_text: str, jd_keywords: list) -> list:
@@ -50,18 +63,13 @@ def _extract_jd_keywords(jd_text: str, jd_keywords: list) -> list:
 
 
 async def _llm_complete(prompt: str, system: str = None, schema: dict = None) -> dict:
-    """
-    Thin wrapper around llm.complete that accepts system/schema kwargs and
-    returns a parsed dict.  The `system` prompt is prepended to the user
-    prompt; `schema` is accepted for interface compatibility but LiteLLM
-    structured-output enforcement is optional — callers must apply defaults.
-    """
     full_prompt = f"{system}\n\n{prompt}" if system else prompt
     response = await complete(full_prompt, MODEL_SCORER)
     raw = response["text"]
     try:
-        return json.loads(_clean_json(raw))
+        return json.loads(_extract_json(raw))
     except (json.JSONDecodeError, ValueError):
+        _logger.error("scorer JSON parse failed. raw response (first 500 chars): %s", raw[:500])
         return {}
 
 
@@ -119,7 +127,17 @@ Readability (0-100):
 Seniority context: {seniority_note}
 {required_block}
 
-Return ONLY valid JSON matching the schema. No prose, no markdown fences."""
+Return ONLY a raw JSON object — no markdown, no code fences, no prose before or after.
+Use EXACTLY these top-level keys: "ats", "impact", "skills_gap", "readability", "overall".
+
+Required JSON shape:
+{{
+  "ats": {{"score": <int 0-100>, "missing_keywords": [...], "matched_keywords": [...], "keyword_coverage_pct": <float>}},
+  "impact": {{"score": <int 0-100>, "weak_bullets": [...], "strong_bullets": [...], "has_quantified_achievements": <bool>}},
+  "skills_gap": {{"score": <int 0-100>, "missing_skills": [...], "matched_skills": [...], "critical_missing": [...]}},
+  "readability": {{"score": <int 0-100>, "issues": [...], "worst_section": "<string>", "has_summary": <bool>, "tense_consistent": <bool>}},
+  "overall": <int 0-100>
+}}"""
 
     kw_hint = f"\nKnown JD keywords: {', '.join(jd_keywords[:30])}" if jd_keywords else ""
 
@@ -131,7 +149,7 @@ Return ONLY valid JSON matching the schema. No prose, no markdown fences."""
 --- JOB DESCRIPTION ---
 {jd_text[:3000]}
 
-Return JSON with ALL fields populated. For lists, include every item found — do not truncate."""
+Return the JSON object with ALL fields populated using the exact keys specified. No prose, no markdown."""
 
     schema = {
         "type": "object",
@@ -183,6 +201,20 @@ Return JSON with ALL fields populated. For lists, include every item found — d
     }
 
     result = await _llm_complete(prompt, system=system, schema=schema)
+
+    # Normalise common key aliases the LLM may use instead of the canonical names
+    _aliases = {
+        "ats": ("ats_score", "ats_match", "ats_keyword_score"),
+        "impact": ("impact_score", "impact_analysis"),
+        "skills_gap": ("skills", "skill_gap", "skills_gap_score", "skillsgap"),
+        "readability": ("readability_score", "read_score"),
+    }
+    for canonical, alts in _aliases.items():
+        if canonical not in result:
+            for alt in alts:
+                if alt in result:
+                    result[canonical] = result.pop(alt)
+                    break
 
     defaults = {
         "ats":         {"score": 0, "missing_keywords": [], "matched_keywords": [], "keyword_coverage_pct": 0.0},
