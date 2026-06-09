@@ -65,7 +65,7 @@ resource "azurerm_linux_web_app" "backend" {
     SCM_DO_BUILD_DURING_DEPLOYMENT      = "true"
     ENABLE_ORYX_BUILD                   = "true" # required for OneDeploy API (azure/webapps-deploy@v3)
     WEBSITES_PORT                       = "8000"
-    WEBSITES_CONTAINER_START_TIME_LIMIT = "600" # spaCy + CrewAI import takes >230s default
+    WEBSITES_CONTAINER_START_TIME_LIMIT = "1800" # spaCy + CrewAI import takes 500-700s on B1
     WEBSITE_SKIP_SECRETRESOLUTION_CACHE = "1"   # KV secret updates take effect immediately
     PYTHONUNBUFFERED                    = "1"   # flush stdout/stderr immediately so crash tracebacks appear in logs
   }
