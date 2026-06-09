@@ -281,7 +281,7 @@ _UPLOAD_MAGIC = {
 
 
 class AnalyzeJDRequest(BaseModel):
-    jd_text: str = Field(..., max_length=MAX_JD_CHARS)
+    jd_text: str  # truncated to MAX_JD_CHARS in the endpoint
 
 
 class RunPipelineRequest(BaseModel):
