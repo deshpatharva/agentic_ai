@@ -32,6 +32,18 @@ sys.path.insert(0, str(Path(__file__).parent))
 from logging_config import setup_logging
 setup_logging()
 
+# On startup, emit the checkpoint log written by init_db during the previous crash.
+# This runs before heavy imports so it appears in the log stream even if we OOM again.
+_dbg_path = "/home/debug_init.log"
+if os.path.exists(_dbg_path):
+    try:
+        with open(_dbg_path) as _dbg_f:
+            _dbg_contents = _dbg_f.read()
+        print(f"=== CRASH DEBUG LOG (prev run) ===\n{_dbg_contents}=== END CRASH LOG ===", flush=True)
+        os.remove(_dbg_path)
+    except Exception:
+        pass
+
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse

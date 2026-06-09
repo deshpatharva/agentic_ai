@@ -2,6 +2,10 @@
 Async SQLAlchemy session factory and database initialization via Alembic.
 """
 import asyncio
+import datetime
+import os
+import sys
+import traceback
 from pathlib import Path
 
 from sqlalchemy import text
@@ -9,6 +13,20 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from config import DATABASE_URL
 from db.models import PlanLimit, ProviderCost
+
+
+def _dbg(msg: str) -> None:
+    """Write a timestamped checkpoint to /home/debug_init.log (persistent) and stderr."""
+    ts = datetime.datetime.utcnow().isoformat()
+    line = f"{ts}: {msg}\n"
+    try:
+        with open("/home/debug_init.log", "a") as _f:
+            _f.write(line)
+            _f.flush()
+            os.fsync(_f.fileno())
+    except Exception:
+        pass
+    print(line, end="", file=sys.stderr, flush=True)
 
 engine = create_async_engine(
     DATABASE_URL,
@@ -42,68 +60,88 @@ def _run_migrations() -> None:
     from alembic import command
     from alembic.config import Config
 
+    _dbg("migrations: starting alembic command.upgrade")
     backend_dir = Path(__file__).parent.parent
     cfg = Config(str(backend_dir / "alembic.ini"))
     cfg.set_main_option("script_location", str(backend_dir / "alembic"))
     command.upgrade(cfg, "head")
+    _dbg("migrations: complete")
 
 
 async def init_db() -> None:
     """Run pending migrations then seed plan_limits and provider_costs on first run."""
-    await asyncio.to_thread(_run_migrations)
+    _dbg("init_db: start")
+    try:
+        await asyncio.to_thread(_run_migrations)
+    except Exception as exc:
+        _dbg(f"init_db: migrations FAILED — {exc}\n{traceback.format_exc()}")
+        raise
+    _dbg("init_db: migrations done — opening session for seeding")
 
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(text("SELECT COUNT(*) FROM plan_limits"))
-        count = result.scalar()
-        if count == 0:
-            plans = [
-                PlanLimit(
-                    plan="free",
-                    daily_uploads=2,
-                    max_stored_resumes=1,
-                    job_scraping_enabled=False,
-                    price_cents=0,
-                ),
-                PlanLimit(
-                    plan="pro",
-                    daily_uploads=20,
-                    max_stored_resumes=10,
-                    job_scraping_enabled=True,
-                    price_cents=900,
-                ),
-                PlanLimit(
-                    plan="enterprise",
-                    daily_uploads=999,
-                    max_stored_resumes=999,
-                    job_scraping_enabled=True,
-                    price_cents=2900,
-                ),
-            ]
-            session.add_all(plans)
-            await session.commit()
+    try:
+        async with AsyncSessionLocal() as session:
+            _dbg("init_db: session opened")
+            result = await session.execute(text("SELECT COUNT(*) FROM plan_limits"))
+            count = result.scalar()
+            _dbg(f"init_db: plan_limits count={count}")
+            if count == 0:
+                _dbg("init_db: inserting plan_limits")
+                plans = [
+                    PlanLimit(
+                        plan="free",
+                        daily_uploads=2,
+                        max_stored_resumes=1,
+                        job_scraping_enabled=False,
+                        price_cents=0,
+                    ),
+                    PlanLimit(
+                        plan="pro",
+                        daily_uploads=20,
+                        max_stored_resumes=10,
+                        job_scraping_enabled=True,
+                        price_cents=900,
+                    ),
+                    PlanLimit(
+                        plan="enterprise",
+                        daily_uploads=999,
+                        max_stored_resumes=999,
+                        job_scraping_enabled=True,
+                        price_cents=2900,
+                    ),
+                ]
+                session.add_all(plans)
+                await session.commit()
+                _dbg("init_db: plan_limits committed")
 
-        result = await session.execute(text("SELECT COUNT(*) FROM provider_costs WHERE active = true"))
-        count = result.scalar()
-        if count == 0:
-            provider_costs = [
-                ProviderCost(
-                    provider="anthropic",
-                    input_cost_per_1m_tokens=0.003,
-                    output_cost_per_1m_tokens=0.009,
-                    active=True,
-                ),
-                ProviderCost(
-                    provider="google",
-                    input_cost_per_1m_tokens=0.0005,
-                    output_cost_per_1m_tokens=0.0015,
-                    active=True,
-                ),
-                ProviderCost(
-                    provider="groq",
-                    input_cost_per_1m_tokens=0.0001,
-                    output_cost_per_1m_tokens=0.0001,
-                    active=True,
-                ),
-            ]
-            session.add_all(provider_costs)
-            await session.commit()
+            result = await session.execute(text("SELECT COUNT(*) FROM provider_costs WHERE active = true"))
+            count = result.scalar()
+            _dbg(f"init_db: provider_costs count={count}")
+            if count == 0:
+                _dbg("init_db: inserting provider_costs")
+                provider_costs = [
+                    ProviderCost(
+                        provider="anthropic",
+                        input_cost_per_1m_tokens=0.003,
+                        output_cost_per_1m_tokens=0.009,
+                        active=True,
+                    ),
+                    ProviderCost(
+                        provider="google",
+                        input_cost_per_1m_tokens=0.0005,
+                        output_cost_per_1m_tokens=0.0015,
+                        active=True,
+                    ),
+                    ProviderCost(
+                        provider="groq",
+                        input_cost_per_1m_tokens=0.0001,
+                        output_cost_per_1m_tokens=0.0001,
+                        active=True,
+                    ),
+                ]
+                session.add_all(provider_costs)
+                await session.commit()
+                _dbg("init_db: provider_costs committed")
+    except Exception as exc:
+        _dbg(f"init_db: seeding FAILED — {exc}\n{traceback.format_exc()}")
+        raise
+    _dbg("init_db: complete")
