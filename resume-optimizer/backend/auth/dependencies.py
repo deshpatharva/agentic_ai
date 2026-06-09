@@ -102,10 +102,10 @@ async def check_plan_limit(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """Raise HTTP 429 if user has hit their daily upload limit.
-    Uses PostgreSQL DailyUsageCounter — transactional, accurate under concurrent load.
-    Delta Lake reads are too slow (200-2000ms) and writes are fire-and-forget,
-    allowing free users to bypass limits with concurrent requests.
+    """Raise HTTP 429 if the user has already hit their daily pipeline-run limit.
+    Only CHECKS — does NOT increment. The counter is incremented only when a
+    pipeline run completes successfully (in _run_pipeline_task in main.py).
+    This ensures failed runs never consume quota.
     """
     result = await db.execute(select(PlanLimit).where(PlanLimit.plan == _effective_plan(user)))
     limits = result.scalar_one_or_none()
@@ -113,35 +113,21 @@ async def check_plan_limit(
         return user
 
     today_str = date.today().isoformat()
-
-    # Atomically increment the counter (upsert). The increment is part of the
-    # request's DB transaction — if the handler raises (including this 429), the
-    # transaction never commits and the increment is rolled back automatically.
-    await db.execute(
-        text(
-            "INSERT INTO daily_usage_counters (user_id, date, runs) "
-            "VALUES (:uid, :date, 1) "
-            "ON CONFLICT (user_id, date) DO UPDATE "
-            "SET runs = daily_usage_counters.runs + 1"
-        ),
-        {"uid": str(user.id), "date": today_str},
-    )
-
     counter_result = await db.execute(
         select(DailyUsageCounter.runs).where(
             DailyUsageCounter.user_id == user.id,
             DailyUsageCounter.date == today_str,
         )
     )
-    used = counter_result.scalar() or 1
+    used = counter_result.scalar() or 0
 
-    if used > limits.daily_uploads:
+    if used >= limits.daily_uploads:
         raise HTTPException(
             status_code=429,
             detail={
                 "error": "limit_reached",
                 "limit": limits.daily_uploads,
-                "used": used - 1,
+                "used": used,
                 "plan": user.plan.value,
                 "upgrade_message": "Upgrade to Pro for 20 uploads/day",
             },

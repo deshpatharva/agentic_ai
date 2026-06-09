@@ -304,7 +304,7 @@ class GenerateDocRequest(BaseModel):
 @app.post("/upload")
 async def upload_resume(
     file: UploadFile = File(...),
-    current_user: User = Depends(check_plan_limit),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -892,6 +892,23 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                     cost_cents = int((input_cost_dollars + output_cost_dollars) * 100)
         except Exception:
             pass
+
+        # ── Increment quota counter — only on success so failures are free ──
+        if user_id:
+            try:
+                async with AsyncSessionLocal() as db:
+                    await db.execute(
+                        text(
+                            "INSERT INTO daily_usage_counters (user_id, date, runs) "
+                            "VALUES (:uid, :date, 1) "
+                            "ON CONFLICT (user_id, date) DO UPDATE "
+                            "SET runs = daily_usage_counters.runs + 1"
+                        ),
+                        {"uid": user_id, "date": date_type.today().isoformat()},
+                    )
+                    await db.commit()
+            except Exception:
+                _logger.exception("job=%s: failed to increment usage counter", job_id)
 
         # ── Write Delta analytics (fire-and-forget, not rate limiting) ─────
         if user_id:
