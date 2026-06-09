@@ -10,8 +10,19 @@ load_dotenv()
 
 # ── API Keys ──────────────────────────────────────────────────────────────────
 ANTHROPIC_API_KEY        = os.environ.get("ANTHROPIC_API_KEY", "")
-GOOGLE_AI_STUDIO_API_KEY = os.environ.get("GOOGLE_AI_STUDIO_API_KEY", "")
+GOOGLE_AI_STUDIO_API_KEY = (
+    os.environ.get("GOOGLE_AI_STUDIO_API_KEY")
+    or os.environ.get("GEMINI_API_KEY")
+    or os.environ.get("GOOGLE_API_KEY")
+    or ""
+)
 GROQ_API_KEY             = os.environ.get("GROQ_API_KEY", "")
+
+# LiteLLM resolves Gemini keys from GEMINI_API_KEY or GOOGLE_API_KEY.
+# Whichever name the operator sets, make both aliases available.
+if GOOGLE_AI_STUDIO_API_KEY:
+    os.environ.setdefault("GEMINI_API_KEY", GOOGLE_AI_STUDIO_API_KEY)
+    os.environ.setdefault("GOOGLE_API_KEY", GOOGLE_AI_STUDIO_API_KEY)
 
 # ── Job scraper keys (all optional — sources are skipped when key is absent) ──
 ADZUNA_APP_ID    = os.environ.get("ADZUNA_APP_ID", "")
