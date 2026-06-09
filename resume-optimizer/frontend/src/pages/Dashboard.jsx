@@ -38,30 +38,16 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    const fetchAnalytics = async () => {
-      setLoadingCharts(true);
-      setChartError(null);
-      try {
-        const usageRes = await fetch(`/api/dashboard/usage-history?days=${chartDays}`);
-        if (usageRes.ok) {
-          const usageJson = await usageRes.json();
-          setUsageData(usageJson.rows || []);
-          setCostData(usageJson.rows || []);
-        }
-
-        const matchRes = await fetch(`/api/dashboard/match-analytics?days=${chartDays}`);
-        if (matchRes.ok) {
-          const matchJson = await matchRes.json();
-          setMatchData(matchJson.analytics || []);
-        }
-      } catch (err) {
-        setChartError(err.message);
-      } finally {
-        setLoadingCharts(false);
-      }
-    };
-
-    fetchAnalytics();
+    setLoadingCharts(true);
+    setChartError(null);
+    Promise.all([
+      client.get('/dashboard/usage-history', { params: { days: chartDays } })
+        .then(r => { setUsageData(r.data.rows || []); setCostData(r.data.rows || []); }),
+      client.get('/dashboard/match-analytics', { params: { days: chartDays } })
+        .then(r => setMatchData(r.data.analytics || [])),
+    ])
+      .catch(err => setChartError(err.response?.data?.detail || err.message))
+      .finally(() => setLoadingCharts(false));
   }, [chartDays]);
 
   const hour = new Date().getHours();

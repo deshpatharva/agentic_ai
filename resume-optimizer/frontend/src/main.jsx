@@ -19,6 +19,7 @@ import UserList from './pages/admin/UserList';
 import UserDetail from './pages/admin/UserDetail';
 import AdminAnalytics from './pages/AdminAnalytics';
 import PromoCodes from './pages/admin/PromoCodes';
+import Resumes from './pages/Resumes';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
@@ -33,7 +34,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
         <Route path="/dashboard/matches"  element={<ProtectedRoute><JobMatches /></ProtectedRoute>} />
         <Route path="/dashboard/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
-        <Route path="/dashboard/resumes"  element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+        <Route path="/dashboard/resumes"  element={<ProtectedRoute><Resumes /></ProtectedRoute>} />
         <Route path="/dashboard/usage"    element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
 
         <Route
