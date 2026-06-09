@@ -117,7 +117,7 @@ def ping_storage() -> str:
     try:
         # get_account_information() requires management-plane access on HNS accounts.
         # list_containers() works with Storage Blob Data Contributor (data-plane).
-        next(iter(_blob_service_client().list_containers(max_results=1)), None)
+        next(iter(_blob_service_client().list_containers()), None)
         return "ok"
     except Exception as exc:
         import logging
