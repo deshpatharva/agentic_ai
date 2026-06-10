@@ -50,20 +50,6 @@ jobs:
             --exclude="*.pyc" \
             --exclude="*/__pycache__/*"
 
-      # ── Set startup command (runs on every deploy, not just terraform apply) ───
-      # Chains alembic before uvicorn so migrations run automatically on every
-      # container start — no manual SSH step needed after schema changes.
-      - name: Set startup command
-        run: |
-          APP_NAME="${{ secrets.AZURE_WEBAPP_NAME }}"
-          ENV="${APP_NAME##*-}"
-          RESOURCE_GROUP="resumeai-rg-${ENV}"
-
-          az webapp config set \
-            --resource-group "$RESOURCE_GROUP" \
-            --name "$APP_NAME" \
-            --startup-file "bash -c 'alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000'"
-
       # ── Deploy via classic ZipDeploy (always triggers Oryx server-side build) ─
       # azure/webapps-deploy@v3 uses OneDeploy (/api/publish) which only rebuilds
       # when requirements.txt changes. The classic zip deploy endpoint
@@ -85,9 +71,10 @@ jobs:
           || { echo "CLI polling timed out (build succeeded — container still warming up)"; true; }
 
       # ── Wait for container to be healthy ─────────────────────────────────────
-      # A 200 from /health means the container is up and alembic migrations have
-      # completed (startup command runs alembic before uvicorn accepts requests).
-      - name: Wait for app to be healthy
+      # main.py runs `alembic upgrade head` inside init_db() on every startup,
+      # before the app begins serving requests. A 200 from /health confirms
+      # the container is up and migrations have already been applied.
+      - name: Wait for app to be healthy (migrations confirmed)
         run: |
           APP_NAME="${{ secrets.AZURE_WEBAPP_NAME }}"
           ENV="${APP_NAME##*-}"
