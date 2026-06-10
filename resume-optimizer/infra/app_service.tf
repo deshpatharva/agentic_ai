@@ -35,7 +35,9 @@ resource "azurerm_linux_web_app" "backend" {
       python_version = "3.12"
     }
 
-    app_command_line = "uvicorn main:app --host 0.0.0.0 --port 8000"
+    # Run migrations before starting the server so every deploy (and every
+    # container restart) automatically applies pending Alembic revisions.
+    app_command_line = "bash -c 'alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000'"
 
     cors {
       allowed_origins     = ["https://${azurerm_static_web_app.frontend.default_host_name}"]
