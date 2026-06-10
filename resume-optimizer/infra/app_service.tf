@@ -36,6 +36,11 @@ resource "azurerm_linux_web_app" "backend" {
     }
 
     app_command_line = "uvicorn main:app --host 0.0.0.0 --port 8000"
+
+    cors {
+      allowed_origins     = ["https://${azurerm_static_web_app.frontend.default_host_name}"]
+      support_credentials = true
+    }
   }
 
   # ── Secrets resolved by App Service from Key Vault at startup ──────────────
@@ -55,9 +60,6 @@ resource "azurerm_linux_web_app" "backend" {
     APIFY_TOKEN                = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.apify_token.versionless_id})"
     DELTA_STORAGE_PATH         = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.delta_storage_path.versionless_id})"
     AZURE_STORAGE_ACCOUNT_NAME = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.azure_storage_account_name.versionless_id})"
-
-    # ── CORS — FastAPI middleware reads this; always matches the SWA hostname ──
-    CORS_ORIGINS = "https://${azurerm_static_web_app.frontend.default_host_name}"
 
     # ── Non-secret bootstrap values ────────────────────────────────────────────
     SCM_DO_BUILD_DURING_DEPLOYMENT      = "true"

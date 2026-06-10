@@ -60,7 +60,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # ── Agent & utility imports ──────────────────────────────────────────────────
 from agents.jd_analyzer import analyze_jd
 from utils import cache as result_cache
-from config import MAX_ITERATIONS, SCORE_TARGET, BACKEND_URL, FRONTEND_URL, CORS_ORIGINS, MODEL_SCORER, MAX_UPLOAD_BYTES, MAX_RESUME_CHARS, MAX_JD_CHARS, STUCK_JOB_TIMEOUT_MINUTES, DATABASE_URL
+from config import MAX_ITERATIONS, SCORE_TARGET, BACKEND_URL, FRONTEND_URL, MODEL_SCORER, MAX_UPLOAD_BYTES, MAX_RESUME_CHARS, MAX_JD_CHARS, STUCK_JOB_TIMEOUT_MINUTES, DATABASE_URL
 from agents.scorer import score_combined
 from agents.fact_extractor import extract_claims
 from agents.fabrication_guard import fabrication_guard
@@ -210,7 +210,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
 
 app = FastAPI(title="Resume Optimizer API", version="1.0.0", lifespan=lifespan)
 
-_ALLOWED_ORIGINS = CORS_ORIGINS
+_ALLOWED_ORIGINS = list({FRONTEND_URL, "http://localhost:5173", "http://localhost:5174"})
 
 app.add_middleware(
     CORSMiddleware,
