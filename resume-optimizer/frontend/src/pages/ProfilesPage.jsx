@@ -4,6 +4,7 @@ import { ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
 import useProfileStore from "../store/profileStore";
 import ProfileEditor from "../components/ProfileEditor";
 import Button from "../components/ui/Button";
+import Sidebar from "../components/layout/Sidebar";
 
 export default function ProfilesPage() {
   const { profiles, loading, fetchProfiles, updateProfile, deleteProfile } =
@@ -46,7 +47,9 @@ export default function ProfilesPage() {
   }
 
   return (
-    <div className="min-h-screen bg-surface py-10 px-4">
+    <div className="flex h-screen bg-surface overflow-hidden">
+      <Sidebar />
+      <main className="flex-1 overflow-y-auto py-10 px-8">
       <div className="max-w-3xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold text-gray-900">Profiles</h1>
@@ -131,6 +134,8 @@ export default function ProfilesPage() {
           </div>
         )}
       </div>
+      </div>
+      </main>
     </div>
   );
 }
