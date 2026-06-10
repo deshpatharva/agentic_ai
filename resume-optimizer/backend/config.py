@@ -78,6 +78,8 @@ AGENT_TOKEN_BUDGET = 20_000   # cumulative input+output tokens across all Phase 
 # ── API URLs ──────────────────────────────────────────────────────────────────
 BACKEND_URL  = os.environ.get("BACKEND_URL",  "http://localhost:8000")
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+# Parsed from FRONTEND_URL — supports comma-separated values for multiple allowed origins
+FRONTEND_URLS = [u.strip() for u in FRONTEND_URL.split(",") if u.strip()]
 
 # ── Pipeline settings ─────────────────────────────────────────────────────────
 MAX_ITERATIONS      = 4
