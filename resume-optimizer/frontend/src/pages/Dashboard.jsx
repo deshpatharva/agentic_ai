@@ -7,10 +7,10 @@ import Card from '../components/ui/Card';
 import QuotaBar from '../components/ui/QuotaBar';
 import Badge from '../components/ui/Badge';
 import UsageTrendsChart from '../components/UsageTrendsChart';
-import CostTrendChart from '../components/CostTrendChart';
 import MatchAnalytics from '../components/MatchAnalytics';
 import client, { buildDownloadUrl } from '../api/client';
 import useAuthStore from '../store/authStore';
+import OnboardingBanner from '../components/OnboardingBanner';
 
 function scoreColor(s) {
   if (s >= 85) return 'text-green-600 bg-green-50';
@@ -24,7 +24,6 @@ export default function Dashboard() {
   const [usage, setUsage] = useState([]);
   const [loading, setLoading] = useState(true);
   const [usageData, setUsageData] = useState([]);
-  const [costData, setCostData] = useState([]);
   const [matchData, setMatchData] = useState([]);
   const [chartDays, setChartDays] = useState(30);
   const [loadingCharts, setLoadingCharts] = useState(false);
@@ -42,7 +41,7 @@ export default function Dashboard() {
     setChartError(null);
     Promise.all([
       client.get('/dashboard/usage-history', { params: { days: chartDays } })
-        .then(r => { setUsageData(r.data.rows || []); setCostData(r.data.rows || []); }),
+        .then(r => setUsageData(r.data.rows || [])),
       client.get('/dashboard/match-analytics', { params: { days: chartDays } })
         .then(r => setMatchData(r.data.analytics || [])),
     ])
@@ -68,7 +67,9 @@ export default function Dashboard() {
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-5xl mx-auto px-8 py-8">
           <h1 className="text-2xl font-bold text-gray-900 mb-1">{greeting}, {name} 👋</h1>
-          <p className="text-gray-500 mb-8">Here's your resume optimization overview.</p>
+          <p className="text-gray-500 mb-6">Here's your resume optimization overview.</p>
+
+          <OnboardingBanner />
 
           {/* Stats row */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
@@ -91,7 +92,7 @@ export default function Dashboard() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
             {/* Usage chart */}
             <Card header="Usage — last 30 days" className="lg:col-span-2">
-              {usage.length > 0 ? (
+              {usage.some(r => r.pipeline_runs > 0) ? (
                 <ResponsiveContainer width="100%" height={180}>
                   <AreaChart data={usage}>
                     <defs>
@@ -137,7 +138,6 @@ export default function Dashboard() {
             </div>
             <div className="grid grid-cols-1 gap-6">
               <UsageTrendsChart data={usageData} isLoading={loadingCharts} error={chartError} />
-              <CostTrendChart data={costData} isLoading={loadingCharts} error={chartError} />
               <MatchAnalytics data={matchData} isLoading={loadingCharts} error={chartError} />
             </div>
           </div>

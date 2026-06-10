@@ -73,11 +73,14 @@ import storage as _storage
 from delta.writer import write_daily_usage, write_job_match, vacuum_old_matches
 from scraper.scraper import scrape_jobs
 from db.session import get_db, init_db, AsyncSessionLocal
-from db.models import JobStatus, PipelineEvent, PipelineJob, Resume, User, ProviderCost, TokenBlocklist
+from db.models import JobStatus, PipelineEvent, PipelineJob, Profile, Resume, User, TokenBlocklist
+from utils.profile_utils import sections_to_text as _sections_to_text
 from auth.router import router as auth_router, user_router
 from auth.dependencies import decode_token, decode_sse_token, get_current_user, check_plan_limit
 from dashboard.router import router as dashboard_router
 from admin.router import router as admin_router
+from profiles.router import router as profiles_router, profile_ops as profile_ops_router
+from jd.router import router as jd_router
 
 
 # ── App setup ────────────────────────────────────────────────────────────────
@@ -225,6 +228,9 @@ app.include_router(auth_router)
 app.include_router(user_router)
 app.include_router(dashboard_router)
 app.include_router(admin_router)
+app.include_router(profiles_router, prefix="/profiles", tags=["profiles"], dependencies=[Depends(get_current_user)])
+app.include_router(profile_ops_router, prefix="/profile", tags=["profiles"], dependencies=[Depends(get_current_user)])
+app.include_router(jd_router, tags=["jd"])
 
 
 @app.get("/health")
@@ -287,6 +293,8 @@ class AnalyzeJDRequest(BaseModel):
 class RunPipelineRequest(BaseModel):
     job_id: str
     jd_text: str
+    instruction: str = ""
+    profile_id: str = ""
 
 
 class ScrapeJobsRequest(BaseModel):
@@ -412,6 +420,18 @@ async def run_pipeline(
 
     if not request.jd_text.strip():
         raise HTTPException(status_code=400, detail="jd_text cannot be empty.")
+
+    if request.profile_id:
+        try:
+            pid = uuid.UUID(request.profile_id)
+            prof_result = await db.execute(
+                select(Profile).where(Profile.id == pid, Profile.user_id == current_user.id)
+            )
+            prof = prof_result.scalar_one_or_none()
+            if prof and prof.sections:
+                job.resume_text = _sections_to_text(prof.sections)
+        except ValueError:
+            pass
 
     job.jd_text = request.jd_text
     job.status = JobStatus.running
@@ -726,6 +746,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
 
         total_input_tokens  = 0
         total_output_tokens = 0
+        total_cost_usd      = 0.0
 
         # ── Phase 1: Deterministic setup (no DB held) ──────────────────
         ledger = await asyncio.to_thread(extract_claims, resume_text)
@@ -740,6 +761,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
         industry: str              = jd_result.get("industry", "")
         total_input_tokens  += jd_tokens["input_tokens"]
         total_output_tokens += jd_tokens["output_tokens"]
+        total_cost_usd      += jd_result_dict.get("cost_usd", 0.0)
         await emit({"type": "stage", "message": f"JD analyzed — {len(jd_keywords)} keywords extracted.",
                     "stage": "jd_analysis", "keywords": jd_keywords[:20]})
 
@@ -755,6 +777,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
         baseline_tokens = baseline_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
         total_input_tokens  += baseline_tokens["input_tokens"]
         total_output_tokens += baseline_tokens["output_tokens"]
+        total_cost_usd      += baseline_dict.get("cost_usd", 0.0)
 
         baseline_avg = round(sum(baseline_scores[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")) / 4)
         await emit({"type": "average", "score": baseline_avg, "iteration": 0,
@@ -790,6 +813,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                 optimized_text = agent_result["text"]
                 total_input_tokens  += agent_result.get("input_tokens", 0)
                 total_output_tokens += agent_result.get("output_tokens", 0)
+                total_cost_usd      += agent_result.get("cost_usd", 0.0)
 
                 if not optimized_text or optimized_text.strip() == current_resume.strip():
                     break  # no improvement, stop early
@@ -808,6 +832,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                 iter_tokens    = iter_score_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
                 total_input_tokens  += iter_tokens["input_tokens"]
                 total_output_tokens += iter_tokens["output_tokens"]
+                total_cost_usd      += iter_score_dict.get("cost_usd", 0.0)
                 current_avg = round(
                     sum(current_scores[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")) / 4
                 )
@@ -845,6 +870,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             humanize_tokens = humanize_result.get("tokens", {"input_tokens": 0, "output_tokens": 0})
             total_input_tokens  += humanize_tokens["input_tokens"]
             total_output_tokens += humanize_tokens["output_tokens"]
+            total_cost_usd      += humanize_result.get("cost_usd", 0.0)
         except Exception:
             _logger.exception("job=%s: humanize_resume failed — skipping humanization", job_id)
 
@@ -896,24 +922,8 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             download_path=blob_name,
             scores_json=scores,
             iteration=max(_iter, 1),
+            cost_usd=total_cost_usd,
         )
-
-        # ── Calculate cost (short-lived session) ─────────────────────
-        cost_cents = 0
-        try:
-            async with AsyncSessionLocal() as db:
-                cost_result = await db.execute(
-                    select(ProviderCost).where(
-                        (ProviderCost.provider == "google") & (ProviderCost.active == True)
-                    )
-                )
-                cost_row = cost_result.scalar_one_or_none()
-                if cost_row:
-                    input_cost_dollars  = (total_input_tokens  / 1_000_000) * cost_row.input_cost_per_1m_tokens
-                    output_cost_dollars = (total_output_tokens / 1_000_000) * cost_row.output_cost_per_1m_tokens
-                    cost_cents = int((input_cost_dollars + output_cost_dollars) * 100)
-        except Exception:
-            pass
 
         # ── Increment quota counter — only on success so failures are free ──
         if user_id:
@@ -956,7 +966,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             "download_url": download_url,
             "final_score":  scores.get("average", baseline_avg),
             "iterations":   max(_iter, 1),
-            "cost_cents":   cost_cents,
+            "cost_usd":     round(total_cost_usd, 6),
             "tokens":       {"input": total_input_tokens, "output": total_output_tokens},
         })
 

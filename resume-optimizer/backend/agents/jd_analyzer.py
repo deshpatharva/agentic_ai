@@ -24,27 +24,28 @@ def _clean_json(text: str) -> str:
     return text.strip()
 
 
-async def _llm_complete(prompt: str, system: str = None, schema: dict = None) -> dict:
+async def _llm_complete(prompt: str, system: str = None, schema: dict = None) -> tuple:
     """
-    Thin wrapper around llm.complete that accepts system/schema kwargs and
-    returns a parsed dict.  The `system` prompt is prepended to the user
-    prompt; `schema` is accepted for interface compatibility but LiteLLM
-    structured-output enforcement is optional — callers must apply defaults.
+    Thin wrapper around llm.complete that accepts system/schema kwargs.
+    Returns (parsed_dict, cost_usd, input_tokens, output_tokens).
     """
     full_prompt = f"{system}\n\n{prompt}" if system else prompt
     response = await complete(full_prompt, MODEL_JD_ANALYZER)
+    cost_usd = response.get("cost_usd", 0.0)
+    input_tokens = response.get("input_tokens", 0)
+    output_tokens = response.get("output_tokens", 0)
     raw = response["text"]
     try:
-        return json.loads(_clean_json(raw))
+        return json.loads(_clean_json(raw)), cost_usd, input_tokens, output_tokens
     except (json.JSONDecodeError, ValueError):
-        return {}
+        return {}, cost_usd, input_tokens, output_tokens
 
 
 async def analyze_jd(jd_text: str) -> dict:
     """Extract structured metadata from a job description."""
     cached = result_cache.get("jd_analysis", jd_text)
     if cached is not None:
-        return cached
+        return {"text": cached, "tokens": {"input_tokens": 0, "output_tokens": 0}, "cost_usd": 0.0}
 
     system = """You are an expert technical recruiter. Extract structured data from job descriptions.
 
@@ -85,7 +86,7 @@ Return JSON with all fields. For seniority_level use: entry | mid | senior | lea
         ],
     }
 
-    result = await _llm_complete(prompt, system=system, schema=schema)
+    result, cost_usd, input_tokens, output_tokens = await _llm_complete(prompt, system=system, schema=schema)
 
     result.setdefault("required_hard_skills", [])
     result.setdefault("preferred_soft_skills", [])
@@ -99,4 +100,8 @@ Return JSON with all fields. For seniority_level use: entry | mid | senior | lea
     result.setdefault("skills", result.get("required_hard_skills", []))
 
     result_cache.set("jd_analysis", jd_text, value=result)
-    return result
+    return {
+        "text": result,
+        "tokens": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+        "cost_usd": cost_usd,
+    }

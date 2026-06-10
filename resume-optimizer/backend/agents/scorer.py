@@ -62,15 +62,18 @@ def _extract_jd_keywords(jd_text: str, jd_keywords: list) -> list:
     return [k for k in all_kw if len(k) > 2]
 
 
-async def _llm_complete(prompt: str, system: str = None, schema: dict = None) -> dict:
+async def _llm_complete(prompt: str, system: str = None, schema: dict = None) -> tuple:
     full_prompt = f"{system}\n\n{prompt}" if system else prompt
     response = await complete(full_prompt, MODEL_SCORER)
+    cost_usd = response.get("cost_usd", 0.0)
+    input_tokens = response.get("input_tokens", 0)
+    output_tokens = response.get("output_tokens", 0)
     raw = response["text"]
     try:
-        return json.loads(_extract_json(raw))
+        return json.loads(_extract_json(raw)), cost_usd, input_tokens, output_tokens
     except (json.JSONDecodeError, ValueError):
         _logger.error("scorer JSON parse failed. raw response (first 500 chars): %s", raw[:500])
-        return {}
+        return {}, cost_usd, input_tokens, output_tokens
 
 
 # ── All 4 scores in one LLM call ─────────────────────────────────────────────
@@ -200,7 +203,7 @@ Return the JSON object with ALL fields populated using the exact keys specified.
         "required": ["ats", "impact", "skills_gap", "readability", "overall"],
     }
 
-    result = await _llm_complete(prompt, system=system, schema=schema)
+    result, cost_usd, input_tokens, output_tokens = await _llm_complete(prompt, system=system, schema=schema)
 
     # Normalise common key aliases the LLM may use instead of the canonical names
     _aliases = {
@@ -230,4 +233,8 @@ Return the JSON object with ALL fields populated using the exact keys specified.
         for key, val in defs.items():
             result[section].setdefault(key, val)
     result.setdefault("overall", 0)
-    return result
+    return {
+        "text": result,
+        "tokens": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+        "cost_usd": cost_usd,
+    }

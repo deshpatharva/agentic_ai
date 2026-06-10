@@ -1,12 +1,14 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, FileText, Briefcase, BarChart2, Settings, LogOut, Zap, ShieldCheck } from 'lucide-react';
+import { LayoutDashboard, FileText, Briefcase, BarChart2, Settings, LogOut, Zap, ShieldCheck, User } from 'lucide-react';
 import { clsx } from 'clsx';
 import useAuthStore from '../../store/authStore';
 import Badge from '../ui/Badge';
 import TrialBanner from '../TrialBanner';
 
 const nav = [
+  { to: '/optimize',          icon: Zap,             label: 'Optimize' },
   { to: '/dashboard',         icon: LayoutDashboard, label: 'Overview' },
+  { to: '/profiles',          icon: User,            label: 'Profiles' },
   { to: '/dashboard/resumes', icon: FileText,         label: 'My Resumes' },
   { to: '/dashboard/matches', icon: Briefcase,        label: 'Job Matches', proBadge: true },
   { to: '/dashboard/usage',   icon: BarChart2,        label: 'Usage' },

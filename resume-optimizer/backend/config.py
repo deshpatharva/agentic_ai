@@ -59,7 +59,10 @@ MODEL_CRITIC        = "groq/llama-3.1-8b-instant"
 MODEL_SCORER        = "gemini/gemini-2.5-flash-lite"
 
 # JD Analyzer — Gemini 2.5 Flash-Lite (keyword extraction only)
-MODEL_JD_ANALYZER   = "gemini/gemini-2.5-flash-lite"
+MODEL_JD_ANALYZER     = "gemini/gemini-2.5-flash-lite"
+
+MODEL_PROFILE_PARSER  = "gemini/gemini-2.5-flash-lite"
+MODEL_INTERVIEW_SYNTH = "gemini/gemini-2.5-flash-lite"
 
 # Agentic Phase 2 models
 MODEL_OPTIMIZER          = "gemini/gemini-2.5-flash"        # Strategist — needs reasoning

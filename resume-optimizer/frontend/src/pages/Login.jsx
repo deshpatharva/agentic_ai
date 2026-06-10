@@ -20,7 +20,7 @@ export default function Login() {
     try {
       const { data } = await client.post('/auth/login', form);
       login(data.access_token, data.user);
-      navigate('/dashboard');
+      navigate('/optimize');
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Login failed');
     } finally {

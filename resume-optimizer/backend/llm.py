@@ -31,8 +31,10 @@ async def complete(
     Args:
         prompt:        The main prompt / instruction text.
         model:         LiteLLM model name with provider prefix (e.g. "gemini/gemini-2.5-flash-lite").
-        cached_prefix: (Anthropic only) Large text block sent with cache_control=ephemeral
-                       before the main prompt. Saves ~90% of input token cost on cache hits.
+        cached_prefix: Large text block sent with cache_control=ephemeral before the main
+                       prompt. Saves on input token cost on cache hits. Supported by
+                       Anthropic and Gemini 2.5+; silently ignored by other providers
+                       (drop_params=True).
 
     Returns:
         dict with keys:
@@ -40,7 +42,7 @@ async def complete(
             - input_tokens (int): Input token count
             - output_tokens (int): Output token count
     """
-    if cached_prefix and model.startswith("anthropic/"):
+    if cached_prefix:
         messages = [{
             "role": "user",
             "content": [
@@ -56,8 +58,11 @@ async def complete(
         messages=messages,
     )
 
+    cost_usd = getattr(response, "_hidden_params", {}).get("response_cost") or 0.0
+
     return {
         "text": response.choices[0].message.content.strip(),
         "input_tokens": response.usage.prompt_tokens,
         "output_tokens": response.usage.completion_tokens,
+        "cost_usd": float(cost_usd),
     }
