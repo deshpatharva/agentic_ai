@@ -50,6 +50,20 @@ jobs:
             --exclude="*.pyc" \
             --exclude="*/__pycache__/*"
 
+      # ── Set startup command (runs on every deploy, not just terraform apply) ───
+      # Chains alembic before uvicorn so migrations run automatically on every
+      # container start — no manual SSH step needed after schema changes.
+      - name: Set startup command
+        run: |
+          APP_NAME="${{ secrets.AZURE_WEBAPP_NAME }}"
+          ENV="${APP_NAME##*-}"
+          RESOURCE_GROUP="resumeai-rg-${ENV}"
+
+          az webapp config set \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$APP_NAME" \
+            --startup-file "bash -c 'alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000'"
+
       # ── Deploy via classic ZipDeploy (always triggers Oryx server-side build) ─
       # azure/webapps-deploy@v3 uses OneDeploy (/api/publish) which only rebuilds
       # when requirements.txt changes. The classic zip deploy endpoint
@@ -70,10 +84,10 @@ jobs:
             --src /tmp/backend-deploy.zip \
           || { echo "CLI polling timed out (build succeeded — container still warming up)"; true; }
 
-      # ── Wait for container + confirm migrations ran ───────────────────────────
-      # The startup command runs `alembic upgrade head` before uvicorn, so a
-      # healthy response means migrations have already been applied.
-      - name: Wait for app to be healthy (confirms migrations ran)
+      # ── Wait for container to be healthy ─────────────────────────────────────
+      # A 200 from /health means the container is up and alembic migrations have
+      # completed (startup command runs alembic before uvicorn accepts requests).
+      - name: Wait for app to be healthy
         run: |
           APP_NAME="${{ secrets.AZURE_WEBAPP_NAME }}"
           ENV="${APP_NAME##*-}"
@@ -88,11 +102,11 @@ jobs:
           for i in $(seq 1 30); do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL" || true)
             if [ "$STATUS" = "200" ]; then
-              echo "App is healthy (HTTP 200) — alembic migrations complete"
+              echo "App is healthy — alembic migrations complete"
               exit 0
             fi
             echo "  attempt $i/30: HTTP ${STATUS} — waiting 30s"
             sleep 30
           done
-          echo "WARNING: app did not become healthy within 15 min — check Azure logs"
+          echo "ERROR: app did not become healthy within 15 min — check Azure logs"
           exit 1

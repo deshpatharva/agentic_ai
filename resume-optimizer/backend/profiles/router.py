@@ -1,4 +1,5 @@
 import json as _json
+import re as _re
 import uuid as _uuid
 from datetime import datetime, timezone
 
@@ -105,6 +106,22 @@ async def parse_profile(
     return await _parse_sections(body.raw_text)
 
 
+def _extract_json(text: str) -> str:
+    """Extract the first JSON object from LLM output, handling thinking tags and markdown fences."""
+    text = text.strip()
+    text = _re.sub(r"<thinking>.*?</thinking>", "", text, flags=_re.DOTALL).strip()
+    match = _re.search(r"\{.*\}", text, _re.DOTALL)
+    if match:
+        return match.group(0)
+    if text.startswith("```"):
+        parts = text.split("```")
+        candidate = parts[1] if len(parts) > 1 else text
+        if candidate.startswith("json"):
+            candidate = candidate[4:]
+        return candidate.strip()
+    return text
+
+
 async def _parse_sections(raw_text: str) -> dict:
     from config import MODEL_PROFILE_PARSER
     from llm import complete
@@ -127,12 +144,11 @@ Resume text:
 {raw_text[:8000]}"""
 
     result = await complete(prompt, MODEL_PROFILE_PARSER)
-    text = result["text"].strip()
-    if text.startswith("```"):
-        lines = text.split("\n")
-        inner = lines[1:-1] if lines[-1].strip() == "```" else lines[1:]
-        text = "\n".join(inner).strip()
-    return _json.loads(text)
+    text = _extract_json(result["text"])
+    try:
+        return _json.loads(text)
+    except _json.JSONDecodeError as e:
+        raise HTTPException(status_code=502, detail=f"Profile parser returned invalid JSON: {e}")
 
 
 async def _get_owned(profile_id: str, user_id, db: AsyncSession) -> Profile:
