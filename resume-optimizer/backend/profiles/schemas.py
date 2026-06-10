@@ -37,3 +37,21 @@ class ProfileUpdate(BaseModel):
 
 class ParseProfileRequest(BaseModel):
     raw_text: str
+
+
+class InterviewMessage(BaseModel):
+    role: str
+    content: str
+
+
+class InterviewMessageRequest(BaseModel):
+    history: list[InterviewMessage]
+    user_message: str
+
+
+class InterviewFinishRequest(BaseModel):
+    history: list[InterviewMessage]
+
+
+class PrepareJobRequest(BaseModel):
+    profile_id: str

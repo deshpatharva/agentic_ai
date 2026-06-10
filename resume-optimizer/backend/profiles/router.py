@@ -9,7 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from auth.dependencies import get_current_user
 from db.models import Profile, Resume, User
 from db.session import get_db
-from profiles.schemas import ParseProfileRequest, ProfileCreate, ProfileUpdate
+from profiles.schemas import (
+    InterviewFinishRequest,
+    InterviewMessageRequest,
+    ParseProfileRequest,
+    PrepareJobRequest,
+    ProfileCreate,
+    ProfileUpdate,
+)
+from utils.profile_utils import sections_to_text as _sections_to_text
 
 router = APIRouter()       # mounted at /profiles
 profile_ops = APIRouter()  # mounted at /profile
@@ -139,6 +147,110 @@ async def _get_owned(profile_id: str, user_id, db: AsyncSession) -> Profile:
     if not p:
         raise HTTPException(status_code=404, detail="Profile not found.")
     return p
+
+
+_INTERVIEW_QUESTIONS = [
+    "What is your most recent role? Please share your job title, company name, and dates.",
+    "What were your 3–5 key responsibilities or achievements in that role? Use bullet points if you like.",
+    "Tell me about any other significant previous roles — title, company, dates, and one key achievement each.",
+    "What is your education background? Institution, degree, and graduation year.",
+    "What are your top technical and professional skills?",
+    "Is there anything else you'd like to highlight — certifications, publications, or notable projects?",
+]
+
+_INTERVIEW_SYSTEM = """You are a friendly resume assistant conducting a structured interview to build a professional profile.
+Ask exactly the questions you are given, one at a time. Acknowledge the user's answer warmly and ask the next question.
+When all questions are covered, reply with exactly: INTERVIEW_COMPLETE"""
+
+
+@profile_ops.post("/ai-interview/message")
+async def interview_message(
+    body: InterviewMessageRequest,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """One stateless interview turn. Client sends full history; returns next question or INTERVIEW_COMPLETE."""
+    from config import MODEL_INTERVIEW_SYNTH
+    from llm import complete
+
+    questions_block = "\n".join(f"{i+1}. {q}" for i, q in enumerate(_INTERVIEW_QUESTIONS))
+    history_text = "\n".join(
+        f"{'Assistant' if m.role == 'assistant' else 'User'}: {m.content}"
+        for m in body.history
+    )
+    prompt = f"""{_INTERVIEW_SYSTEM}
+
+Questions to ask (in order):
+{questions_block}
+
+Conversation so far:
+{history_text}
+
+User's latest message: {body.user_message}
+
+Your response (next question or INTERVIEW_COMPLETE):"""
+
+    result = await complete(prompt, MODEL_INTERVIEW_SYNTH)
+    assistant_reply = result["text"].strip()
+    done = "INTERVIEW_COMPLETE" in assistant_reply
+    return {"reply": assistant_reply, "done": done}
+
+
+@profile_ops.post("/ai-interview/finish")
+async def interview_finish(
+    body: InterviewFinishRequest,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Synthesize the full conversation into structured sections JSON + label."""
+    from config import MODEL_INTERVIEW_SYNTH
+    from llm import complete
+
+    history_text = "\n".join(
+        f"{'Assistant' if m.role == 'assistant' else 'User'}: {m.content}"
+        for m in body.history
+    )
+    prompt = f"""You are given a resume interview transcript. Extract structured resume data and return ONLY valid JSON.
+
+Required JSON shape:
+{{
+  "label": "concise job title",
+  "summary": "one-paragraph professional summary",
+  "experience": [{{"company": "...", "title": "...", "dates": "...", "bullets": ["..."]}}],
+  "education": [{{"institution": "...", "degree": "...", "dates": "..."}}],
+  "skills": ["Skill1", "Skill2"]
+}}
+
+Interview transcript:
+{history_text}"""
+
+    result = await complete(prompt, MODEL_INTERVIEW_SYNTH)
+    text = result["text"].strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:]).strip()
+    return _json.loads(text)
+
+
+@profile_ops.post("/prepare-job")
+async def prepare_job_from_profile(
+    body: PrepareJobRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Create a PipelineJob row seeded from profile sections, returning a job_id for run-pipeline."""
+    from db.models import JobStatus, PipelineJob
+
+    profile = await _get_owned(body.profile_id, current_user.id, db)
+    resume_text = _sections_to_text(profile.sections or {}) or "Resume text not available."
+    job = PipelineJob(
+        user_id=current_user.id,
+        original_filename=f"{profile.label or 'profile'}.txt",
+        resume_text=resume_text,
+        status=JobStatus.pending,
+    )
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+    return {"job_id": str(job.id)}
 
 
 def _to_dict(profile: Profile, use_count: int = 0) -> dict:

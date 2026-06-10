@@ -6,6 +6,7 @@ import Badge from '../ui/Badge';
 import TrialBanner from '../TrialBanner';
 
 const nav = [
+  { to: '/optimize',          icon: Zap,             label: 'Optimize' },
   { to: '/dashboard',         icon: LayoutDashboard, label: 'Overview' },
   { to: '/profiles',          icon: User,            label: 'Profiles' },
   { to: '/dashboard/resumes', icon: FileText,         label: 'My Resumes' },

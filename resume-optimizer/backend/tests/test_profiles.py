@@ -191,3 +191,60 @@ async def test_parse_profile_endpoint(client, monkeypatch):
     data = r.json()
     assert data["label"] == "Software Engineer"
     assert "Python" in data["skills"]
+
+
+@pytest.mark.asyncio
+async def test_interview_message_returns_reply(client, monkeypatch):
+    token = await _register_and_token(client, "interview_msg@test.com")
+
+    async def mock_complete(prompt, model, **kw):
+        return {"text": "Great! Now tell me about your education.", "input_tokens": 100, "output_tokens": 20}
+
+    monkeypatch.setattr("llm.complete", mock_complete)
+
+    r = await client.post(
+        "/profile/ai-interview/message",
+        json={"history": [], "user_message": "Hello, I want to build my resume."},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert "reply" in data
+    assert "done" in data
+    assert isinstance(data["done"], bool)
+
+
+@pytest.mark.asyncio
+async def test_interview_finish_returns_sections(client, monkeypatch):
+    import json
+    token = await _register_and_token(client, "interview_finish@test.com")
+
+    async def mock_complete(prompt, model, **kw):
+        return {
+            "text": json.dumps({
+                "label": "Software Engineer",
+                "summary": "5 years experience.",
+                "experience": [],
+                "education": [],
+                "skills": ["Python"],
+            }),
+            "input_tokens": 100,
+            "output_tokens": 50,
+        }
+
+    monkeypatch.setattr("llm.complete", mock_complete)
+
+    r = await client.post(
+        "/profile/ai-interview/finish",
+        json={
+            "history": [
+                {"role": "assistant", "content": "What is your most recent role?"},
+                {"role": "user", "content": "Senior Dev at Acme, 2020–2024."},
+            ]
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["label"] == "Software Engineer"
+    assert "skills" in data

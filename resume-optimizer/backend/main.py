@@ -73,12 +73,14 @@ import storage as _storage
 from delta.writer import write_daily_usage, write_job_match, vacuum_old_matches
 from scraper.scraper import scrape_jobs
 from db.session import get_db, init_db, AsyncSessionLocal
-from db.models import JobStatus, PipelineEvent, PipelineJob, Resume, User, ProviderCost, TokenBlocklist
+from db.models import JobStatus, PipelineEvent, PipelineJob, Profile, Resume, User, ProviderCost, TokenBlocklist
+from utils.profile_utils import sections_to_text as _sections_to_text
 from auth.router import router as auth_router, user_router
 from auth.dependencies import decode_token, decode_sse_token, get_current_user, check_plan_limit
 from dashboard.router import router as dashboard_router
 from admin.router import router as admin_router
 from profiles.router import router as profiles_router, profile_ops as profile_ops_router
+from jd.router import router as jd_router
 
 
 # ── App setup ────────────────────────────────────────────────────────────────
@@ -228,6 +230,7 @@ app.include_router(dashboard_router)
 app.include_router(admin_router)
 app.include_router(profiles_router, prefix="/profiles", tags=["profiles"], dependencies=[Depends(get_current_user)])
 app.include_router(profile_ops_router, prefix="/profile", tags=["profiles"], dependencies=[Depends(get_current_user)])
+app.include_router(jd_router, tags=["jd"])
 
 
 @app.get("/health")
@@ -290,6 +293,8 @@ class AnalyzeJDRequest(BaseModel):
 class RunPipelineRequest(BaseModel):
     job_id: str
     jd_text: str
+    instruction: str = ""
+    profile_id: str = ""
 
 
 class ScrapeJobsRequest(BaseModel):
@@ -415,6 +420,18 @@ async def run_pipeline(
 
     if not request.jd_text.strip():
         raise HTTPException(status_code=400, detail="jd_text cannot be empty.")
+
+    if request.profile_id:
+        try:
+            pid = uuid.UUID(request.profile_id)
+            prof_result = await db.execute(
+                select(Profile).where(Profile.id == pid, Profile.user_id == current_user.id)
+            )
+            prof = prof_result.scalar_one_or_none()
+            if prof and prof.sections:
+                job.resume_text = _sections_to_text(prof.sections)
+        except ValueError:
+            pass
 
     job.jd_text = request.jd_text
     job.status = JobStatus.running

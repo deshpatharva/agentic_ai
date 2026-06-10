@@ -22,6 +22,7 @@ import PromoCodes from './pages/admin/PromoCodes';
 import Resumes from './pages/Resumes';
 import ProfilesPage from './pages/ProfilesPage';
 import ProfileNewPage from './pages/ProfileNewPage';
+import ChatOptimizePage from './pages/ChatOptimizePage';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
@@ -31,7 +32,8 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         <Route path="/"         element={<Landing />} />
         <Route path="/login"    element={<Login />} />
         <Route path="/register" element={<Register />} />
-        <Route path="/app"      element={<ProtectedRoute><AppPage /></ProtectedRoute>} />
+        <Route path="/app"      element={<Navigate to="/optimize" />} />
+        <Route path="/optimize" element={<ProtectedRoute><ChatOptimizePage /></ProtectedRoute>} />
 
         <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
         <Route path="/dashboard/matches"  element={<ProtectedRoute><JobMatches /></ProtectedRoute>} />

@@ -93,7 +93,10 @@ async def get_current_user(
 
 def _effective_plan(user: User) -> str:
     """Return the user's effective plan, honouring an active free trial."""
-    if user.trial_expires_at and user.trial_expires_at > datetime.now(timezone.utc):
+    trial_exp = user.trial_expires_at
+    if trial_exp and trial_exp.tzinfo is None:
+        trial_exp = trial_exp.replace(tzinfo=timezone.utc)
+    if trial_exp and trial_exp > datetime.now(timezone.utc):
         return "pro"
     return user.plan.value
 

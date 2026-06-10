@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, UploadCloud, FileText, Loader2, AlertCircle } from 'lucide-react';
 import Button from '../components/ui/Button';
 import ProfileEditor from '../components/ProfileEditor';
+import InterviewChat from '../components/InterviewChat';
 import useProfileStore from '../store/profileStore';
 import client from '../api/client';
 
@@ -138,7 +139,7 @@ export default function ProfileNewPage() {
     setInitialSections(EMPTY_SECTIONS);
     setRawText('');
     setError(null);
-    setView('editor');
+    setView('interview');
   }, []);
 
   const handleSave = useCallback(
@@ -221,9 +222,33 @@ export default function ProfileNewPage() {
                   onClick={handleBuildFromScratch}
                   className="text-sm text-gray-500 hover:text-primary transition-colors underline underline-offset-2 self-center"
                 >
-                  Build from scratch
+                  Build with AI Interview
                 </button>
               </div>
+            </>
+          )}
+
+          {view === 'interview' && (
+            <>
+              <div className="mb-6">
+                <h1 className="text-2xl font-bold text-gray-900">Create Profile</h1>
+                <p className="mt-1 text-sm text-gray-500">
+                  Answer a few questions and we'll build your profile
+                </p>
+              </div>
+
+              <InterviewChat
+                onComplete={(sections) => {
+                  setInitialLabel(sections.label || '');
+                  setInitialSections({
+                    summary: sections.summary || '',
+                    experience: sections.experience || [],
+                    education: sections.education || [],
+                    skills: sections.skills || [],
+                  });
+                  setView('editor');
+                }}
+              />
             </>
           )}
 
