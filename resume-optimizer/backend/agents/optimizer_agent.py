@@ -30,7 +30,14 @@ import threading
 from typing import Dict, Optional
 
 from crewai import Agent
-from crewai.tools import tool
+try:
+    from crewai.tools import tool
+except ImportError:
+    # Older crewai versions lack the @tool decorator — provide a no-op shim.
+    def tool(func_or_name=None, **kwargs):  # type: ignore[misc]
+        if callable(func_or_name):
+            return func_or_name
+        return lambda f: f
 
 from config import (
     AGENT_TOKEN_BUDGET,

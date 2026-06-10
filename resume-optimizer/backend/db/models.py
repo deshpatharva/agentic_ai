@@ -46,7 +46,8 @@ class User(Base):
     created_at             = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     trial_expires_at       = Column(DateTime(timezone=True), nullable=True)
 
-    resumes = relationship("Resume", back_populates="user", cascade="all, delete-orphan")
+    resumes  = relationship("Resume", back_populates="user", cascade="all, delete-orphan")
+    profiles = relationship("Profile", back_populates="user", cascade="all, delete-orphan")
 
 
 class PlanLimit(Base):
@@ -71,9 +72,11 @@ class Resume(Base):
     scores_json       = Column(JSON, nullable=True)
     iterations        = Column(Integer, default=0, nullable=False)
     version           = Column(Integer, default=1, nullable=False)
+    profile_id        = Column(Uuid(), ForeignKey("profiles.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at        = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
-    user = relationship("User", back_populates="resumes")
+    user    = relationship("User", back_populates="resumes")
+    profile = relationship("Profile", back_populates="resumes")
 
 
 class PipelineJob(Base):
@@ -183,3 +186,29 @@ class TokenBlocklist(Base):
     jti        = Column(String(36), unique=True, nullable=False, index=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
+# ── New models ────────────────────────────────────────────────────────────────
+
+class Profile(Base):
+    __tablename__ = "profiles"
+
+    id              = Column(Uuid(), primary_key=True, default=uuid.uuid4)
+    user_id         = Column(Uuid(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    label           = Column(String(100), nullable=True)
+    label_confirmed = Column(Boolean, default=False, nullable=False)
+    raw_text        = Column(Text, nullable=True)
+    sections        = Column(JSON, nullable=True)
+    created_at      = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at      = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    user    = relationship("User", back_populates="profiles")
+    resumes = relationship("Resume", back_populates="profile")
+
+
+class JdScrapeCache(Base):
+    __tablename__ = "jd_scrape_cache"
+
+    url_hash   = Column(String(64), primary_key=True)
+    jd_text    = Column(Text, nullable=False)
+    scraped_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)

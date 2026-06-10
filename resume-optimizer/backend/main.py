@@ -78,6 +78,7 @@ from auth.router import router as auth_router, user_router
 from auth.dependencies import decode_token, decode_sse_token, get_current_user, check_plan_limit
 from dashboard.router import router as dashboard_router
 from admin.router import router as admin_router
+from profiles.router import router as profiles_router, profile_ops as profile_ops_router
 
 
 # ── App setup ────────────────────────────────────────────────────────────────
@@ -225,6 +226,8 @@ app.include_router(auth_router)
 app.include_router(user_router)
 app.include_router(dashboard_router)
 app.include_router(admin_router)
+app.include_router(profiles_router, prefix="/profiles", tags=["profiles"], dependencies=[Depends(get_current_user)])
+app.include_router(profile_ops_router, prefix="/profile", tags=["profiles"], dependencies=[Depends(get_current_user)])
 
 
 @app.get("/health")
