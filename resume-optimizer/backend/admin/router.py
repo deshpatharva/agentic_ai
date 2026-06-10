@@ -15,7 +15,7 @@ from limiter import limiter
 from config import STUCK_JOB_TIMEOUT_MINUTES, BOOTSTRAP_SECRET
 from db.models import JobStatus, PipelineJob, PlanType, Resume, User, ProviderCost
 from db.session import get_db
-from delta.writer import read_usage_last_n_days, read_job_matches
+from delta.writer import read_job_matches
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -138,63 +138,37 @@ async def get_stats(
         )
     ).scalar() or 0
 
-    # Calculate costs from Delta usage data
-    total_cost_cents_today = 0
-    total_cost_cents_month = 0
-    avg_cost_per_run = 0.0
-
-    try:
-        # Fetch active google provider costs (all pipeline models are Gemini/Groq)
-        cost_result = await db.execute(
-            select(ProviderCost).where(
-                (ProviderCost.provider == "google") & (ProviderCost.active == True)
+    # Calculate costs directly from pipeline_jobs.cost_usd (set by LiteLLM)
+    cost_today_usd = (
+        await db.execute(
+            select(func.coalesce(func.sum(PipelineJob.cost_usd), 0.0)).where(
+                PipelineJob.created_at >= today_start,
+                PipelineJob.status == JobStatus.done,
             )
         )
-        cost_row = cost_result.scalar_one_or_none()
+    ).scalar() or 0.0
 
-        if cost_row:
-            # Read all usage data from Delta for today and this month
-            df_today = await asyncio.to_thread(read_usage_last_n_days, "", 1)
-            df_month = await asyncio.to_thread(read_usage_last_n_days, "", 30)
+    cost_month_usd = (
+        await db.execute(
+            select(func.coalesce(func.sum(PipelineJob.cost_usd), 0.0)).where(
+                PipelineJob.created_at >= month_start,
+                PipelineJob.status == JobStatus.done,
+            )
+        )
+    ).scalar() or 0.0
 
-            today_str = date.today().isoformat()
-            month_start_str = month_start.date().isoformat()
+    pipeline_runs_month = (
+        await db.execute(
+            select(func.count(PipelineJob.id)).where(
+                PipelineJob.created_at >= month_start,
+                PipelineJob.status == JobStatus.done,
+            )
+        )
+    ).scalar() or 0
 
-            # Calculate today's cost
-            df_today_filtered = df_today[df_today["date"] == today_str] if not df_today.empty else None
-            if df_today_filtered is not None and not df_today_filtered.empty:
-                today_input = int(df_today_filtered["input_tokens"].sum())
-                today_output = int(df_today_filtered["output_tokens"].sum())
-                input_cost = (today_input / 1_000_000) * cost_row.input_cost_per_1m_tokens
-                output_cost = (today_output / 1_000_000) * cost_row.output_cost_per_1m_tokens
-                total_cost_cents_today = int((input_cost + output_cost) * 100)
-
-            # Calculate month's cost
-            if not df_month.empty:
-                df_month_filtered = df_month[df_month["date"] >= month_start_str]
-                if not df_month_filtered.empty:
-                    month_input = int(df_month_filtered["input_tokens"].sum())
-                    month_output = int(df_month_filtered["output_tokens"].sum())
-                    input_cost = (month_input / 1_000_000) * cost_row.input_cost_per_1m_tokens
-                    output_cost = (month_output / 1_000_000) * cost_row.output_cost_per_1m_tokens
-                    total_cost_cents_month = int((input_cost + output_cost) * 100)
-
-                    # Calculate average cost per run using monthly denominator
-                    pipeline_runs_month = (
-                        await db.execute(
-                            select(func.count(PipelineJob.id)).where(
-                                PipelineJob.created_at >= month_start,
-                                PipelineJob.status == JobStatus.done,
-                            )
-                        )
-                    ).scalar() or 0
-                    avg_cost_per_run = (
-                        (total_cost_cents_month / 100) / pipeline_runs_month
-                        if pipeline_runs_month > 0 else 0
-                    )
-    except Exception:
-        # If Delta read fails, just return 0 costs
-        pass
+    total_cost_cents_today = int(cost_today_usd * 100)
+    total_cost_cents_month = int(cost_month_usd * 100)
+    avg_cost_per_run = round(cost_month_usd / pipeline_runs_month, 4) if pipeline_runs_month > 0 else 0.0
 
     return AdminStats(
         total_users=total_users,
@@ -283,49 +257,36 @@ async def get_analytics(
     for plan_type, count in plan_rows:
         plan_distribution[plan_type.value] = count
 
-    # ── 3. Daily costs: from Delta usage + ProviderCost rates ────────────────
+    # ── 3. Daily costs: summed from pipeline_jobs.cost_usd ───────────────────
 
     daily_costs_data = []
 
-    # Pre-populate with zeros for all days in range
-    daily_costs_by_date = {}
+    cost_rows = (
+        await db.execute(
+            select(
+                func.date(PipelineJob.created_at).label("job_date"),
+                func.coalesce(func.sum(PipelineJob.cost_usd), 0.0).label("daily_cost_usd"),
+            )
+            .where(
+                PipelineJob.created_at >= start_datetime,
+                PipelineJob.status == JobStatus.done,
+            )
+            .group_by(func.date(PipelineJob.created_at))
+        )
+    ).all()
+
+    daily_costs_by_date = {
+        row.job_date.isoformat(): int((row.daily_cost_usd or 0.0) * 100)
+        for row in cost_rows
+    }
+
     for current_date in (start_date + timedelta(days=d) for d in range(days)):
         if current_date > today:
             break
-        daily_costs_by_date[current_date.isoformat()] = 0
-
-    try:
-        # Fetch active google provider costs (all pipeline models are Gemini/Groq)
-        cost_result = await db.execute(
-            select(ProviderCost).where(
-                (ProviderCost.provider == "google") & (ProviderCost.active == True)
-            )
-        )
-        cost_row = cost_result.scalar_one_or_none()
-
-        if cost_row:
-            # Read Delta usage for the requested period
-            df_usage = await asyncio.to_thread(read_usage_last_n_days, "", days)
-
-            if not df_usage.empty:
-                # Group by date once and calculate costs
-                grouped = df_usage.groupby("date")
-                for date_str, df_day in grouped:
-                    day_input = int(df_day["input_tokens"].sum())
-                    day_output = int(df_day["output_tokens"].sum())
-                    input_cost = (day_input / 1_000_000) * cost_row.input_cost_per_1m_tokens
-                    output_cost = (day_output / 1_000_000) * cost_row.output_cost_per_1m_tokens
-                    cost_cents = int((input_cost + output_cost) * 100)
-                    daily_costs_by_date[date_str] = cost_cents
-    except (ValueError, KeyError, AttributeError):
-        # If Delta read fails, use zeros (already populated above)
-        pass
-
-    # Build final list from daily_costs_by_date
-    for date_str, cost_cents in daily_costs_by_date.items():
+        date_str = current_date.isoformat()
         daily_costs_data.append({
             "date": date_str,
-            "cost_cents": cost_cents,
+            "cost_cents": daily_costs_by_date.get(date_str, 0),
         })
 
     # ── 4. Source counts: from job matches (placeholder for now) ────────────

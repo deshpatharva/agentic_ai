@@ -7,7 +7,6 @@ import Card from '../components/ui/Card';
 import QuotaBar from '../components/ui/QuotaBar';
 import Badge from '../components/ui/Badge';
 import UsageTrendsChart from '../components/UsageTrendsChart';
-import CostTrendChart from '../components/CostTrendChart';
 import MatchAnalytics from '../components/MatchAnalytics';
 import client, { buildDownloadUrl } from '../api/client';
 import useAuthStore from '../store/authStore';
@@ -25,7 +24,6 @@ export default function Dashboard() {
   const [usage, setUsage] = useState([]);
   const [loading, setLoading] = useState(true);
   const [usageData, setUsageData] = useState([]);
-  const [costData, setCostData] = useState([]);
   const [matchData, setMatchData] = useState([]);
   const [chartDays, setChartDays] = useState(30);
   const [loadingCharts, setLoadingCharts] = useState(false);
@@ -43,7 +41,7 @@ export default function Dashboard() {
     setChartError(null);
     Promise.all([
       client.get('/dashboard/usage-history', { params: { days: chartDays } })
-        .then(r => { setUsageData(r.data.rows || []); setCostData(r.data.rows || []); }),
+        .then(r => setUsageData(r.data.rows || [])),
       client.get('/dashboard/match-analytics', { params: { days: chartDays } })
         .then(r => setMatchData(r.data.analytics || [])),
     ])
@@ -140,7 +138,6 @@ export default function Dashboard() {
             </div>
             <div className="grid grid-cols-1 gap-6">
               <UsageTrendsChart data={usageData} isLoading={loadingCharts} error={chartError} />
-              <CostTrendChart data={costData} isLoading={loadingCharts} error={chartError} />
               <MatchAnalytics data={matchData} isLoading={loadingCharts} error={chartError} />
             </div>
           </div>

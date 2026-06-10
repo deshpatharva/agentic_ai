@@ -173,10 +173,6 @@ async def usage_history(
                 "date": d,
                 "pipeline_runs": db_rows.get(d, 0),
                 "uploads": db_rows.get(d, 0),
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "tokens_used": 0,
-                "cost_cents": 0,
             })
 
         return {"days": days, "rows": rows}
