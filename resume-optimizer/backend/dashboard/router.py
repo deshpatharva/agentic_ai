@@ -4,14 +4,14 @@ All require authentication.
 """
 
 import asyncio
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.dependencies import get_current_user
-from db.models import PlanLimit, Resume, User, ProviderCost
+from db.models import DailyUsageCounter, PlanLimit, Resume, User, ProviderCost
 from db.session import get_db
 from delta.writer import read_job_matches, read_usage_last_n_days
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
@@ -157,29 +157,27 @@ async def usage_history(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        df = await asyncio.to_thread(read_usage_last_n_days, str(user.id), days)
-
-        # Fetch active provider costs to calculate cost_cents for each day
-        cost_result = await db.execute(
-            select(ProviderCost).where(
-                (ProviderCost.provider == "anthropic") & (ProviderCost.active == True)
-            )
+        cutoff = (date.today() - timedelta(days=days - 1)).isoformat()
+        result = await db.execute(
+            select(DailyUsageCounter.date, DailyUsageCounter.runs)
+            .where(DailyUsageCounter.user_id == user.id, DailyUsageCounter.date >= cutoff)
+            .order_by(DailyUsageCounter.date)
         )
-        cost_row = cost_result.scalar_one_or_none()
+        db_rows = {row.date: row.runs for row in result}
 
-        # Convert DataFrame to dict and add cost_cents calculation
-        rows = df.to_dict(orient="records")
-        if cost_row:
-            for row in rows:
-                input_tokens = int(row.get("input_tokens", 0))
-                output_tokens = int(row.get("output_tokens", 0))
-                input_cost = (input_tokens / 1_000_000) * cost_row.input_cost_per_1m_tokens
-                output_cost = (output_tokens / 1_000_000) * cost_row.output_cost_per_1m_tokens
-                row["cost_cents"] = int((input_cost + output_cost) * 100)
-        else:
-            # If no cost row found, set cost_cents to 0
-            for row in rows:
-                row["cost_cents"] = 0
+        # Fill every date in the window so the chart has a continuous line
+        rows = []
+        for i in range(days - 1, -1, -1):
+            d = (date.today() - timedelta(days=i)).isoformat()
+            rows.append({
+                "date": d,
+                "pipeline_runs": db_rows.get(d, 0),
+                "uploads": db_rows.get(d, 0),
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "tokens_used": 0,
+                "cost_cents": 0,
+            })
 
         return {"days": days, "rows": rows}
     except Exception as e:

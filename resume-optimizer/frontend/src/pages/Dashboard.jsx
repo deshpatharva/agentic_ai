@@ -94,7 +94,7 @@ export default function Dashboard() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
             {/* Usage chart */}
             <Card header="Usage — last 30 days" className="lg:col-span-2">
-              {usage.length > 0 ? (
+              {usage.some(r => r.pipeline_runs > 0) ? (
                 <ResponsiveContainer width="100%" height={180}>
                   <AreaChart data={usage}>
                     <defs>
