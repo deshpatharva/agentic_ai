@@ -134,7 +134,6 @@ export default function ProfilesPage() {
           </div>
         )}
       </div>
-      </div>
       </main>
     </div>
   );
