@@ -103,18 +103,15 @@ export default function ProfileNewPage() {
     setParsing(true);
 
     try {
-      const text = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (e) => resolve(e.target.result);
-        reader.onerror = () => reject(new Error('Failed to read file.'));
-        reader.readAsText(file);
+      const formData = new FormData();
+      formData.append('file', file);
+
+      // Backend extracts text from PDF/DOCX and returns parsed sections + raw_text
+      const { data } = await client.post('/profile/parse', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
       });
 
-      setRawText(text);
-
-      // /profile/parse returns {label, summary, experience, education, skills} flat
-      const { data } = await client.post('/profile/parse', { raw_text: text });
-
+      setRawText(data.raw_text ?? '');
       setInitialLabel(data.label ?? '');
       setInitialSections({
         summary: data.summary ?? '',
