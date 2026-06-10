@@ -11,6 +11,7 @@ import CostTrendChart from '../components/CostTrendChart';
 import MatchAnalytics from '../components/MatchAnalytics';
 import client, { buildDownloadUrl } from '../api/client';
 import useAuthStore from '../store/authStore';
+import OnboardingBanner from '../components/OnboardingBanner';
 
 function scoreColor(s) {
   if (s >= 85) return 'text-green-600 bg-green-50';
@@ -68,7 +69,9 @@ export default function Dashboard() {
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-5xl mx-auto px-8 py-8">
           <h1 className="text-2xl font-bold text-gray-900 mb-1">{greeting}, {name} 👋</h1>
-          <p className="text-gray-500 mb-8">Here's your resume optimization overview.</p>
+          <p className="text-gray-500 mb-6">Here's your resume optimization overview.</p>
+
+          <OnboardingBanner />
 
           {/* Stats row */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
