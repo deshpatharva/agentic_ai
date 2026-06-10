@@ -3,7 +3,9 @@ import re as _re
 import uuid as _uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+import io as _io
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -100,10 +102,27 @@ async def delete_profile(
 
 @profile_ops.post("/parse")
 async def parse_profile(
-    body: ParseProfileRequest,
+    file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    return await _parse_sections(body.raw_text)
+    contents = await file.read()
+    raw_text = _extract_file_text(contents, file.filename or "")
+    result = await _parse_sections(raw_text)
+    result["raw_text"] = raw_text
+    return result
+
+
+def _extract_file_text(contents: bytes, filename: str) -> str:
+    name = filename.lower()
+    if name.endswith(".pdf"):
+        import pdfplumber
+        with pdfplumber.open(_io.BytesIO(contents)) as pdf:
+            return "\n".join(page.extract_text() or "" for page in pdf.pages)
+    if name.endswith(".docx"):
+        import docx
+        doc = docx.Document(_io.BytesIO(contents))
+        return "\n".join(p.text for p in doc.paragraphs)
+    raise HTTPException(status_code=400, detail="Unsupported file type. Upload a PDF or DOCX.")
 
 
 def _extract_json(text: str) -> str:
