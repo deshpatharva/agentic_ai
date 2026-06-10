@@ -37,6 +37,7 @@ email-validator
 python-jose[cryptography]
 # Job scraper
 httpx
+beautifulsoup4
 slowapi>=0.1.9
 python-json-logger>=2.0.7
 gunicorn
