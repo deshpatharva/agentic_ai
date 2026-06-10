@@ -78,8 +78,10 @@ AGENT_TOKEN_BUDGET = 20_000   # cumulative input+output tokens across all Phase 
 # ── API URLs ──────────────────────────────────────────────────────────────────
 BACKEND_URL  = os.environ.get("BACKEND_URL",  "http://localhost:8000")
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")
-# Parsed from FRONTEND_URL — supports comma-separated values for multiple allowed origins
-FRONTEND_URLS = [u.strip() for u in FRONTEND_URL.split(",") if u.strip()]
+# Comma-separated list of allowed CORS origins. Defaults to localhost for local dev.
+# In production set CORS_ORIGINS to your frontend domain(s).
+_cors_env   = os.environ.get("CORS_ORIGINS", "http://localhost:5173,http://localhost:5174")
+CORS_ORIGINS = [o.strip() for o in _cors_env.split(",") if o.strip()]
 
 # ── Pipeline settings ─────────────────────────────────────────────────────────
 MAX_ITERATIONS      = 4
