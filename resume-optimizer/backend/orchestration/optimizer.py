@@ -210,6 +210,7 @@ async def run_optimization_async(
     optimized  = state.reassemble()
     input_tok  = state.input_tokens
     output_tok = state.output_tokens
+    cost_usd   = state.cost_usd
     cleanup_session(job_id)
 
     # Guard: if nothing changed, all tools silently failed — fall back
@@ -226,6 +227,7 @@ async def run_optimization_async(
         "text":          optimized,
         "input_tokens":  input_tok,
         "output_tokens": output_tok,
+        "cost_usd":      cost_usd,
         "iterations":    1,
         "fallback":      False,
     }
@@ -248,6 +250,7 @@ async def _deterministic_fallback(
         "text":          result.get("text", resume_text),
         "input_tokens":  result.get("tokens", {}).get("input_tokens",  0),
         "output_tokens": result.get("tokens", {}).get("output_tokens", 0),
+        "cost_usd":      result.get("cost_usd", 0.0),
         "iterations":    1,
         "fallback":      True,
     }

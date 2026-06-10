@@ -92,6 +92,7 @@ class PipelineJob(Base):
     scores_json       = Column(JSON, nullable=True)
     download_path     = Column(String(1000), nullable=True)
     iteration         = Column(Integer, default=0, nullable=False)
+    cost_usd          = Column(Float, nullable=True, default=0.0)
     error_message     = Column(String(2000), nullable=True)
     created_at        = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at        = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)

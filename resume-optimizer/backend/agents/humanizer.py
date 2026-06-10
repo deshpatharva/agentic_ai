@@ -30,7 +30,7 @@ async def humanize_resume(
     Optionally scoped to a target industry and seniority level for more focused output.
     Returns a dict with "text" (the humanized resume) and "tokens" (accumulated token counts).
     """
-    accumulated = {"input_tokens": 0, "output_tokens": 0}
+    accumulated = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
 
     industry_note = f" Write in the voice of a credible {industry} professional." if industry else ""
     seniority_note = {
@@ -62,6 +62,7 @@ Return ONLY the polished resume text.""", MODEL_HUMANIZER)
     humanized_v1 = response["text"]
     accumulated["input_tokens"] += response.get("input_tokens", 0)
     accumulated["output_tokens"] += response.get("output_tokens", 0)
+    accumulated["cost_usd"] += response.get("cost_usd", 0.0)
 
     step2_system = f"""You are a senior hiring manager reviewing a resume for a {seniority_level}-level {industry or "technology"} role.
 
@@ -82,6 +83,7 @@ JSON:""", MODEL_CRITIC)
     raw_critic = response["text"]
     accumulated["input_tokens"] += response.get("input_tokens", 0)
     accumulated["output_tokens"] += response.get("output_tokens", 0)
+    accumulated["cost_usd"] += response.get("cost_usd", 0.0)
 
     try:
         feedback = json.loads(_clean_json(raw_critic))
@@ -89,6 +91,7 @@ JSON:""", MODEL_CRITIC)
         return {
             "text": humanized_v1,
             "tokens": accumulated,
+            "cost_usd": accumulated["cost_usd"],
         }
 
     # ── Step 3: Incorporate feedback ─────────────────────────────────────────
@@ -104,6 +107,7 @@ JSON:""", MODEL_CRITIC)
         return {
             "text": humanized_v1,
             "tokens": accumulated,
+            "cost_usd": accumulated["cost_usd"],
         }
 
     response = await complete(f"""Apply the following critic feedback to this resume.
@@ -123,8 +127,10 @@ Return ONLY the final resume text.""", MODEL_HUMANIZER)
     final_text = response["text"]
     accumulated["input_tokens"] += response.get("input_tokens", 0)
     accumulated["output_tokens"] += response.get("output_tokens", 0)
+    accumulated["cost_usd"] += response.get("cost_usd", 0.0)
 
     return {
         "text": final_text,
         "tokens": accumulated,
+        "cost_usd": accumulated["cost_usd"],
     }

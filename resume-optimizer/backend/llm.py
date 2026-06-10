@@ -56,8 +56,11 @@ async def complete(
         messages=messages,
     )
 
+    cost_usd = getattr(response, "_hidden_params", {}).get("response_cost") or 0.0
+
     return {
         "text": response.choices[0].message.content.strip(),
         "input_tokens": response.usage.prompt_tokens,
         "output_tokens": response.usage.completion_tokens,
+        "cost_usd": float(cost_usd),
     }

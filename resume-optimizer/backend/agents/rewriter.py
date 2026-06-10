@@ -21,7 +21,7 @@ async def rewrite_resume(
     Rewrite resume to align with JD keywords and feedback.
     Returns a dict with "text" (the rewritten resume) and "tokens" (accumulated token counts).
     """
-    accumulated = {"input_tokens": 0, "output_tokens": 0}
+    accumulated = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
     keywords_str = ", ".join(jd_keywords[:40]) if jd_keywords else "None provided"
 
     input_word_count = len(resume_text.split())
@@ -82,8 +82,10 @@ Current Resume:
     final_text = response["text"]
     accumulated["input_tokens"] += response.get("input_tokens", 0)
     accumulated["output_tokens"] += response.get("output_tokens", 0)
+    accumulated["cost_usd"] += response.get("cost_usd", 0.0)
 
     return {
         "text": final_text,
         "tokens": accumulated,
+        "cost_usd": accumulated["cost_usd"],
     }

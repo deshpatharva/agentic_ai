@@ -68,8 +68,9 @@ class ResumeState:
     def __init__(self, sections: Dict[str, str], available_metrics: str = "") -> None:
         self._sections: Dict[str, str] = dict(sections)
         self.available_metrics: str = available_metrics
-        self._total_input:  int = 0
-        self._total_output: int = 0
+        self._total_input:    int   = 0
+        self._total_output:   int   = 0
+        self._total_cost_usd: float = 0.0
         self._lock = threading.Lock()
 
     # ── Section access ────────────────────────────────────────────────────────
@@ -88,10 +89,11 @@ class ResumeState:
 
     # ── Token accounting ──────────────────────────────────────────────────────
 
-    def add_tokens(self, input_tokens: int, output_tokens: int) -> None:
+    def add_tokens(self, input_tokens: int, output_tokens: int, cost_usd: float = 0.0) -> None:
         with self._lock:
             self._total_input  += input_tokens
             self._total_output += output_tokens
+            self._total_cost_usd += cost_usd
 
     def total_tokens(self) -> int:
         with self._lock:
@@ -106,6 +108,11 @@ class ResumeState:
     def output_tokens(self) -> int:
         with self._lock:
             return self._total_output
+
+    @property
+    def cost_usd(self) -> float:
+        with self._lock:
+            return self._total_cost_usd
 
     # ── Reassembly ────────────────────────────────────────────────────────────
 
@@ -250,7 +257,7 @@ Section:
 Return ONLY the updated section text."""
 
         result = _call_llm(prompt, MODEL_KEYWORD_INJECT)
-        state.add_tokens(result.get("input_tokens", 0), result.get("output_tokens", 0))
+        state.add_tokens(result.get("input_tokens", 0), result.get("output_tokens", 0), result.get("cost_usd", 0.0))
         if result.get("text"):
             state.update_section(section_name, result["text"])
             updated.append(section_name)
