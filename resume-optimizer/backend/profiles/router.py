@@ -115,13 +115,31 @@ async def parse_profile(
 def _extract_file_text(contents: bytes, filename: str) -> str:
     name = filename.lower()
     if name.endswith(".pdf"):
-        import pdfplumber
-        with pdfplumber.open(_io.BytesIO(contents)) as pdf:
-            return "\n".join(page.extract_text() or "" for page in pdf.pages)
+        try:
+            import pdfplumber
+            with pdfplumber.open(_io.BytesIO(contents)) as pdf:
+                return "\n".join(page.extract_text() or "" for page in pdf.pages)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"Could not read PDF: {exc}") from exc
     if name.endswith(".docx"):
-        import docx
-        doc = docx.Document(_io.BytesIO(contents))
-        return "\n".join(p.text for p in doc.paragraphs)
+        try:
+            import docx
+            doc = docx.Document(_io.BytesIO(contents))
+            lines: list[str] = []
+            for p in doc.paragraphs:
+                t = p.text.strip()
+                if t:
+                    lines.append(t)
+            # Many resumes store content in tables — extract those too.
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        t = cell.text.strip()
+                        if t:
+                            lines.extend(t.splitlines())
+            return "\n".join(lines)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"Could not read DOCX: {exc}") from exc
     raise HTTPException(status_code=400, detail="Unsupported file type. Upload a PDF or DOCX.")
 
 
@@ -142,8 +160,14 @@ def _extract_json(text: str) -> str:
 
 
 async def _parse_sections(raw_text: str) -> dict:
+    import logging as _logging
     from config import MODEL_PROFILE_PARSER
     from llm import complete
+
+    _logger = _logging.getLogger(__name__)
+
+    if not raw_text.strip():
+        raise HTTPException(status_code=422, detail="No text could be extracted from the file. Ensure the file contains readable text (not a scanned image).")
 
     prompt = f"""You are a resume parser. Extract structured data from the resume text below.
 Return ONLY valid JSON with this exact shape:
@@ -162,12 +186,22 @@ Return ONLY valid JSON with this exact shape:
 Resume text:
 {raw_text[:8000]}"""
 
-    result = await complete(prompt, MODEL_PROFILE_PARSER)
+    try:
+        result = await complete(prompt, MODEL_PROFILE_PARSER)
+    except Exception as exc:
+        _logger.exception("LLM call failed in _parse_sections")
+        raise HTTPException(status_code=502, detail=f"AI parsing service error: {exc}") from exc
+
     text = _extract_json(result["text"])
     try:
-        return _json.loads(text)
+        parsed = _json.loads(text)
     except _json.JSONDecodeError as e:
         raise HTTPException(status_code=502, detail=f"Profile parser returned invalid JSON: {e}")
+
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=502, detail="Profile parser returned unexpected format.")
+
+    return parsed
 
 
 async def _get_owned(profile_id: str, user_id, db: AsyncSession) -> Profile:
