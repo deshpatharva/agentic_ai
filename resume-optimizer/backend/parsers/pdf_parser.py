@@ -37,7 +37,7 @@ def _detect_sections(lines: list[str]) -> dict:
     return {k: "\n".join(v) for k, v in sections.items() if v}
 
 
-def parse_pdf(file_path: str) -> dict:
+def parse_pdf(file_path) -> dict:
     """
     Parse a PDF resume file.
 

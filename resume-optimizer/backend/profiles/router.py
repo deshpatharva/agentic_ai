@@ -113,33 +113,16 @@ async def parse_profile(
 
 
 def _extract_file_text(contents: bytes, filename: str) -> str:
+    from parsers.pdf_parser import parse_pdf
+    from parsers.docx_parser import parse_docx
     name = filename.lower()
-    if name.endswith(".pdf"):
-        try:
-            import pdfplumber
-            with pdfplumber.open(_io.BytesIO(contents)) as pdf:
-                return "\n".join(page.extract_text() or "" for page in pdf.pages)
-        except Exception as exc:
-            raise HTTPException(status_code=422, detail=f"Could not read PDF: {exc}") from exc
-    if name.endswith(".docx"):
-        try:
-            import docx
-            doc = docx.Document(_io.BytesIO(contents))
-            lines: list[str] = []
-            for p in doc.paragraphs:
-                t = p.text.strip()
-                if t:
-                    lines.append(t)
-            # Many resumes store content in tables — extract those too.
-            for table in doc.tables:
-                for row in table.rows:
-                    for cell in row.cells:
-                        t = cell.text.strip()
-                        if t:
-                            lines.extend(t.splitlines())
-            return "\n".join(lines)
-        except Exception as exc:
-            raise HTTPException(status_code=422, detail=f"Could not read DOCX: {exc}") from exc
+    try:
+        if name.endswith(".pdf"):
+            return parse_pdf(_io.BytesIO(contents))["raw_text"]
+        if name.endswith(".docx"):
+            return parse_docx(_io.BytesIO(contents))["raw_text"]
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Could not read file: {exc}") from exc
     raise HTTPException(status_code=400, detail="Unsupported file type. Upload a PDF or DOCX.")
 
 
