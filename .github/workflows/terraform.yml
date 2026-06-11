@@ -161,19 +161,24 @@ jobs:
             resume-optimizer/infra/plan_output.txt
           retention-days: 1
 
-      - name: Post plan to PR
+      - name: Post plan summary to PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             const raw = fs.readFileSync('resume-optimizer/infra/plan_output.txt', 'utf8');
-            const plan = raw.length > 60000
-              ? '... (output truncated — see workflow logs for full plan)\n\n' + raw.slice(-60000)
-              : raw;
 
+            // Extract only the summary line (e.g. "Plan: 2 to add, 1 to change, 0 to destroy.")
+            // Never post the full plan — it can contain sensitive resource attribute values
+            // even when variables are marked sensitive = true (provider schema determines
+            // which attributes are redacted, not the variable declaration).
+            const summaryMatch = raw.match(/^(Plan:.+)$/m) || raw.match(/^(No changes\..+)$/m);
+            const summary = summaryMatch ? summaryMatch[1] : 'See workflow logs for plan details.';
+
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             const header = '## Terraform Plan\n';
-            const body   = `${header}\`\`\`hcl\n${plan}\n\`\`\``;
+            const body   = `${header}**${summary}**\n\n[View full plan in workflow logs](${runUrl}) (secrets are redacted there; never posted here).`;
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
