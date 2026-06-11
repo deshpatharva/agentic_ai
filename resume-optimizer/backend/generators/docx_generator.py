@@ -70,6 +70,10 @@ def _split_company_date(line: str):
     if m:
         company_part = line[:m.start()].strip().rstrip("–—-| \t")
         date_part = line[m.start():].strip()
+        # Handle dates wrapped in parens: "Company (Jun 2024 – Present)"
+        if company_part.endswith("("):
+            company_part = company_part[:-1].strip()
+            date_part = date_part.rstrip(")")
         return company_part, date_part
     return line.strip(), ""
 
