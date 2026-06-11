@@ -41,6 +41,10 @@ AI_ANNOTATIONS = re.compile(
     re.IGNORECASE,
 )
 
+# Category-label lines like "Programming Languages: Python, SQL" — label gets bolded.
+# Requires whitespace after the colon so URLs ("https://…") never match.
+LABEL_LINE_PATTERN = re.compile(r"^([A-Za-z][A-Za-z &/+\-]{1,40}):\s+(.+)$")
+
 
 def _add_horizontal_rule(paragraph):
     pPr = paragraph._p.get_or_add_pPr()
@@ -242,6 +246,19 @@ def generate_docx(resume_text: str, output_path: str) -> str:
             run.italic = True
             run.bold = False
             run.font.size = Pt(10.5)
+            prev_was_company = False
+            continue
+
+        # ── Category-label line (e.g. "Programming Languages: Python, SQL") ─
+        label_match = LABEL_LINE_PATTERN.match(stripped)
+        if label_match:
+            p = doc.add_paragraph()
+            p.paragraph_format.space_after = Pt(2)
+            run_label = p.add_run(f"{label_match.group(1)}:")
+            run_label.bold = True
+            run_label.font.size = Pt(10.5)
+            run_rest = p.add_run(f"  {label_match.group(2)}")
+            run_rest.font.size = Pt(10.5)
             prev_was_company = False
             continue
 
