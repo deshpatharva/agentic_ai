@@ -198,6 +198,7 @@ async def test_parse_profile_endpoint(client, monkeypatch):
     data = r.json()
     assert data["label"] == "Software Engineer"
     assert data["contact"]["full_name"] == "Jane Doe"
+    assert "Python" in data["skills"]
     assert data["raw_text"] == "Fake resume text here"
 
 

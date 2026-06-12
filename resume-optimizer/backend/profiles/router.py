@@ -15,7 +15,6 @@ from db.session import get_db
 from profiles.schemas import (
     InterviewFinishRequest,
     InterviewMessageRequest,
-    ParseProfileRequest,
     PrepareJobRequest,
     ProfileCreate,
     ProfileUpdate,
@@ -287,11 +286,11 @@ Interview transcript:
 {history_text}"""
 
     result = await complete(prompt, MODEL_INTERVIEW_SYNTH)
-    text = result["text"].strip()
-    if text.startswith("```"):
-        lines = text.split("\n")
-        text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:]).strip()
-    return _json.loads(text)
+    text = _extract_json(result["text"])
+    try:
+        return _json.loads(text)
+    except _json.JSONDecodeError as e:
+        raise HTTPException(status_code=502, detail=f"Interview synthesis returned invalid JSON: {e}")
 
 
 @profile_ops.post("/prepare-job")

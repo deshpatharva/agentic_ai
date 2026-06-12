@@ -3,7 +3,7 @@ import { Send } from 'lucide-react';
 import ChatMessage from './ChatMessage';
 import client from '../api/client';
 
-const GREETING = "Hi! I'll help you build your resume profile. Let's start — what is your most recent job title, company, and the dates you worked there?";
+const GREETING = "Hi! I'll help you build your resume profile. First, what's your full name, the city you're based in, and the best email, phone, and LinkedIn (or portfolio URL) to put on your resume?";
 
 export default function InterviewChat({ onComplete }) {
   const [messages, setMessages] = useState([{ role: 'assistant', content: GREETING }]);

@@ -45,10 +45,6 @@ class ProfileUpdate(BaseModel):
     sections: Optional[SectionsData] = None
 
 
-class ParseProfileRequest(BaseModel):
-    raw_text: str
-
-
 class InterviewMessage(BaseModel):
     role: str
     content: str
