@@ -2,12 +2,27 @@ def sections_to_text(sections: dict) -> str:
     """Convert profile sections JSON to plain text for pipeline and docx-generator consumption.
 
     Emits the line structure generate_docx styles into the target layout:
+      "{name}"                     → centered, blue, bold
+      "{contact_fields}"           → centered, grey (location • email • phone • linkedin • website)
       Section header line          → blue underlined header
       "{title}  {dates}"           → bold title, date right-aligned
       "{company}"                  → italic line under the title
       "• {bullet}"                 → bullet list item
     """
     parts = []
+    contact = sections.get("contact") or {}
+    full_name = (contact.get("full_name") or "").strip()
+    if full_name:
+        parts.append(full_name)
+    contact_bits = [
+        (contact.get(k) or "").strip()
+        for k in ("location", "email", "phone", "linkedin", "website")
+    ]
+    contact_line = " • ".join(b for b in contact_bits if b)
+    if contact_line:
+        parts.append(contact_line)
+    if full_name or contact_line:
+        parts.append("")
     if sections.get("summary"):
         parts.append("Professional Summary")
         parts.append(sections["summary"])
