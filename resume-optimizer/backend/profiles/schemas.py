@@ -1,5 +1,5 @@
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ExperienceEntry(BaseModel):
@@ -15,7 +15,17 @@ class EducationEntry(BaseModel):
     dates: str = ""
 
 
+class ContactData(BaseModel):
+    full_name: str = ""
+    location: str = ""
+    email: str = ""
+    phone: str = ""
+    linkedin: str = ""
+    website: str = ""
+
+
 class SectionsData(BaseModel):
+    contact: ContactData = Field(default_factory=ContactData)
     summary: str = ""
     experience: list[ExperienceEntry] = []
     education: list[EducationEntry] = []
