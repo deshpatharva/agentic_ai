@@ -172,9 +172,16 @@ async def test_parse_profile_endpoint(client, monkeypatch):
     token = await _register_and_token(client, "parse@test.com")
 
     import profiles.router as pr
+
+    monkeypatch.setattr(
+        pr, "_extract_file_text", lambda contents, filename: "Fake resume text here"
+    )
+
     async def _fake_parse(raw_text: str) -> dict:
         return {
             "label": "Software Engineer",
+            "contact": {"full_name": "Jane Doe", "location": "", "email": "",
+                        "phone": "", "linkedin": "", "website": ""},
             "summary": "Parsed summary",
             "experience": [],
             "education": [],
@@ -184,13 +191,15 @@ async def test_parse_profile_endpoint(client, monkeypatch):
 
     r = await client.post(
         "/profile/parse",
-        json={"raw_text": "Fake resume text here"},
+        files={"file": ("resume.docx", b"PK\x03\x04 fake docx bytes", "application/octet-stream")},
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert r.status_code == 200
+    assert r.status_code == 200, r.text
     data = r.json()
     assert data["label"] == "Software Engineer"
+    assert data["contact"]["full_name"] == "Jane Doe"
     assert "Python" in data["skills"]
+    assert data["raw_text"] == "Fake resume text here"
 
 
 @pytest.mark.asyncio

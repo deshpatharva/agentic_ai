@@ -11,6 +11,12 @@ export default function ProfileEditor({ initialLabel = '', initialSections = {},
   const [experience, setExperience] = useState(initialSections.experience || []);
   const [education, setEducation] = useState(initialSections.education || []);
   const [skills, setSkills] = useState(initialSections.skills || []);
+  const [contact, setContact] = useState({
+    full_name: '', location: '', email: '', phone: '', linkedin: '', website: '',
+    ...(initialSections.contact || {}),
+  });
+
+  const updateContact = (patch) => setContact((prev) => ({ ...prev, ...patch }));
 
   const updateExp = (idx, patch) =>
     setExperience((prev) => prev.map((e, i) => (i === idx ? { ...e, ...patch } : e)));
@@ -19,7 +25,7 @@ export default function ProfileEditor({ initialLabel = '', initialSections = {},
     setEducation((prev) => prev.map((e, i) => (i === idx ? { ...e, ...patch } : e)));
 
   const handleSave = () => {
-    onSave({ label, labelConfirmed, sections: { summary, experience, education, skills } });
+    onSave({ label, labelConfirmed, sections: { contact, summary, experience, education, skills } });
   };
 
   const fieldClass = 'w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-gray-900 text-sm focus:border-primary focus:outline-none transition-colors';
@@ -27,6 +33,31 @@ export default function ProfileEditor({ initialLabel = '', initialSections = {},
 
   return (
     <div className="space-y-6">
+      {/* Contact */}
+      <div>
+        <label className={sectionLabel}>Contact</label>
+        <div className="grid grid-cols-2 gap-3">
+          <input className={fieldClass} placeholder="Full name"
+            value={contact.full_name}
+            onChange={(e) => updateContact({ full_name: e.target.value })} />
+          <input className={fieldClass} placeholder="Location (e.g. Cincinnati, OH)"
+            value={contact.location}
+            onChange={(e) => updateContact({ location: e.target.value })} />
+          <input className={fieldClass} placeholder="Email" type="email"
+            value={contact.email}
+            onChange={(e) => updateContact({ email: e.target.value })} />
+          <input className={fieldClass} placeholder="Phone"
+            value={contact.phone}
+            onChange={(e) => updateContact({ phone: e.target.value })} />
+          <input className={fieldClass} placeholder="LinkedIn URL"
+            value={contact.linkedin}
+            onChange={(e) => updateContact({ linkedin: e.target.value })} />
+          <input className={fieldClass} placeholder="Website / GitHub URL"
+            value={contact.website}
+            onChange={(e) => updateContact({ website: e.target.value })} />
+        </div>
+      </div>
+
       {/* Label */}
       <div>
         <label className={sectionLabel}>Role / Profile Label</label>

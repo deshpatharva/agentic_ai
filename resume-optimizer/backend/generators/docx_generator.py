@@ -5,7 +5,7 @@ Creates a formatted .docx resume from plain resume text.
 
 import re
 from docx import Document
-from docx.shared import Pt, RGBColor, Inches
+from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
@@ -41,6 +41,10 @@ AI_ANNOTATIONS = re.compile(
     re.IGNORECASE,
 )
 
+# Category-label lines like "Programming Languages: Python, SQL" — label gets bolded.
+# Requires whitespace after the colon so URLs ("https://…") never match.
+LABEL_LINE_PATTERN = re.compile(r"^([A-Za-z][A-Za-z &/+\-]{1,40}):\s+(.+)$")
+
 
 def _add_horizontal_rule(paragraph):
     pPr = paragraph._p.get_or_add_pPr()
@@ -70,6 +74,10 @@ def _split_company_date(line: str):
     if m:
         company_part = line[:m.start()].strip().rstrip("–—-| \t")
         date_part = line[m.start():].strip()
+        # Handle dates wrapped in parens: "Company (Jun 2024 – Present)"
+        if company_part.endswith("("):
+            company_part = company_part[:-1].strip()
+            date_part = date_part.rstrip(")")
         return company_part, date_part
     return line.strip(), ""
 
@@ -144,12 +152,16 @@ def generate_docx(resume_text: str, output_path: str) -> str:
 
     # Track whether the previous line was a company+date line
     prev_was_company = False
+    prev_was_name = False
 
     for seq_idx, (orig_idx, line) in enumerate(non_empty):
         stripped = _clean_ai_annotations(line.strip())
         if not stripped:
             prev_was_company = False
             continue
+
+        was_name = prev_was_name
+        prev_was_name = False
 
         # ── Name ────────────────────────────────────────────────────────────
         if _is_name_line(stripped, seq_idx):
@@ -160,10 +172,16 @@ def generate_docx(resume_text: str, output_path: str) -> str:
             run.font.size = Pt(18)
             run.font.color.rgb = RGBColor(0x1F, 0x49, 0x7D)
             prev_was_company = False
+            prev_was_name = True
             continue
 
         # ── Contact info ────────────────────────────────────────────────────
-        if _is_contact_line(stripped, seq_idx):
+        if _is_contact_line(stripped, seq_idx) or (
+            was_name
+            and not SECTION_HEADERS.match(stripped)
+            and not BULLET_PATTERN.match(stripped)
+            and not _has_date(stripped)
+        ):
             p = doc.add_paragraph()
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             run = p.add_run(stripped)
@@ -210,7 +228,7 @@ def generate_docx(resume_text: str, output_path: str) -> str:
 
             # Spacer tab then date — regular, right-aligned via tab stop
             if date_part:
-                run_tab = p.add_run("\t")
+                p.add_run("\t")
                 run_date = p.add_run(date_part)
                 run_date.bold = False
                 run_date.font.size = Pt(10.5)
@@ -238,6 +256,19 @@ def generate_docx(resume_text: str, output_path: str) -> str:
             run.italic = True
             run.bold = False
             run.font.size = Pt(10.5)
+            prev_was_company = False
+            continue
+
+        # ── Category-label line (e.g. "Programming Languages: Python, SQL") ─
+        label_match = LABEL_LINE_PATTERN.match(stripped)
+        if label_match:
+            p = doc.add_paragraph()
+            p.paragraph_format.space_after = Pt(2)
+            run_label = p.add_run(f"{label_match.group(1)}:")
+            run_label.bold = True
+            run_label.font.size = Pt(10.5)
+            run_rest = p.add_run(f"  {label_match.group(2)}")
+            run_rest.font.size = Pt(10.5)
             prev_was_company = False
             continue
 
