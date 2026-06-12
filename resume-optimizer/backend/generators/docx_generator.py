@@ -176,7 +176,7 @@ def generate_docx(resume_text: str, output_path: str) -> str:
             continue
 
         # ── Contact info ────────────────────────────────────────────────────
-        if _is_contact_line(stripped, seq_idx) or was_name:
+        if _is_contact_line(stripped, seq_idx) or (was_name and not SECTION_HEADERS.match(stripped)):
             p = doc.add_paragraph()
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             run = p.add_run(stripped)

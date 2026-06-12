@@ -97,3 +97,23 @@ def test_generate_docx_renders_location_only_contact_centered(tmp_path):
     assert paras[0].text == "Jane Doe"
     assert paras[1].text == "Austin, TX"
     assert paras[1].alignment == WD_ALIGN_PARAGRAPH.CENTER
+
+
+def test_generate_docx_name_without_contact_keeps_header_styling(tmp_path):
+    from docx import Document
+    from generators.docx_generator import generate_docx
+    from utils.profile_utils import sections_to_text
+
+    text = sections_to_text({
+        "contact": {"full_name": "Jane Doe"},
+        "summary": "Engineer.",
+    })
+    out = tmp_path / "out.docx"
+    generate_docx(text, str(out))
+    paras = [p for p in Document(str(out)).paragraphs if p.text.strip()]
+
+    assert paras[0].text == "Jane Doe"
+    # The line after the name is the summary section header — it must keep
+    # header styling (bold, uppercased), not be mistaken for contact info.
+    assert paras[1].text == "PROFESSIONAL SUMMARY"
+    assert paras[1].runs[0].bold is True
