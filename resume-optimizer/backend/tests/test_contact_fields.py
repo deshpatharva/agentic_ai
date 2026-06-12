@@ -117,3 +117,20 @@ def test_generate_docx_name_without_contact_keeps_header_styling(tmp_path):
     # header styling (bold, uppercased), not be mistaken for contact info.
     assert paras[1].text == "PROFESSIONAL SUMMARY"
     assert paras[1].runs[0].bold is True
+
+
+def test_generate_docx_date_line_after_name_not_styled_as_contact(tmp_path):
+    from docx import Document
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from generators.docx_generator import generate_docx
+
+    # Raw-upload text: no contact info, a company+date line directly after the name
+    text = "John Smith\nAcme Corp  Jan 2020 – Dec 2023\n• Built things."
+    out = tmp_path / "out.docx"
+    generate_docx(text, str(out))
+    paras = [p for p in Document(str(out)).paragraphs if p.text.strip()]
+
+    assert paras[0].text == "John Smith"
+    # Company+date keeps bold-company styling, not centered contact styling
+    assert paras[1].alignment != WD_ALIGN_PARAGRAPH.CENTER
+    assert paras[1].runs[0].bold is True
