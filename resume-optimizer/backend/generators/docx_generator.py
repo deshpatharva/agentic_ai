@@ -5,7 +5,7 @@ Creates a formatted .docx resume from plain resume text.
 
 import re
 from docx import Document
-from docx.shared import Pt, RGBColor, Inches
+from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
@@ -228,7 +228,7 @@ def generate_docx(resume_text: str, output_path: str) -> str:
 
             # Spacer tab then date — regular, right-aligned via tab stop
             if date_part:
-                run_tab = p.add_run("\t")
+                p.add_run("\t")
                 run_date = p.add_run(date_part)
                 run_date.bold = False
                 run_date.font.size = Pt(10.5)
