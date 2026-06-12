@@ -152,12 +152,16 @@ def generate_docx(resume_text: str, output_path: str) -> str:
 
     # Track whether the previous line was a company+date line
     prev_was_company = False
+    prev_was_name = False
 
     for seq_idx, (orig_idx, line) in enumerate(non_empty):
         stripped = _clean_ai_annotations(line.strip())
         if not stripped:
             prev_was_company = False
             continue
+
+        was_name = prev_was_name
+        prev_was_name = False
 
         # ── Name ────────────────────────────────────────────────────────────
         if _is_name_line(stripped, seq_idx):
@@ -168,10 +172,11 @@ def generate_docx(resume_text: str, output_path: str) -> str:
             run.font.size = Pt(18)
             run.font.color.rgb = RGBColor(0x1F, 0x49, 0x7D)
             prev_was_company = False
+            prev_was_name = True
             continue
 
         # ── Contact info ────────────────────────────────────────────────────
-        if _is_contact_line(stripped, seq_idx):
+        if _is_contact_line(stripped, seq_idx) or was_name:
             p = doc.add_paragraph()
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             run = p.add_run(stripped)

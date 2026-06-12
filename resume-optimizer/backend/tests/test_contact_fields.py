@@ -78,3 +78,22 @@ def test_generate_docx_renders_centered_name_and_contact(tmp_path):
 
     assert paras[1].text.startswith("Austin, TX")
     assert paras[1].alignment == WD_ALIGN_PARAGRAPH.CENTER
+
+
+def test_generate_docx_renders_location_only_contact_centered(tmp_path):
+    from docx import Document
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from generators.docx_generator import generate_docx
+    from utils.profile_utils import sections_to_text
+
+    text = sections_to_text({
+        "contact": {"full_name": "Jane Doe", "location": "Austin, TX"},
+        "summary": "Engineer.",
+    })
+    out = tmp_path / "out.docx"
+    generate_docx(text, str(out))
+    paras = [p for p in Document(str(out)).paragraphs if p.text.strip()]
+
+    assert paras[0].text == "Jane Doe"
+    assert paras[1].text == "Austin, TX"
+    assert paras[1].alignment == WD_ALIGN_PARAGRAPH.CENTER
