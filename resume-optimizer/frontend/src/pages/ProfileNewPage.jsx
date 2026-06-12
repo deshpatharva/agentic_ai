@@ -7,7 +7,7 @@ import InterviewChat from '../components/InterviewChat';
 import useProfileStore from '../store/profileStore';
 import client from '../api/client';
 
-const EMPTY_SECTIONS = { summary: '', experience: [], education: [], skills: [] };
+const EMPTY_SECTIONS = { contact: {}, summary: '', experience: [], education: [], skills: [] };
 const EMPTY_LABEL = '';
 
 function UploadZone({ onFileSelect, file, dragActive, onDragOver, onDragLeave, onDrop }) {
@@ -114,6 +114,7 @@ export default function ProfileNewPage() {
       setRawText(data.raw_text ?? '');
       setInitialLabel(data.label ?? '');
       setInitialSections({
+        contact: data.contact ?? {},
         summary: data.summary ?? '',
         experience: data.experience ?? [],
         education: data.education ?? [],
@@ -238,6 +239,7 @@ export default function ProfileNewPage() {
                 onComplete={(sections) => {
                   setInitialLabel(sections.label || '');
                   setInitialSections({
+                    contact: sections.contact || {},
                     summary: sections.summary || '',
                     experience: sections.experience || [],
                     education: sections.education || [],
