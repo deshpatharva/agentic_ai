@@ -156,6 +156,14 @@ async def _parse_sections(raw_text: str) -> dict:
 Return ONLY valid JSON with this exact shape:
 {{
   "label": "<job title / role>",
+  "contact": {{
+    "full_name": "<person's full name or empty string>",
+    "location": "<city, state/country or empty string>",
+    "email": "<email or empty string>",
+    "phone": "<phone or empty string>",
+    "linkedin": "<linkedin url or empty string>",
+    "website": "<github/portfolio/other url or empty string>"
+  }},
   "summary": "<professional summary or empty string>",
   "experience": [
     {{"company": "", "title": "", "dates": "", "bullets": ["..."]}}
@@ -202,6 +210,7 @@ async def _get_owned(profile_id: str, user_id, db: AsyncSession) -> Profile:
 
 
 _INTERVIEW_QUESTIONS = [
+    "First, what's your full name, the city you're based in, and the best email, phone, and LinkedIn (or portfolio URL) to put on your resume?",
     "What is your most recent role? Please share your job title, company name, and dates.",
     "What were your 3–5 key responsibilities or achievements in that role? Use bullet points if you like.",
     "Tell me about any other significant previous roles — title, company, dates, and one key achievement each.",
@@ -265,11 +274,14 @@ async def interview_finish(
 Required JSON shape:
 {{
   "label": "concise job title",
+  "contact": {{"full_name": "...", "location": "...", "email": "...", "phone": "...", "linkedin": "...", "website": "..."}},
   "summary": "one-paragraph professional summary",
   "experience": [{{"company": "...", "title": "...", "dates": "...", "bullets": ["..."]}}],
   "education": [{{"institution": "...", "degree": "...", "dates": "..."}}],
   "skills": ["Skill1", "Skill2"]
 }}
+
+Use empty strings for contact fields the candidate did not provide.
 
 Interview transcript:
 {history_text}"""
