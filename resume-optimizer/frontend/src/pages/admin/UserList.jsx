@@ -4,9 +4,9 @@ import { Search, ChevronRight } from 'lucide-react';
 import client from '../../api/client';
 
 const PLAN_BADGE = {
-  free:       'bg-gray-700 text-gray-200',
-  pro:        'bg-blue-900 text-blue-200',
-  enterprise: 'bg-purple-900 text-purple-200',
+  free:       'bg-surface-2 text-ink-mute',
+  pro:        'bg-accent-soft text-primary',
+  enterprise: 'bg-hilite-soft text-hilite',
 };
 
 export default function UserList() {
@@ -39,27 +39,28 @@ export default function UserList() {
   const totalPages = Math.ceil(total / perPage);
 
   return (
-    <div className="p-8">
+    <div className="p-4 sm:p-8">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-bold text-white">
-          Users <span className="text-gray-500 text-base font-normal">({total})</span>
+        <h1 className="text-xl font-bold text-ink">
+          Users <span className="text-ink-faint text-base font-normal">({total})</span>
         </h1>
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-faint" />
           <input
             type="text"
             placeholder="Search by email…"
             value={rawInput}
             onChange={e => setRawInput(e.target.value)}
-            className="pl-9 pr-4 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-gray-500 w-56"
+            className="pl-9 pr-4 py-2 bg-card border border-line rounded-lg text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:border-primary w-56"
           />
         </div>
       </div>
 
-      <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="bg-card border border-line rounded-card overflow-hidden">
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[640px]">
           <thead>
-            <tr className="border-b border-gray-800 text-gray-500 text-xs uppercase tracking-wide">
+            <tr className="border-b border-line text-ink-faint text-xs uppercase tracking-wide">
               <th className="px-4 py-3 text-left">Email</th>
               <th className="px-4 py-3 text-left">Plan</th>
               <th className="px-4 py-3 text-left">Status</th>
@@ -71,22 +72,22 @@ export default function UserList() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={6} className="px-4 py-10 text-center text-gray-600">Loading…</td>
+                <td colSpan={6} className="px-4 py-10 text-center text-ink-faint">Loading…</td>
               </tr>
             ) : users.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-4 py-10 text-center text-gray-600">No users found.</td>
+                <td colSpan={6} className="px-4 py-10 text-center text-ink-faint">No users found.</td>
               </tr>
             ) : users.map(u => (
               <tr
                 key={u.id}
                 onClick={() => navigate(`/admin/users/${u.id}`)}
-                className="border-b border-gray-800 hover:bg-gray-800 cursor-pointer transition-colors"
+                className="border-b border-line/60 hover:bg-surface-2/60 cursor-pointer transition-colors"
               >
-                <td className="px-4 py-3 text-white">
+                <td className="px-4 py-3 text-ink">
                   {u.email}
                   {u.is_admin && (
-                    <span className="ml-2 text-xs bg-red-900 text-red-300 px-1.5 py-0.5 rounded">admin</span>
+                    <span className="ml-2 text-xs bg-err-soft text-err px-1.5 py-0.5 rounded">admin</span>
                   )}
                 </td>
                 <td className="px-4 py-3">
@@ -95,17 +96,18 @@ export default function UserList() {
                   </span>
                 </td>
                 <td className="px-4 py-3">
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${u.is_active ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'}`}>
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${u.is_active ? 'bg-accent-soft text-primary' : 'bg-err-soft text-err'}`}>
                     {u.is_active ? 'Active' : 'Suspended'}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-gray-400">{u.resume_count}</td>
-                <td className="px-4 py-3 text-gray-400">{new Date(u.created_at).toLocaleDateString()}</td>
-                <td className="px-4 py-3 text-gray-600"><ChevronRight className="w-4 h-4" /></td>
+                <td className="px-4 py-3 text-ink-mute">{u.resume_count}</td>
+                <td className="px-4 py-3 text-ink-mute">{new Date(u.created_at).toLocaleDateString()}</td>
+                <td className="px-4 py-3 text-ink-faint"><ChevronRight className="w-4 h-4" /></td>
               </tr>
             ))}
           </tbody>
         </table>
+        </div>
       </div>
 
       {totalPages > 1 && (
@@ -113,15 +115,15 @@ export default function UserList() {
           <button
             disabled={page === 1}
             onClick={() => setPage(p => p - 1)}
-            className="px-3 py-1.5 text-sm text-gray-400 bg-gray-900 border border-gray-700 rounded-lg disabled:opacity-40 hover:bg-gray-800 transition-colors"
+            className="px-3 py-1.5 text-sm text-ink-mute bg-card border border-line rounded-lg disabled:opacity-40 hover:bg-surface-2 transition-colors"
           >
             Prev
           </button>
-          <span className="text-sm text-gray-500">Page {page} of {totalPages}</span>
+          <span className="text-sm text-ink-faint">Page {page} of {totalPages}</span>
           <button
             disabled={page === totalPages}
             onClick={() => setPage(p => p + 1)}
-            className="px-3 py-1.5 text-sm text-gray-400 bg-gray-900 border border-gray-700 rounded-lg disabled:opacity-40 hover:bg-gray-800 transition-colors"
+            className="px-3 py-1.5 text-sm text-ink-mute bg-card border border-line rounded-lg disabled:opacity-40 hover:bg-surface-2 transition-colors"
           >
             Next
           </button>
