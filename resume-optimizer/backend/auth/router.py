@@ -96,17 +96,22 @@ def _make_token(user_id: str) -> str:
     )
 
 
-def _user_dict(user: User, limits: PlanLimit = None) -> dict:
+def _user_dict(user: User, limits: PlanLimit = None, profile_status: str | None = None) -> dict:
+    full = user.full_name or ""
+    display_name = full.strip() or (user.email.split("@")[0] if user.email else "User")
     d = {
-        "id":          str(user.id),
-        "email":       user.email,
-        "full_name":   user.full_name or "",
-        "plan":        user.plan.value,
-        "is_active":   user.is_active,
-        "is_admin":         user.is_admin,
-        "trial_expires_at": user.trial_expires_at.isoformat() if user.trial_expires_at else None,
-        "created_at":       user.created_at.isoformat(),
+        "id":           str(user.id),
+        "email":        user.email,
+        "full_name":    full,
+        "display_name": display_name,
+        "plan":         user.plan.value,
+        "is_active":    user.is_active,
+        "is_admin":          user.is_admin,
+        "trial_expires_at":  user.trial_expires_at.isoformat() if user.trial_expires_at else None,
+        "created_at":        user.created_at.isoformat(),
     }
+    if profile_status is not None:
+        d["profile_status"] = profile_status
     if limits:
         d["limits"] = {
             "daily_uploads":        limits.daily_uploads,
@@ -164,9 +169,11 @@ async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends
 
 @router.get("/me")
 async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    from profiles.status import compute_profile_status
     result = await db.execute(select(PlanLimit).where(PlanLimit.plan == user.plan.value))
     limits = result.scalar_one_or_none()
-    return _user_dict(user, limits)
+    prof_status = await compute_profile_status(user, db)
+    return _user_dict(user, limits, profile_status=prof_status)
 
 
 @router.put("/me")

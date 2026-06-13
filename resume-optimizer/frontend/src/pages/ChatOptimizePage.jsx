@@ -122,7 +122,12 @@ export default function ChatOptimizePage() {
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        const msg = err?.detail?.upgrade_message || err?.detail || 'Request failed.';
+        if (res.status === 403 && err?.detail?.error === 'profile_incomplete') {
+          updateMsg(assistantId, { content: `❌ ${err.detail.message}`, isError: true, action: err.detail.action });
+          setPhase('idle');
+          return;
+        }
+        const msg = err?.detail?.upgrade_message || err?.detail?.message || err?.detail || 'Request failed.';
         updateMsg(assistantId, { content: `❌ ${msg}`, isError: true });
         setPhase('idle');
         return;
@@ -192,7 +197,7 @@ export default function ChatOptimizePage() {
           />
 
           {messages.map((msg) => (
-            <ChatMessage key={msg.id} role={msg.role} content={msg.content} isError={msg.isError} />
+            <ChatMessage key={msg.id} role={msg.role} content={msg.content} isError={msg.isError} action={msg.action} />
           ))}
 
           {phase === 'running' && (

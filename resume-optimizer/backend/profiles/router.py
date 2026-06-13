@@ -98,12 +98,17 @@ async def delete_profile(
     await db.commit()
 
 
+_MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
 @profile_ops.post("/parse")
 async def parse_profile(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
 ) -> dict:
     contents = await file.read()
+    if len(contents) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File too large. Maximum upload size is 10 MB.")
     raw_text = _extract_file_text(contents, file.filename or "")
     result = await _parse_sections(raw_text)
     result["raw_text"] = raw_text

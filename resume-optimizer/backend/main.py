@@ -190,9 +190,14 @@ class LoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if request.url.path == "/health":
             return await call_next(request)
-        request_id = str(uuid.uuid4())
+        from observability.trace import _trace_id
+        request_id = request.headers.get("X-Trace-ID") or str(uuid.uuid4())
+        token = _trace_id.set(request_id)
         start = time.perf_counter()
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        finally:
+            _trace_id.reset(token)
         latency_ms = round((time.perf_counter() - start) * 1000, 1)
         _logger.info(
             "request",
@@ -205,6 +210,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             },
         )
         response.headers["X-Request-ID"] = request_id
+        response.headers["X-Trace-ID"] = request_id
         return response
 
 

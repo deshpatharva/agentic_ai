@@ -1,6 +1,7 @@
+import { Link } from 'react-router-dom';
 import { clsx } from 'clsx';
 
-export default function ChatMessage({ role, content, isError = false }) {
+export default function ChatMessage({ role, content, isError = false, action = null }) {
   const isUser = role === 'user';
 
   if (isUser) {
@@ -31,6 +32,16 @@ export default function ChatMessage({ role, content, isError = false }) {
         style={{ whiteSpace: 'pre-wrap' }}
       >
         {content}
+        {action && (
+          <div className="mt-2">
+            <Link
+              to={action.href}
+              className="inline-block text-xs font-medium text-primary underline underline-offset-2"
+            >
+              {action.label} →
+            </Link>
+          </div>
+        )}
       </div>
     </div>
   );
