@@ -2,7 +2,7 @@
 
 **Engagement:** two-stage designer-led revamp · **Dates:** 2026-06-11 → 2026-06-12
 **Detail documents:** [stage-a-phase0-ux-audit.md](stage-a-phase0-ux-audit.md) (full Stage A log) · [stage-b-phase0-inventory.md](stage-b-phase0-inventory.md) (backend inventory + implementation record)
-**State:** all work is uncommitted in the working tree, awaiting review.
+**State:** committed on `feature/architect_revamp` in grouped commits (admin UI · frontend Stage A · backend · tests · docs · P2 removal); not pushed.
 
 ---
 
@@ -62,6 +62,10 @@ Exactly **one**: read-only `GET /admin/pipeline-runs` + `GET /admin/pipeline-run
 
 **P3:** filter-aware pagination in job matches (R1), working download fallback via PipelineJob (R2), LRU-bounded result cache (R3), robust LLM-JSON recovery in profile matching with clean 502s (R4), per-run token persistence — migration 0014 + admin Runs "Tokens" column (R5), and no more internal-error leakage in API details (R6). Seven new regression tests cover all of it.
 
+## Addendum — P2 dead-code removal (approved & implemented 2026-06-12)
+
+The endpoints orphaned by the Stage A frontend (`/upload`, `/analyze-jd`, `/generate-doc`), the consumer-less `/dashboard/match-analytics`, and the never-called scorer helper (whose removal also drops scikit-learn and a duplicate spaCy model load — faster cold start, less memory) are gone, along with their 11 orphaned tests. Suite green at **194/194**.
+
 ## Not done (explicitly unapproved — awaiting sign-off if ever wanted)
 
-Stage B inventory groups **P2** (dead endpoint/code removal incl. orphaned `/upload`, `/analyze-jd`, `/generate-doc`) and **P4** (LLM-JSON parser consolidation). Each carries a written benefit estimate in the inventory doc.
+Stage B inventory group **P4** (LLM-JSON parser consolidation) — benefit estimate in the inventory doc.
