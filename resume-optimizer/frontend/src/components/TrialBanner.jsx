@@ -1,5 +1,6 @@
 import useAuthStore from '../store/authStore';
 
+/* Lives inside the always-ink sidebar, so colors are fixed like the sidebar's. */
 export default function TrialBanner() {
   const { user } = useAuthStore();
   if (!user?.trial_expires_at) return null;
@@ -9,7 +10,7 @@ export default function TrialBanner() {
   if (daysLeft <= 0) return null;
 
   return (
-    <div className="mx-3 mb-2 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 text-xs text-amber-400">
+    <div className="mb-3 bg-[#D9A03F]/10 border border-[#D9A03F]/30 rounded-lg px-3 py-2 text-xs text-[#D9A03F]">
       <span className="font-semibold">Pro Trial</span>
       {' — '}{daysLeft} day{daysLeft !== 1 ? 's' : ''} left
     </div>

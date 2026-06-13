@@ -28,7 +28,10 @@ client.interceptors.response.use(
       return client(config);
     }
 
-    if (err.response?.status === 401) {
+    // 401 on auth endpoints means bad credentials — let the form show the
+    // error instead of redirect-reloading (which would eat the toast).
+    const isAuthAttempt = /\/auth\/(login|register)$/.test(config?.url || '');
+    if (err.response?.status === 401 && !isAuthAttempt) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       window.location.href = '/login';

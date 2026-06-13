@@ -22,6 +22,7 @@ export default function SkillChips({ skills, onChange }) {
           {skill}
           <button
             onClick={() => onChange(skills.filter((s) => s !== skill))}
+            aria-label={`Remove ${skill}`}
             className="hover:text-red-500 transition-colors"
           >
             <X className="w-3 h-3" />
@@ -30,7 +31,7 @@ export default function SkillChips({ skills, onChange }) {
       ))}
       {adding ? (
         <input
-          className="text-xs bg-white border border-primary/40 rounded-full px-2.5 py-1 text-gray-900 w-28 focus:outline-none focus:border-primary"
+          className="text-xs bg-card border border-primary/40 rounded-full px-2.5 py-1 text-ink w-28 focus:outline-none focus:border-primary"
           placeholder="Add skill…"
           value={newSkill}
           onChange={(e) => setNewSkill(e.target.value)}
@@ -44,7 +45,7 @@ export default function SkillChips({ skills, onChange }) {
       ) : (
         <button
           onClick={() => setAdding(true)}
-          className="flex items-center gap-1 text-xs text-gray-500 hover:text-primary border border-dashed border-gray-300 hover:border-primary/50 px-2.5 py-1 rounded-full transition-colors"
+          className="flex items-center gap-1 text-xs text-ink-mute hover:text-primary border border-dashed border-line hover:border-primary/50 px-2.5 py-1 rounded-full transition-colors"
         >
           <Plus className="w-3 h-3" /> Add skill
         </button>

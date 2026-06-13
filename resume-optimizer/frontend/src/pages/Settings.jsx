@@ -1,13 +1,14 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
-import Sidebar from '../components/layout/Sidebar';
+import AppShell from '../components/layout/AppShell';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
 import QuotaBar from '../components/ui/QuotaBar';
 import client from '../api/client';
 import useAuthStore from '../store/authStore';
+
+const inputCls = 'w-full bg-card text-ink border border-line rounded-lg px-4 py-2.5 text-sm placeholder:text-ink-faint focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all';
 
 export default function Settings() {
   const { user, logout, fetchMe } = useAuthStore();
@@ -17,6 +18,13 @@ export default function Settings() {
   const [promoLoading, setPromoLoading] = useState(false);
   const [promoMessage, setPromoMessage] = useState('');
   const [promoError, setPromoError] = useState('');
+  const [quota, setQuota] = useState(null);
+
+  useEffect(() => {
+    client.get('/dashboard/summary')
+      .then(r => setQuota({ used: r.data.today?.runs || 0, total: r.data.limits?.daily_uploads || 2 }))
+      .catch(() => {});
+  }, []);
 
   const save = async (e) => {
     e.preventDefault();
@@ -50,24 +58,23 @@ export default function Settings() {
   };
 
   return (
-    <div className="flex h-screen bg-surface overflow-hidden page-fade">
-      <Sidebar />
-      <main className="flex-1 overflow-y-auto">
-        <div className="max-w-2xl mx-auto px-8 py-8 space-y-6">
-          <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
+    <AppShell>
+      <div className="page-fade">
+        <div className="max-w-2xl mx-auto px-4 sm:px-8 py-8 space-y-6">
+          <h1 className="font-display text-2xl font-semibold text-ink">Settings</h1>
 
           {/* Profile */}
           <Card header="Profile">
             <form onSubmit={save} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">Full name</label>
+                <label className="block text-sm font-medium text-ink-mute mb-1.5">Full name</label>
                 <input value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))}
-                  className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all duration-150 focus:shadow-[0_0_0_3px_rgba(127,119,221,.15)]" />
+                  className={inputCls} />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">Email</label>
+                <label className="block text-sm font-medium text-ink-mute mb-1.5">Email</label>
                 <input value={form.email} type="email" onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                  className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all duration-150 focus:shadow-[0_0_0_3px_rgba(127,119,221,.15)]" />
+                  className={inputCls} />
               </div>
               <Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</Button>
             </form>
@@ -77,14 +84,11 @@ export default function Settings() {
           <Card header="Plan & Billing">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <div className="font-semibold text-gray-800 mb-1">Current plan</div>
+                <div className="font-semibold text-ink mb-1">Current plan</div>
                 <Badge variant={user?.plan || 'free'} className="text-sm px-3 py-1">{user?.plan || 'free'}</Badge>
               </div>
-              {user?.plan === 'free' && (
-                <Button size="sm">Upgrade to Pro — $9/mo</Button>
-              )}
             </div>
-            <QuotaBar used={user?.limits?.daily_uploads || 0} total={user?.limits?.daily_uploads || 2} label="Daily uploads quota" />
+            <QuotaBar used={quota?.used ?? 0} total={quota?.total ?? 2} label="Daily uploads quota" />
           </Card>
 
           {/* Redeem Promo Code */}
@@ -96,7 +100,7 @@ export default function Settings() {
                   placeholder="Enter promo code"
                   value={promoCode}
                   onChange={(e) => setPromoCode(e.target.value)}
-                  className="flex-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all duration-150 focus:shadow-[0_0_0_3px_rgba(127,119,221,.15)]"
+                  className={`flex-1 ${inputCls}`}
                   disabled={promoLoading}
                 />
                 <Button
@@ -107,18 +111,13 @@ export default function Settings() {
                   {promoLoading ? 'Redeeming...' : 'Redeem'}
                 </Button>
               </div>
-              {promoMessage && <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-800">{promoMessage}</div>}
-              {promoError && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-800">{promoError}</div>}
+              {promoMessage && <div className="p-3 bg-accent-soft border border-primary/30 rounded-lg text-sm text-primary">{promoMessage}</div>}
+              {promoError && <div className="p-3 bg-err-soft border border-err/30 rounded-lg text-sm text-err">{promoError}</div>}
             </div>
           </Card>
 
-          {/* Danger zone */}
-          <Card header="Danger zone">
-            <p className="text-sm text-gray-500 mb-4">Permanently delete your account and all data. This cannot be undone.</p>
-            <Button variant="danger" size="sm" onClick={() => toast.error('Account deletion coming soon')}>Delete account</Button>
-          </Card>
         </div>
-      </main>
-    </div>
+      </div>
+    </AppShell>
   );
 }

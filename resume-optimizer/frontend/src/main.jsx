@@ -1,61 +1,86 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import './index.css';
 
-import Landing      from './pages/Landing';
-import Login        from './pages/Login';
-import Register     from './pages/Register';
-import AppPage      from './pages/AppPage';
-import Dashboard    from './pages/Dashboard';
-import JobMatches   from './pages/JobMatches';
-import Settings     from './pages/Settings';
 import ProtectedRoute from './components/ProtectedRoute';
 import AdminRoute from './components/AdminRoute';
-import AdminLayout from './pages/admin/AdminLayout';
-import AdminDashboard from './pages/admin/AdminDashboard';
-import UserList from './pages/admin/UserList';
-import UserDetail from './pages/admin/UserDetail';
-import AdminAnalytics from './pages/AdminAnalytics';
-import PromoCodes from './pages/admin/PromoCodes';
-import Resumes from './pages/Resumes';
-import ProfilesPage from './pages/ProfilesPage';
-import ProfileNewPage from './pages/ProfileNewPage';
-import ChatOptimizePage from './pages/ChatOptimizePage';
+
+// Route-level code splitting: each page loads on demand, keeping the
+// landing 3D bundle and admin charts out of the initial chunk.
+const Landing          = lazy(() => import('./pages/Landing'));
+const Login            = lazy(() => import('./pages/Login'));
+const Register         = lazy(() => import('./pages/Register'));
+const Dashboard        = lazy(() => import('./pages/Dashboard'));
+const JobMatches       = lazy(() => import('./pages/JobMatches'));
+const Settings         = lazy(() => import('./pages/Settings'));
+const Resumes          = lazy(() => import('./pages/Resumes'));
+const ProfilesPage     = lazy(() => import('./pages/ProfilesPage'));
+const ProfileNewPage   = lazy(() => import('./pages/ProfileNewPage'));
+const ChatOptimizePage = lazy(() => import('./pages/ChatOptimizePage'));
+const NotFound         = lazy(() => import('./pages/NotFound'));
+const AdminLayout      = lazy(() => import('./pages/admin/AdminLayout'));
+const AdminDashboard   = lazy(() => import('./pages/admin/AdminDashboard'));
+const PipelineRuns     = lazy(() => import('./pages/admin/PipelineRuns'));
+const UserList         = lazy(() => import('./pages/admin/UserList'));
+const UserDetail       = lazy(() => import('./pages/admin/UserDetail'));
+const AdminAnalytics   = lazy(() => import('./pages/admin/Analytics'));
+const PromoCodes       = lazy(() => import('./pages/admin/PromoCodes'));
+
+function PageFallback() {
+  return (
+    <div className="min-h-screen bg-surface flex items-center justify-center">
+      <span className="text-ink-faint text-sm">Loading…</span>
+    </div>
+  );
+}
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter>
-      <Toaster position="top-right" toastOptions={{ style: { borderRadius: '12px', fontFamily: 'Inter, sans-serif' } }} />
-      <Routes>
-        <Route path="/"         element={<Landing />} />
-        <Route path="/login"    element={<Login />} />
-        <Route path="/register" element={<Register />} />
-        <Route path="/app"      element={<Navigate to="/optimize" />} />
-        <Route path="/optimize" element={<ProtectedRoute><ChatOptimizePage /></ProtectedRoute>} />
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          style: {
+            borderRadius: '10px',
+            fontFamily: 'Archivo, sans-serif',
+            background: 'rgb(var(--c-surface))',
+            color: 'rgb(var(--c-ink))',
+            border: '1px solid rgb(var(--c-line))',
+          },
+        }}
+      />
+      <Suspense fallback={<PageFallback />}>
+        <Routes>
+          <Route path="/"         element={<Landing />} />
+          <Route path="/login"    element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          <Route path="/app"      element={<Navigate to="/optimize" />} />
+          <Route path="/optimize" element={<ProtectedRoute><ChatOptimizePage /></ProtectedRoute>} />
 
-        <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-        <Route path="/dashboard/matches"  element={<ProtectedRoute><JobMatches /></ProtectedRoute>} />
-        <Route path="/dashboard/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
-        <Route path="/dashboard/resumes"  element={<ProtectedRoute><Resumes /></ProtectedRoute>} />
-        <Route path="/profiles"     element={<ProtectedRoute><ProfilesPage /></ProtectedRoute>} />
-        <Route path="/profiles/new" element={<ProtectedRoute><ProfileNewPage /></ProtectedRoute>} />
-        <Route path="/dashboard/usage"    element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+          <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+          <Route path="/dashboard/matches"  element={<ProtectedRoute><JobMatches /></ProtectedRoute>} />
+          <Route path="/dashboard/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+          <Route path="/dashboard/resumes"  element={<ProtectedRoute><Resumes /></ProtectedRoute>} />
+          <Route path="/profiles"     element={<ProtectedRoute><ProfilesPage /></ProtectedRoute>} />
+          <Route path="/profiles/new" element={<ProtectedRoute><ProfileNewPage /></ProtectedRoute>} />
 
-        <Route
-          path="/admin"
-          element={<AdminRoute><AdminLayout /></AdminRoute>}
-        >
-          <Route index element={<AdminDashboard />} />
-          <Route path="users" element={<UserList />} />
-          <Route path="users/:id" element={<UserDetail />} />
-          <Route path="promo-codes" element={<PromoCodes />} />
-          <Route path="analytics" element={<AdminAnalytics />} />
-        </Route>
+          <Route
+            path="/admin"
+            element={<AdminRoute><AdminLayout /></AdminRoute>}
+          >
+            <Route index element={<AdminDashboard />} />
+            <Route path="runs" element={<PipelineRuns />} />
+            <Route path="users" element={<UserList />} />
+            <Route path="users/:id" element={<UserDetail />} />
+            <Route path="promo-codes" element={<PromoCodes />} />
+            <Route path="analytics" element={<AdminAnalytics />} />
+          </Route>
 
-        <Route path="*" element={<Navigate to="/" />} />
-      </Routes>
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </Suspense>
     </BrowserRouter>
   </React.StrictMode>
 );

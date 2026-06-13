@@ -1,11 +1,12 @@
 import { Link } from 'react-router-dom';
 import { Zap, Target, Briefcase, ArrowRight, Check } from 'lucide-react';
 import TopNav from '../components/layout/TopNav';
+import HeroVisual from '../components/HeroVisual';
 
 const features = [
-  { icon: Zap,      color: 'text-primary bg-purple-50',  title: 'AI Rewriter',    desc: 'Gemini 2.5 Flash rewrites your resume to align with every JD keyword.' },
-  { icon: Target,   color: 'text-teal bg-teal-50',       title: 'Smart Scoring',  desc: '4 scorers: ATS match, impact, skills gap, and readability — all in one call.' },
-  { icon: Briefcase,color: 'text-amber bg-amber-50',     title: 'Job Matching',   desc: 'Nightly scrape of matched roles from Adzuna, RemoteOK, and The Muse.' },
+  { icon: Zap,      title: 'AI Rewriter',    desc: 'AI rewrites your resume to align with every JD keyword.' },
+  { icon: Target,   title: 'Smart Scoring',  desc: '4 scorers: ATS match, impact, skills gap, and readability — all in one call.' },
+  { icon: Briefcase,title: 'Job Matching',   desc: 'Nightly scrape of matched roles from Adzuna, RemoteOK, and The Muse.' },
 ];
 
 const plans = [
@@ -26,46 +27,51 @@ export default function Landing() {
       <TopNav />
 
       {/* Hero */}
-      <section className="max-w-5xl mx-auto px-6 py-24 text-center">
-        <div className="inline-flex items-center gap-2 bg-purple-50 text-primary px-4 py-1.5 rounded-full text-sm font-medium mb-6">
-          <Zap className="w-3.5 h-3.5" /> Powered by Gemini 2.5 + Claude
+      <section className="max-w-6xl mx-auto px-6 pt-20 pb-16 grid grid-cols-1 lg:grid-cols-2 gap-10 items-center">
+        <div className="text-center lg:text-left">
+          <div className="reveal reveal-1 inline-flex items-center gap-2 bg-accent-soft text-primary px-4 py-1.5 rounded-full text-sm font-medium mb-6">
+            <Zap className="w-3.5 h-3.5" /> Powered by Gemini · Groq · Anthropic
+          </div>
+          <h1 className="reveal reveal-2 font-display text-5xl lg:text-6xl font-semibold text-ink leading-[1.1] mb-6">
+            Your resume,<br /><span className="text-primary italic">set in type that gets you read.</span>
+          </h1>
+          <p className="reveal reveal-3 text-xl text-ink-mute mb-10 max-w-xl mx-auto lg:mx-0">
+            Upload once. Score on 4 dimensions. Iterate until perfect. Get more interviews.
+          </p>
+          <div className="reveal reveal-4 flex items-center justify-center lg:justify-start gap-4">
+            <Link to="/register" className="inline-flex items-center gap-2 px-8 py-3.5 rounded-lg font-semibold text-lg text-white dark:text-ink bg-primary hover:bg-primary-dark shadow-primary transition-all active:scale-95">
+              Get started free <ArrowRight className="w-5 h-5" />
+            </Link>
+            <Link to="/login" className="text-ink-mute hover:text-ink px-6 py-3.5 font-medium transition-colors">
+              Sign in →
+            </Link>
+          </div>
         </div>
-        <h1 className="text-5xl lg:text-6xl font-bold text-gray-900 leading-tight mb-6">
-          Your resume,<br /><span className="text-primary">optimized by AI</span>
-        </h1>
-        <p className="text-xl text-gray-500 mb-10 max-w-2xl mx-auto">
-          Upload once. Score on 4 dimensions. Iterate until perfect. Get more interviews.
-        </p>
-        <div className="flex items-center justify-center gap-4">
-          <Link to="/register" className="inline-flex items-center gap-2 px-8 py-3.5 rounded-xl font-semibold text-lg text-white shadow-primary transition-all active:scale-95"
-            style={{ background: 'linear-gradient(135deg,#8b84e0,#7F77DD)' }}>
-            Get started free <ArrowRight className="w-5 h-5" />
-          </Link>
-          <Link to="/login" className="text-gray-600 hover:text-gray-900 px-6 py-3.5 font-medium transition-colors">
-            Sign in →
-          </Link>
+        <div className="reveal reveal-3 h-[380px] lg:h-[460px] hidden sm:block">
+          <HeroVisual />
         </div>
+      </section>
 
+      <section className="max-w-5xl mx-auto px-6 pb-8">
         {/* How it works */}
-        <div className="mt-14 bg-white rounded-2xl shadow-card border border-[#ebebeb] px-8 py-6 max-w-lg mx-auto">
-          <p className="text-[10px] font-bold tracking-widest text-gray-400 uppercase mb-5">How it works</p>
+        <div className="bg-card rounded-card shadow-card border border-line px-8 py-6 max-w-lg mx-auto">
+          <p className="text-[10px] font-bold tracking-widest text-ink-faint uppercase mb-5">How it works</p>
           <div className="flex items-center justify-between">
             {steps.map((s, i) => (
               <div key={s.n} className="flex items-center flex-1">
                 <div className="flex flex-col items-center flex-1">
                   <div className={`w-9 h-9 rounded-full flex items-center justify-center mb-2 font-bold text-sm border-2 ${
                     s.active
-                      ? 'border-primary bg-primary text-white'
-                      : 'border-primary text-primary bg-white'
+                      ? 'border-primary bg-primary text-white dark:text-ink'
+                      : 'border-primary text-primary bg-card'
                   }`}>
                     {s.n}
                   </div>
-                  <div className="text-xs font-semibold text-gray-800">{s.label}</div>
-                  <div className="text-[10px] text-gray-400 mt-0.5 text-center">{s.desc}</div>
+                  <div className="text-xs font-semibold text-ink">{s.label}</div>
+                  <div className="text-[10px] text-ink-faint mt-0.5 text-center">{s.desc}</div>
                 </div>
                 {i < steps.length - 1 && (
-                  <div className="h-px flex-1 mx-2 mb-6"
-                    style={{ background: 'linear-gradient(90deg,#7F77DD,#a78bfa)', opacity: 0.4 }} />
+                  <div className="h-px flex-1 mx-2 mb-6 bg-primary/40" />
                 )}
               </div>
             ))}
@@ -76,43 +82,43 @@ export default function Landing() {
       {/* Features */}
       <section className="max-w-5xl mx-auto px-6 pb-24">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {features.map(({ icon: Icon, color, title, desc }) => (
-            <div key={title} className="bg-white rounded-2xl p-6 shadow-card border border-[#ebebeb] hover:-translate-y-0.5 hover:shadow-lifted transition-all duration-200">
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center mb-4 ${color}`}>
+          {features.map(({ icon: Icon, title, desc }) => (
+            <div key={title} className="bg-card rounded-card p-6 shadow-card border border-line hover:-translate-y-0.5 hover:shadow-lifted transition-all duration-200">
+              <div className="w-10 h-10 rounded-lg flex items-center justify-center mb-4 bg-accent-soft text-primary">
                 <Icon className="w-5 h-5" />
               </div>
-              <h3 className="font-semibold text-gray-900 mb-2">{title}</h3>
-              <p className="text-gray-500 text-sm leading-relaxed">{desc}</p>
+              <h3 className="font-semibold text-ink mb-2">{title}</h3>
+              <p className="text-ink-mute text-sm leading-relaxed">{desc}</p>
             </div>
           ))}
         </div>
       </section>
 
-      {/* Pricing */}
-      <section className="bg-gray-900 py-24">
+      {/* Pricing — fixed ink band in both themes */}
+      <section className="bg-[#1E1A15] py-24">
         <div className="max-w-5xl mx-auto px-6">
-          <h2 className="text-3xl font-bold text-white text-center mb-4">Simple, transparent pricing</h2>
-          <p className="text-gray-400 text-center mb-12">Start free. Upgrade when you need more.</p>
+          <h2 className="font-display text-3xl font-semibold text-[#EDE6DA] text-center mb-4">Simple, transparent pricing</h2>
+          <p className="text-[#B2A99B] text-center mb-12">Start free. Upgrade when you need more.</p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
             {plans.map(({ name, price, period, features, highlight }) => (
               <div key={name} className="flex flex-col">
                 <div className="h-7 flex items-center justify-center mb-1">
-                  {highlight && <span className="bg-amber-400 text-gray-900 text-xs font-bold px-3 py-1 rounded-full whitespace-nowrap">Most popular</span>}
+                  {highlight && <span className="bg-[#D9A03F] text-[#1E1A15] text-xs font-bold px-3 py-1 rounded-full whitespace-nowrap">Most popular</span>}
                 </div>
-                <div className={`rounded-2xl p-8 ${highlight ? 'bg-primary ring-2 ring-primary/50 text-white' : 'bg-gray-800 text-gray-200'}`}>
+                <div className={`rounded-card p-8 ${highlight ? 'bg-[#1A6B52] ring-2 ring-[#4DB892]/50 text-[#F2EFE6]' : 'bg-[#29231C] text-[#D9D2C5]'}`}>
                   <div className="font-semibold text-lg mb-1">{name}</div>
                   <div className="flex items-end gap-1 mb-6">
-                    <span className="text-4xl font-bold">{price}</span>
-                    <span className={`text-sm mb-1 ${highlight ? 'text-purple-200' : 'text-gray-400'}`}>{period}</span>
+                    <span className="font-display text-4xl font-semibold">{price}</span>
+                    <span className={`text-sm mb-1 ${highlight ? 'text-[#CFE8DD]' : 'text-[#7E766A]'}`}>{period}</span>
                   </div>
                   <ul className="space-y-3 mb-8">
                     {features.map(f => (
                       <li key={f} className="flex items-center gap-2 text-sm">
-                        <Check className={`w-4 h-4 shrink-0 ${highlight ? 'text-white' : 'text-teal'}`} />{f}
+                        <Check className={`w-4 h-4 shrink-0 ${highlight ? 'text-[#F2EFE6]' : 'text-[#4DB892]'}`} />{f}
                       </li>
                     ))}
                   </ul>
-                  <Link to="/register" className={`block text-center py-2.5 rounded-xl font-medium text-sm transition-colors ${highlight ? 'bg-white text-primary hover:bg-purple-50' : 'bg-gray-700 hover:bg-gray-600 text-white'}`}>
+                  <Link to="/register" className={`block text-center py-2.5 rounded-lg font-medium text-sm transition-colors ${highlight ? 'bg-[#F2EFE6] text-[#1A6B52] hover:bg-white' : 'bg-[#3C342A] hover:bg-[#4a4034] text-[#EDE6DA]'}`}>
                     Get started
                   </Link>
                 </div>

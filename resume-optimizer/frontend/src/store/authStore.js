@@ -12,9 +12,15 @@ const useAuthStore = create((set) => ({
   },
 
   logout: () => {
+    // Clear locally first, then revoke server-side (token blocklist) with the
+    // captured token — fire and forget.
+    const token = localStorage.getItem('token');
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     set({ token: null, user: null });
+    if (token) {
+      client.post('/auth/logout', null, { headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
+    }
   },
 
   fetchMe: async () => {

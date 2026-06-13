@@ -4,6 +4,7 @@ import { ArrowLeft, UploadCloud, FileText, Loader2, AlertCircle } from 'lucide-r
 import Button from '../components/ui/Button';
 import ProfileEditor from '../components/ProfileEditor';
 import InterviewChat from '../components/InterviewChat';
+import TiltCard from '../components/TiltCard';
 import useProfileStore from '../store/profileStore';
 import client from '../api/client';
 
@@ -14,12 +15,13 @@ function UploadZone({ onFileSelect, file, dragActive, onDragOver, onDragLeave, o
   const inputRef = useRef(null);
 
   return (
+    <TiltCard lifted={dragActive}>
     <div
       className={[
-        'relative flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed px-8 py-12 transition-colors cursor-pointer select-none',
+        'relative flex flex-col items-center justify-center gap-3 rounded-card border-2 border-dashed px-8 py-12 transition-colors cursor-pointer select-none',
         dragActive
-          ? 'border-primary/60 bg-primary/5'
-          : 'border-gray-200 hover:border-primary/40 hover:bg-gray-50',
+          ? 'border-primary/60 bg-primary/5 shadow-lifted'
+          : 'border-line hover:border-primary/40 hover:bg-surface-2',
       ].join(' ')}
       onClick={() => inputRef.current?.click()}
       onDragOver={onDragOver}
@@ -40,19 +42,20 @@ function UploadZone({ onFileSelect, file, dragActive, onDragOver, onDragLeave, o
       {file ? (
         <>
           <FileText className="h-10 w-10 text-primary" />
-          <span className="text-sm font-medium text-gray-900">{file.name}</span>
-          <span className="text-xs text-gray-500">Click to change file</span>
+          <span className="text-sm font-medium text-ink">{file.name}</span>
+          <span className="text-xs text-ink-mute">Click to change file</span>
         </>
       ) : (
         <>
-          <UploadCloud className="h-10 w-10 text-gray-400" />
-          <p className="text-sm font-medium text-gray-700">
+          <UploadCloud className="h-10 w-10 text-ink-faint" />
+          <p className="text-sm font-medium text-ink">
             Drag &amp; drop your resume here
           </p>
-          <p className="text-xs text-gray-500">PDF or DOCX · click to browse</p>
+          <p className="text-xs text-ink-mute">PDF or DOCX · click to browse</p>
         </>
       )}
     </div>
+    </TiltCard>
   );
 }
 
@@ -165,18 +168,18 @@ export default function ProfileNewPage() {
       <div className="w-full max-w-2xl">
         <Link
           to="/profiles"
-          className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors mb-6 group"
+          className="inline-flex items-center gap-1.5 text-sm text-ink-mute hover:text-ink transition-colors mb-6 group"
         >
           <ArrowLeft className="h-4 w-4 group-hover:-translate-x-0.5 transition-transform" />
           Back to Profiles
         </Link>
 
-        <div className="bg-white border border-gray-200 shadow-card rounded-xl p-8">
+        <div className="bg-card border border-line shadow-card rounded-card p-8">
           {view === 'upload' && (
             <>
               <div className="mb-6">
-                <h1 className="text-2xl font-bold text-gray-900">Create Profile</h1>
-                <p className="mt-1 text-sm text-gray-500">
+                <h1 className="font-display text-2xl font-semibold text-ink">Create Profile</h1>
+                <p className="mt-1 text-sm text-ink-mute">
                   Upload your resume to get started
                 </p>
               </div>
@@ -191,7 +194,7 @@ export default function ProfileNewPage() {
               />
 
               {error && (
-                <div className="mt-4 flex items-start gap-2 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+                <div className="mt-4 flex items-start gap-2 rounded-lg bg-err-soft border border-err/30 px-4 py-3 text-sm text-err">
                   <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
                   <span>{error}</span>
                 </div>
@@ -218,7 +221,7 @@ export default function ProfileNewPage() {
                 <button
                   type="button"
                   onClick={handleBuildFromScratch}
-                  className="text-sm text-gray-500 hover:text-primary transition-colors underline underline-offset-2 self-center"
+                  className="text-sm text-ink-mute hover:text-primary transition-colors underline underline-offset-2 self-center"
                 >
                   Build with AI Interview
                 </button>
@@ -229,8 +232,8 @@ export default function ProfileNewPage() {
           {view === 'interview' && (
             <>
               <div className="mb-6">
-                <h1 className="text-2xl font-bold text-gray-900">Create Profile</h1>
-                <p className="mt-1 text-sm text-gray-500">
+                <h1 className="font-display text-2xl font-semibold text-ink">Create Profile</h1>
+                <p className="mt-1 text-sm text-ink-mute">
                   Answer a few questions and we'll build your profile
                 </p>
               </div>
@@ -254,11 +257,11 @@ export default function ProfileNewPage() {
           {view === 'editor' && (
             <>
               <div className="mb-6">
-                <h1 className="text-2xl font-bold text-gray-900">Create Profile</h1>
+                <h1 className="font-display text-2xl font-semibold text-ink">Create Profile</h1>
               </div>
 
               {error && (
-                <div className="mb-4 flex items-start gap-2 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+                <div className="mb-4 flex items-start gap-2 rounded-lg bg-err-soft border border-err/30 px-4 py-3 text-sm text-err">
                   <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
                   <span>{error}</span>
                 </div>

@@ -1,15 +1,15 @@
 import { clsx } from 'clsx';
 
 const styles = {
-  free:       'bg-gray-100 text-gray-600',
-  pro:        'bg-violet-100 text-violet-700',
-  enterprise: 'bg-amber-100 text-amber-700',
-  admin:      'bg-rose-100 text-rose-700',
-  green:      'bg-green-100 text-green-700',
-  amber:      'bg-amber-100 text-amber-700',
-  red:        'bg-red-100 text-red-700',
-  blue:       'bg-blue-100 text-blue-700',
-  teal:       'bg-teal-100 text-teal-700',
+  free:       'bg-surface-2 text-ink-mute',
+  pro:        'bg-accent-soft text-primary',
+  enterprise: 'bg-hilite-soft text-hilite',
+  admin:      'bg-err-soft text-err',
+  green:      'bg-accent-soft text-primary',
+  amber:      'bg-hilite-soft text-hilite',
+  red:        'bg-err-soft text-err',
+  blue:       'bg-accent-soft text-primary',
+  teal:       'bg-accent-soft text-primary',
 };
 
 export default function Badge({ variant = 'free', children, className }) {
