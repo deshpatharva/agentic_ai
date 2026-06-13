@@ -13,6 +13,7 @@ Prod: set DELTA_STORAGE_PATH=s3://your-bucket/delta/
 import os
 import threading
 import time as _time
+from typing import Optional
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -157,38 +158,43 @@ def write_daily_usage(record: dict) -> None:
         )
 
 
-def write_job_match(record: dict) -> None:
-    """
-    Append a scraped job match to the job_matches Delta table.
+def _match_row(record: dict) -> dict:
+    scraped_at = record.get("scraped_at", datetime.now(timezone.utc).isoformat())
+    if isinstance(scraped_at, datetime):
+        scraped_at_str = scraped_at.isoformat()
+        dt = scraped_at
+    else:
+        scraped_at_str = str(scraped_at)
+        dt = datetime.fromisoformat(scraped_at_str[:19])
 
-    Expected keys: user_id, resume_id, job_title, company, url, source,
-                   similarity_score, raw_description, scraped_at (ISO str or datetime),
-                   is_read (bool, default False)
+    return {
+        "user_id":          str(record["user_id"]),
+        "resume_id":        str(record.get("resume_id", "")),
+        "job_title":        str(record.get("job_title", "")),
+        "company":          str(record.get("company", "")) if record.get("company") else None,
+        "url":              str(record.get("url", "")) if record.get("url") else None,
+        "source":           str(record.get("source", "unknown")),
+        "similarity_score": float(record["similarity_score"]) if record.get("similarity_score") is not None else None,
+        "raw_description":  str(record.get("raw_description", "")) if record.get("raw_description") else None,
+        "scraped_at":       scraped_at_str,
+        "is_read":          bool(record.get("is_read", False)),
+        "year":             dt.year,
+        "month":            dt.month,
+    }
+
+
+def write_job_matches(records: list[dict]) -> None:
     """
+    Append scraped job matches to the job_matches Delta table in ONE transaction.
+
+    Per-record keys: user_id, resume_id, job_title, company, url, source,
+                     similarity_score, raw_description, scraped_at (ISO str or datetime),
+                     is_read (bool, default False)
+    """
+    if not records:
+        return
     with _matches_lock:
-        scraped_at = record.get("scraped_at", datetime.now(timezone.utc).isoformat())
-        if isinstance(scraped_at, datetime):
-            scraped_at_str = scraped_at.isoformat()
-            dt = scraped_at
-        else:
-            scraped_at_str = str(scraped_at)
-            dt = datetime.fromisoformat(scraped_at_str[:19])
-
-        row = {
-            "user_id":          str(record["user_id"]),
-            "resume_id":        str(record.get("resume_id", "")),
-            "job_title":        str(record.get("job_title", "")),
-            "company":          str(record.get("company", "")) if record.get("company") else None,
-            "url":              str(record.get("url", "")) if record.get("url") else None,
-            "source":           str(record.get("source", "unknown")),
-            "similarity_score": float(record["similarity_score"]) if record.get("similarity_score") is not None else None,
-            "raw_description":  str(record.get("raw_description", "")) if record.get("raw_description") else None,
-            "scraped_at":       scraped_at_str,
-            "is_read":          bool(record.get("is_read", False)),
-            "year":             dt.year,
-            "month":            dt.month,
-        }
-        df = pd.DataFrame([row])
+        df = pd.DataFrame([_match_row(r) for r in records])
         write_deltalake(
             _matches_path(),
             df,
@@ -197,6 +203,11 @@ def write_job_match(record: dict) -> None:
             mode="append",
             storage_options=_storage_options(),
         )
+
+
+def write_job_match(record: dict) -> None:
+    """Append a single job match (thin wrapper over the batch writer)."""
+    write_job_matches([record])
 
 
 # ── Readers ───────────────────────────────────────────────────────────────────
@@ -248,41 +259,105 @@ def read_usage_last_n_days(user_id: str, days: int = 30) -> pd.DataFrame:
     return agg
 
 
+def _match_filters_dnf(cutoff_iso: str, cutoff_dt: datetime, user_id: str) -> list:
+    """
+    Build DNF filters (OR of AND-lists) that include the year/month PARTITION
+    columns, so the Delta reader can prune files instead of scanning the whole
+    table (scraped_at/user_id alone are not partition columns).
+    """
+    now = datetime.now(timezone.utc)
+    base: list = [("scraped_at", ">=", cutoff_iso)]
+    if user_id:
+        base.append(("user_id", "=", user_id))
+
+    pairs = []
+    y, m = cutoff_dt.year, cutoff_dt.month
+    while (y, m) <= (now.year, now.month):
+        pairs.append((y, m))
+        m += 1
+        if m == 13:
+            y, m = y + 1, 1
+
+    return [
+        [("year", "=", y), ("month", "=", m)] + base
+        for y, m in pairs
+    ]
+
+
+# raw_description is excluded — it is by far the largest column and no API
+# consumer renders it (approved Stage B item B3: column pruning).
+_MATCH_READ_COLUMNS = [
+    "user_id", "resume_id", "job_title", "company", "url",
+    "source", "similarity_score", "scraped_at", "is_read",
+]
+
+
 def read_job_matches(
     user_id: str,
     days: int = 30,
     page: int = 1,
     per_page: int = 20,
+    source: Optional[str] = None,
+    min_score: Optional[float] = None,
 ) -> dict:
     """
     Return paginated job matches for user_id scraped in the last N days.
+    `source`/`min_score` filters are applied BEFORE pagination, so `total`
+    reflects the filtered count and page boundaries stay correct.
     Returns: {total, page, per_page, results: list[dict]}
     """
     path = _matches_path()
     if not _table_exists(path):
         return {"total": 0, "page": page, "per_page": per_page, "results": []}
 
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    cutoff_dt = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = cutoff_dt.isoformat()
     dt = DeltaTable(path, storage_options=_storage_options())
 
-    filters: list = [("scraped_at", ">=", cutoff)]
-    if user_id:
-        filters.append(("user_id", "=", user_id))
-
-    df = dt.to_pandas(filters=filters)
+    df = dt.to_pandas(
+        filters=_match_filters_dnf(cutoff, cutoff_dt, user_id),
+        columns=_MATCH_READ_COLUMNS,
+    )
 
     # Safety net for partial Delta pushdown
     df = df[df["scraped_at"] >= cutoff]
     if user_id:
         df = df[df["user_id"] == user_id]
+    if source:
+        df = df[df["source"] == source]
+    if min_score is not None:
+        df = df[df["similarity_score"].fillna(0) >= min_score]
     df = df.sort_values("scraped_at", ascending=False)
 
     total = len(df)
     start = (page - 1) * per_page
     page_df = df.iloc[start: start + per_page]
 
-    results = page_df.drop(columns=["year", "month"], errors="ignore").to_dict(orient="records")
+    results = page_df.to_dict(orient="records")
     return {"total": total, "page": page, "per_page": per_page, "results": results}
+
+
+def count_unread_matches(user_id: str, days: int = 30) -> int:
+    """
+    Count unread matches without materialising full rows — reads only the
+    columns needed for filtering. Used by /dashboard/summary.
+    """
+    path = _matches_path()
+    if not _table_exists(path):
+        return 0
+
+    cutoff_dt = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = cutoff_dt.isoformat()
+    dt = DeltaTable(path, storage_options=_storage_options())
+
+    df = dt.to_pandas(
+        filters=_match_filters_dnf(cutoff, cutoff_dt, user_id),
+        columns=["user_id", "scraped_at", "is_read"],
+    )
+    df = df[df["scraped_at"] >= cutoff]
+    if user_id:
+        df = df[df["user_id"] == user_id]
+    return int((~df["is_read"]).sum())
 
 
 # ── Maintenance ───────────────────────────────────────────────────────────────

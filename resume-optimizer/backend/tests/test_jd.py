@@ -33,14 +33,17 @@ async def _override_get_db():
         yield s
 
 
-app.dependency_overrides[get_db] = _override_get_db
 
 
 @pytest_asyncio.fixture(autouse=True, scope="module")
 async def setup_db():
+    # Scope the get_db override to THIS module — the app object is shared
+    # across test modules, so an import-time override leaks between files.
+    app.dependency_overrides[get_db] = _override_get_db
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
+    app.dependency_overrides.pop(get_db, None)
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
     await _engine.dispose()
@@ -152,3 +155,50 @@ async def test_run_pipeline_accepts_profile_id(client):
     })
     # 404 is fine — the job doesn't exist; we just verify no 422
     assert r.status_code != 422, f"profile_id field rejected: {r.text}"
+
+
+# ── Stage B P3 (R4): robust LLM-JSON parsing in profile match ────────────────
+
+@pytest.mark.asyncio
+async def test_profile_match_recovers_json_from_prose(client, monkeypatch):
+    """The scorer must recover a JSON array wrapped in prose instead of 500ing."""
+    import jd.router as jd_router
+
+    async def mock_complete(prompt, model, cached_prefix=None):
+        return {"text": (
+            "Sure! Here are the scores you asked for:\n"
+            '[{"profile_id": "PID", "label": "X", "match_pct": 88, "reason": "fits"}]\n'
+            "Let me know if you need anything else."
+        ), "input_tokens": 10, "output_tokens": 10, "cost_usd": 0.0}
+
+    monkeypatch.setattr(jd_router, "complete", mock_complete)
+
+    r = await client.post("/profiles", json={
+        "label": "Robust Parse Profile",
+        "sections": {"summary": "", "experience": [], "education": [], "skills": ["Python"]},
+    })
+    assert r.status_code == 201, r.text
+
+    r2 = await client.post("/profile/match", json={"jd_text": "Python role"})
+    assert r2.status_code == 200, r2.text
+    assert isinstance(r2.json(), list)
+
+
+@pytest.mark.asyncio
+async def test_profile_match_unparseable_returns_502(client, monkeypatch):
+    """Totally malformed LLM output → clean 502, not an unhandled 500."""
+    import jd.router as jd_router
+
+    async def mock_complete(prompt, model, cached_prefix=None):
+        return {"text": "no json here at all", "input_tokens": 10, "output_tokens": 10, "cost_usd": 0.0}
+
+    monkeypatch.setattr(jd_router, "complete", mock_complete)
+
+    r = await client.post("/profiles", json={
+        "label": "Broken Parse Profile",
+        "sections": {"summary": "", "experience": [], "education": [], "skills": ["Python"]},
+    })
+    assert r.status_code == 201, r.text
+
+    r2 = await client.post("/profile/match", json={"jd_text": "Python role"})
+    assert r2.status_code == 502, r2.text

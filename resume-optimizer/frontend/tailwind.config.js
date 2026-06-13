@@ -1,23 +1,44 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./index.html', './src/**/*.{js,jsx,ts,tsx}'],
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {
-        primary:        '#7F77DD',
-        'primary-dark': '#534AB7',
-        teal:           '#1D9E75',
-        amber:          '#BA7517',
-        surface:        '#FAFAF8',
-        muted:          '#5F5E5A',
+        // Manila & Ink semantic tokens — values live in src/index.css
+        surface:         'rgb(var(--c-bg) / <alpha-value>)',        // page background
+        card:            'rgb(var(--c-surface) / <alpha-value>)',   // raised surfaces
+        'surface-2':     'rgb(var(--c-surface-2) / <alpha-value>)', // subtle fills, hovers
+        ink:             'rgb(var(--c-ink) / <alpha-value>)',
+        'ink-mute':      'rgb(var(--c-ink-mute) / <alpha-value>)',
+        'ink-faint':     'rgb(var(--c-ink-faint) / <alpha-value>)',
+        line:            'rgb(var(--c-line) / <alpha-value>)',
+        primary:         'rgb(var(--c-accent) / <alpha-value>)',
+        'primary-dark':  'rgb(var(--c-accent-strong) / <alpha-value>)',
+        'accent-soft':   'rgb(var(--c-accent-soft) / <alpha-value>)',
+        hilite:          'rgb(var(--c-hilite) / <alpha-value>)',
+        'hilite-soft':   'rgb(var(--c-hilite-soft) / <alpha-value>)',
+        err:             'rgb(var(--c-err) / <alpha-value>)',
+        'err-soft':      'rgb(var(--c-err-soft) / <alpha-value>)',
+        // legacy aliases (pre-revamp class names still in use)
+        teal:            'rgb(var(--c-accent) / <alpha-value>)',
+        amber:           'rgb(var(--c-hilite) / <alpha-value>)',
+        muted:           'rgb(var(--c-ink-mute) / <alpha-value>)',
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
+        sans:    ['Archivo', 'system-ui', 'sans-serif'],
+        display: ['Fraunces', 'Georgia', 'serif'],
+        mono:    ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
+      },
+      borderRadius: {
+        // editorial: crisp corners, no pills on containers
+        DEFAULT: '8px',
+        card: '10px',
       },
       boxShadow: {
-        card:    '0 1px 3px rgba(0,0,0,.06), 0 4px 16px rgba(0,0,0,.04)',
-        lifted:  '0 4px 16px rgba(0,0,0,.10), 0 1px 4px rgba(0,0,0,.06)',
-        primary: '0 4px 12px rgba(127,119,221,.35)',
+        card:    'var(--shadow-card)',
+        lifted:  'var(--shadow-lifted)',
+        primary: 'var(--shadow-accent)',
       },
       transitionDuration: {
         DEFAULT: '150ms',

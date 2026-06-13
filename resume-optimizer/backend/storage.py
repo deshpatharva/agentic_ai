@@ -32,9 +32,18 @@ _LOCAL_OUTPUTS_DIR = Path(__file__).parent / "outputs"
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
+# BlobServiceClient is thread-safe and meant to be reused; constructing one per
+# call re-runs credential discovery/token negotiation on every request.
+_client_cache: dict = {}
+
+
 def _blob_service_client() -> BlobServiceClient:
-    account_url = f"https://{AZURE_STORAGE_ACCOUNT_NAME}.blob.core.windows.net"
-    return BlobServiceClient(account_url, credential=DefaultAzureCredential())
+    client = _client_cache.get("client")
+    if client is None:
+        account_url = f"https://{AZURE_STORAGE_ACCOUNT_NAME}.blob.core.windows.net"
+        client = BlobServiceClient(account_url, credential=DefaultAzureCredential())
+        _client_cache["client"] = client
+    return client
 
 
 # ── Public API ────────────────────────────────────────────────────────────────

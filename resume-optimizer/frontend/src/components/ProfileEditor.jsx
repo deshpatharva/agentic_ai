@@ -28,15 +28,15 @@ export default function ProfileEditor({ initialLabel = '', initialSections = {},
     onSave({ label, labelConfirmed, sections: { contact, summary, experience, education, skills } });
   };
 
-  const fieldClass = 'w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-gray-900 text-sm focus:border-primary focus:outline-none transition-colors';
-  const sectionLabel = 'block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2';
+  const fieldClass = 'w-full bg-card border border-line rounded-lg px-3 py-2 text-ink text-sm placeholder:text-ink-faint focus:border-primary focus:outline-none transition-colors';
+  const sectionLabel = 'block text-xs font-semibold text-ink-faint uppercase tracking-wider mb-2';
 
   return (
     <div className="space-y-6">
       {/* Contact */}
       <div>
         <label className={sectionLabel}>Contact</label>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <input className={fieldClass} placeholder="Full name"
             value={contact.full_name}
             onChange={(e) => updateContact({ full_name: e.target.value })} />
@@ -69,7 +69,7 @@ export default function ProfileEditor({ initialLabel = '', initialSections = {},
             placeholder="e.g. Senior Software Engineer"
           />
           {!labelConfirmed && (
-            <span className="shrink-0 text-[10px] bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full border border-amber-200">
+            <span className="shrink-0 text-[10px] bg-hilite-soft text-hilite px-2 py-0.5 rounded-full border border-hilite/30">
               AI suggested
             </span>
           )}
@@ -93,22 +93,22 @@ export default function ProfileEditor({ initialLabel = '', initialSections = {},
         <label className={sectionLabel}>Experience</label>
         <div className="space-y-3">
           {experience.map((exp, idx) => (
-            <div key={idx} className="bg-gray-50 border border-gray-200 rounded-xl p-4">
+            <div key={idx} className="bg-surface-2/60 border border-line rounded-card p-4">
               <div className="grid grid-cols-2 gap-3 mb-3">
                 <input
-                  className="bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-900 focus:border-primary focus:outline-none"
+                  className="bg-card border border-line rounded-lg px-2 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-primary focus:outline-none"
                   placeholder="Company"
                   value={exp.company}
                   onChange={(e) => updateExp(idx, { company: e.target.value })}
                 />
                 <input
-                  className="bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-900 focus:border-primary focus:outline-none"
+                  className="bg-card border border-line rounded-lg px-2 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-primary focus:outline-none"
                   placeholder="Title"
                   value={exp.title}
                   onChange={(e) => updateExp(idx, { title: e.target.value })}
                 />
                 <input
-                  className="col-span-2 bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-900 focus:border-primary focus:outline-none"
+                  className="col-span-2 bg-card border border-line rounded-lg px-2 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-primary focus:outline-none"
                   placeholder="Dates (e.g. 2020–2024)"
                   value={exp.dates}
                   onChange={(e) => updateExp(idx, { dates: e.target.value })}
@@ -130,7 +130,7 @@ export default function ProfileEditor({ initialLabel = '', initialSections = {},
               </div>
               <button
                 onClick={() => updateExp(idx, { bullets: [...exp.bullets, 'Click pencil to edit this bullet'] })}
-                className="mt-2 text-xs text-gray-400 hover:text-primary flex items-center gap-1 transition-colors"
+                className="mt-2 text-xs text-ink-faint hover:text-primary flex items-center gap-1 transition-colors"
               >
                 <Plus className="w-3 h-3" /> Add bullet
               </button>
@@ -138,7 +138,7 @@ export default function ProfileEditor({ initialLabel = '', initialSections = {},
           ))}
           <button
             onClick={() => setExperience([...experience, { company: '', title: '', dates: '', bullets: [] }])}
-            className="text-xs text-gray-400 hover:text-primary flex items-center gap-1 border border-dashed border-gray-300 hover:border-primary/50 rounded-xl px-3 py-2.5 w-full justify-center transition-colors"
+            className="text-xs text-ink-faint hover:text-primary flex items-center gap-1 border border-dashed border-line hover:border-primary/50 rounded-xl px-3 py-2.5 w-full justify-center transition-colors"
           >
             <Plus className="w-3 h-3" /> Add job
           </button>
@@ -150,22 +150,22 @@ export default function ProfileEditor({ initialLabel = '', initialSections = {},
         <label className={sectionLabel}>Education</label>
         <div className="space-y-3">
           {education.map((edu, idx) => (
-            <div key={idx} className="bg-gray-50 border border-gray-200 rounded-xl p-4">
+            <div key={idx} className="bg-surface-2/60 border border-line rounded-card p-4">
               <div className="grid grid-cols-2 gap-3">
                 <input
-                  className="bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-900 focus:border-primary focus:outline-none"
+                  className="bg-card border border-line rounded-lg px-2 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-primary focus:outline-none"
                   placeholder="Institution"
                   value={edu.institution}
                   onChange={(e) => updateEdu(idx, { institution: e.target.value })}
                 />
                 <input
-                  className="bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-900 focus:border-primary focus:outline-none"
+                  className="bg-card border border-line rounded-lg px-2 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-primary focus:outline-none"
                   placeholder="Degree"
                   value={edu.degree}
                   onChange={(e) => updateEdu(idx, { degree: e.target.value })}
                 />
                 <input
-                  className="col-span-2 bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-900 focus:border-primary focus:outline-none"
+                  className="col-span-2 bg-card border border-line rounded-lg px-2 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-primary focus:outline-none"
                   placeholder="Dates"
                   value={edu.dates}
                   onChange={(e) => updateEdu(idx, { dates: e.target.value })}
@@ -175,7 +175,7 @@ export default function ProfileEditor({ initialLabel = '', initialSections = {},
           ))}
           <button
             onClick={() => setEducation([...education, { institution: '', degree: '', dates: '' }])}
-            className="text-xs text-gray-400 hover:text-primary flex items-center gap-1 border border-dashed border-gray-300 hover:border-primary/50 rounded-xl px-3 py-2.5 w-full justify-center transition-colors"
+            className="text-xs text-ink-faint hover:text-primary flex items-center gap-1 border border-dashed border-line hover:border-primary/50 rounded-xl px-3 py-2.5 w-full justify-center transition-colors"
           >
             <Plus className="w-3 h-3" /> Add education
           </button>
@@ -189,7 +189,7 @@ export default function ProfileEditor({ initialLabel = '', initialSections = {},
       </div>
 
       {/* Save */}
-      <div className="pt-2 border-t border-gray-100">
+      <div className="pt-2 border-t border-line">
         <Button onClick={handleSave} disabled={saving} className="w-full justify-center">
           {saving ? 'Saving…' : 'Save Profile'}
         </Button>

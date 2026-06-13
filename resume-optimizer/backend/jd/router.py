@@ -1,5 +1,7 @@
+import asyncio
 import hashlib
 import json as _json
+import logging
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -14,8 +16,11 @@ from config import MODEL_PROFILE_PARSER
 from db.models import JdScrapeCache, Profile, User
 from db.session import get_db
 from llm import complete
+from utils.llm_json import parse_llm_json
 
 router = APIRouter()
+
+_logger = logging.getLogger(__name__)
 
 _CACHE_TTL_HOURS = 24
 
@@ -91,13 +96,9 @@ async def match_profiles(
     return sorted(ranked, key=lambda x: x["match_pct"], reverse=True)[:3]
 
 
-async def _fetch_jd_from_url(url: str) -> str:
-    """Fetch URL and extract job description text via HTML parsing."""
-    async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
-        response = await client.get(url, headers={"User-Agent": "Mozilla/5.0 ResumeOptimizer/1.0"})
-        response.raise_for_status()
-
-    soup = BeautifulSoup(response.text, "html.parser")
+def _extract_jd_text(html: str) -> str:
+    """Extract job description text from HTML. CPU-bound — call via to_thread."""
+    soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "nav", "footer", "header"]):
         tag.decompose()
 
@@ -119,6 +120,16 @@ async def _fetch_jd_from_url(url: str) -> str:
     return soup.get_text(separator="\n", strip=True)[:15000]
 
 
+async def _fetch_jd_from_url(url: str) -> str:
+    """Fetch URL and extract job description text via HTML parsing."""
+    async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
+        response = await client.get(url, headers={"User-Agent": "Mozilla/5.0 ResumeOptimizer/1.0"})
+        response.raise_for_status()
+
+    # Parsing multi-MB job pages can take long enough to stall other requests.
+    return await asyncio.to_thread(_extract_jd_text, response.text)
+
+
 async def _score_profiles(profile_dicts: list[dict], jd_text: str) -> list[dict]:
     """LLM scores each profile against the JD; returns list with match_pct 0-100."""
     profiles_json = _json.dumps(profile_dicts, ensure_ascii=False)
@@ -135,12 +146,16 @@ Job description (first 3000 chars):
 {jd_text[:3000]}"""
 
     result = await complete(prompt, MODEL_PROFILE_PARSER)
-    text = result["text"].strip()
-    if text.startswith("```"):
-        lines = text.split("\n")
-        text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:]).strip()
-    scored = _json.loads(text)
-    score_map = {item["profile_id"]: item for item in scored}
+
+    # LLM output is untrusted — recover the array from fences/prose, degrade
+    # with a clear 502 instead of an unhandled 500.
+    try:
+        scored = parse_llm_json(result["text"], kind="array")
+    except ValueError:
+        _logger.error("profile match returned unparseable JSON (first 300 chars): %s", result["text"][:300])
+        raise HTTPException(status_code=502, detail="Profile matching failed — please try again.")
+
+    score_map = {item.get("profile_id"): item for item in scored if isinstance(item, dict)}
     return [
         {
             **p,

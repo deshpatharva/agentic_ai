@@ -1,5 +1,3 @@
-import json as _json
-import re as _re
 import uuid as _uuid
 from datetime import datetime, timezone
 
@@ -20,6 +18,7 @@ from profiles.schemas import (
     ProfileUpdate,
 )
 from utils.profile_utils import sections_to_text as _sections_to_text
+from utils.llm_json import parse_llm_json
 
 router = APIRouter()       # mounted at /profiles
 profile_ops = APIRouter()  # mounted at /profile
@@ -125,22 +124,6 @@ def _extract_file_text(contents: bytes, filename: str) -> str:
     raise HTTPException(status_code=400, detail="Unsupported file type. Upload a PDF or DOCX.")
 
 
-def _extract_json(text: str) -> str:
-    """Extract the first JSON object from LLM output, handling thinking tags and markdown fences."""
-    text = text.strip()
-    text = _re.sub(r"<thinking>.*?</thinking>", "", text, flags=_re.DOTALL).strip()
-    match = _re.search(r"\{.*\}", text, _re.DOTALL)
-    if match:
-        return match.group(0)
-    if text.startswith("```"):
-        parts = text.split("```")
-        candidate = parts[1] if len(parts) > 1 else text
-        if candidate.startswith("json"):
-            candidate = candidate[4:]
-        return candidate.strip()
-    return text
-
-
 async def _parse_sections(raw_text: str) -> dict:
     import logging as _logging
     from config import MODEL_PROFILE_PARSER
@@ -182,16 +165,10 @@ Resume text:
         _logger.exception("LLM call failed in _parse_sections")
         raise HTTPException(status_code=502, detail=f"AI parsing service error: {exc}") from exc
 
-    text = _extract_json(result["text"])
     try:
-        parsed = _json.loads(text)
-    except _json.JSONDecodeError as e:
+        return parse_llm_json(result["text"])
+    except ValueError as e:
         raise HTTPException(status_code=502, detail=f"Profile parser returned invalid JSON: {e}")
-
-    if not isinstance(parsed, dict):
-        raise HTTPException(status_code=502, detail="Profile parser returned unexpected format.")
-
-    return parsed
 
 
 async def _get_owned(profile_id: str, user_id, db: AsyncSession) -> Profile:
@@ -286,10 +263,9 @@ Interview transcript:
 {history_text}"""
 
     result = await complete(prompt, MODEL_INTERVIEW_SYNTH)
-    text = _extract_json(result["text"])
     try:
-        return _json.loads(text)
-    except _json.JSONDecodeError as e:
+        return parse_llm_json(result["text"])
+    except ValueError as e:
         raise HTTPException(status_code=502, detail=f"Interview synthesis returned invalid JSON: {e}")
 
 

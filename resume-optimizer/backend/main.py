@@ -44,7 +44,7 @@ if os.path.exists(_dbg_path):
     except Exception:
         pass
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, UploadFile, File
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from slowapi import _rate_limit_exceeded_handler
@@ -59,18 +59,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── Agent & utility imports ──────────────────────────────────────────────────
 from agents.jd_analyzer import analyze_jd
-from utils import cache as result_cache
-from config import MAX_ITERATIONS, SCORE_TARGET, BACKEND_URL, FRONTEND_URL, MODEL_SCORER, MAX_UPLOAD_BYTES, MAX_RESUME_CHARS, MAX_JD_CHARS, STUCK_JOB_TIMEOUT_MINUTES, DATABASE_URL
+from config import MAX_ITERATIONS, SCORE_TARGET, BACKEND_URL, FRONTEND_URL, MODEL_SCORER, MAX_RESUME_CHARS, MAX_JD_CHARS, STUCK_JOB_TIMEOUT_MINUTES, DATABASE_URL
 from agents.scorer import score_combined
 from agents.fact_extractor import extract_claims
 from agents.fabrication_guard import fabrication_guard
 from agents.humanizer import humanize_resume
 from orchestration.optimizer import run_optimization_async, _WORK_THRESHOLD
-from parsers.pdf_parser import parse_pdf
-from parsers.docx_parser import parse_docx
 from generators.docx_generator import generate_docx
 import storage as _storage
-from delta.writer import write_daily_usage, write_job_match, vacuum_old_matches
+from delta.writer import write_daily_usage, write_job_matches, vacuum_old_matches
 from scraper.scraper import scrape_jobs
 from db.session import get_db, init_db, AsyncSessionLocal
 from db.models import JobStatus, PipelineEvent, PipelineJob, Profile, Resume, User, TokenBlocklist
@@ -280,16 +277,6 @@ BASE_DIR = Path(__file__).parent
 
 # ── Request/response models ──────────────────────────────────────────────────
 
-_UPLOAD_MAGIC = {
-    ".pdf":  b"%PDF-",
-    ".docx": b"PK\x03\x04",
-}
-
-
-class AnalyzeJDRequest(BaseModel):
-    jd_text: str  # truncated to MAX_JD_CHARS in the endpoint
-
-
 class RunPipelineRequest(BaseModel):
     job_id: str
     jd_text: str
@@ -303,98 +290,7 @@ class ScrapeJobsRequest(BaseModel):
     per_source: int = Field(default=20, ge=1, le=50)
 
 
-class GenerateDocRequest(BaseModel):
-    resume_text: str
-
-
 # ── Routes ───────────────────────────────────────────────────────────────────
-
-@app.post("/upload")
-async def upload_resume(
-    file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Accept a .pdf or .docx resume file, parse it, store a PipelineJob row, and return the job_id.
-    """
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No file provided.")
-
-    ext = Path(file.filename).suffix.lower()
-    if ext not in (".pdf", ".docx"):
-        raise HTTPException(status_code=400, detail="Only .pdf and .docx files are supported.")
-
-    job_id = str(uuid.uuid4())
-
-    contents = await file.read(MAX_UPLOAD_BYTES + 1)
-    if len(contents) > MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large. Maximum upload size is {MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
-        )
-
-    expected_magic = _UPLOAD_MAGIC.get(ext, b"")
-    if not contents[:8].startswith(expected_magic):
-        raise HTTPException(
-            status_code=400,
-            detail=f"File content does not match {ext} extension.",
-        )
-
-    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
-        f.write(contents)
-        tmp_path = f.name
-
-    try:
-        parser = parse_pdf if ext == ".pdf" else parse_docx
-        parsed = await asyncio.wait_for(
-            asyncio.to_thread(parser, tmp_path),
-            timeout=30,
-        )
-    except asyncio.TimeoutError:
-        raise HTTPException(status_code=408, detail="Resume parsing timed out. Try a simpler PDF or convert to .docx.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to parse file: {str(e)}")
-    finally:
-        os.unlink(tmp_path)
-
-    job = PipelineJob(
-        id=uuid.UUID(job_id),
-        user_id=current_user.id,
-        original_filename=file.filename,
-        resume_text=parsed["raw_text"],
-        status=JobStatus.pending,
-    )
-    db.add(job)
-    await db.commit()
-
-    return {
-        "job_id": job_id,
-        "text": parsed["raw_text"],
-        "structure": parsed["sections"],
-    }
-
-
-@app.post("/analyze-jd")
-async def analyze_jd_endpoint(
-    request: AnalyzeJDRequest,
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Analyze a job description and return extracted keywords, requirements, and skills.
-    """
-    if not request.jd_text.strip():
-        raise HTTPException(status_code=400, detail="jd_text cannot be empty.")
-
-    try:
-        result_dict = await analyze_jd(request.jd_text[:MAX_JD_CHARS])
-        result = result_dict.get("text", result_dict)
-    except Exception as e:
-        _logger.exception("analyze_jd_endpoint failed")
-        raise HTTPException(status_code=500, detail=f"JD analysis failed: {str(e)}")
-
-    return result
-
 
 @app.post("/run-pipeline")
 async def run_pipeline(
@@ -581,61 +477,32 @@ async def download_resume(
 
         result = await db.execute(select(Resume).where(Resume.id == resume_uuid))
         resume = result.scalar_one_or_none()
-        if not resume or str(resume.user_id) != str(current_user.id):
-            raise HTTPException(status_code=404, detail="Resume not found.")
+        if resume and str(resume.user_id) == str(current_user.id) and resume.file_path:
+            file_path = resume.file_path
+            original_filename = resume.original_filename
+        else:
+            # Fallback: the done-event links /download/{job_id} when the Resume
+            # row failed to save — resolve the blob via the completed job instead.
+            job_result = await db.execute(
+                select(PipelineJob).where(PipelineJob.id == resume_uuid)
+            )
+            job = job_result.scalar_one_or_none()
+            if (
+                not job
+                or str(job.user_id) != str(current_user.id)
+                or job.status != JobStatus.done
+                or not job.download_path
+            ):
+                raise HTTPException(status_code=404, detail="Resume not found.")
+            file_path = job.download_path
+            original_filename = job.original_filename
 
-        if not resume.file_path:
-            raise HTTPException(status_code=404, detail="Output file not found.")
-
-        original_filename = resume.original_filename
-
-    url = await asyncio.to_thread(_storage.generate_download_url, resume.file_path)
+    url = await asyncio.to_thread(_storage.generate_download_url, file_path)
     if url.startswith("http"):
         return RedirectResponse(url, status_code=302)
     return FileResponse(
         path=url,
         filename=f"optimized_{original_filename or 'resume'}.docx",
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    )
-
-
-# ── Generate-doc endpoint ────────────────────────────────────────────────────
-
-@app.post("/generate-doc")
-async def generate_doc_endpoint(
-    request: GenerateDocRequest,
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Generate a formatted .docx from the provided resume text without running
-    the optimization pipeline. The user's text is trusted as-is — no AI rewriting.
-    Works for raw uploads, inline-edited text, and (future) saved profiles.
-    """
-    if not request.resume_text.strip():
-        raise HTTPException(status_code=400, detail="resume_text cannot be empty.")
-
-    doc_id = str(uuid.uuid4())
-    blob_name = f"gen_{doc_id}.docx"
-
-    tmp_docx = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as _f:
-            tmp_docx = _f.name
-        await asyncio.to_thread(generate_docx, request.resume_text, tmp_docx)
-        docx_bytes = await asyncio.to_thread(Path(tmp_docx).read_bytes)
-        await asyncio.to_thread(_storage.upload_output, docx_bytes, blob_name)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate document: {str(e)}")
-    finally:
-        if tmp_docx is not None:
-            os.unlink(tmp_docx)
-
-    url = await asyncio.to_thread(_storage.generate_download_url, blob_name)
-    if url.startswith("http"):
-        return RedirectResponse(url, status_code=302)
-    return FileResponse(
-        path=url,
-        filename="resume.docx",
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
 
@@ -678,16 +545,16 @@ async def scrape_jobs_endpoint(
     user_id = str(current_user.id)
 
     async def _persist():
-        for posting in postings:
-            record = {
-                "user_id":   user_id,
-                "resume_id": request.resume_id,
-                **posting,
-            }
-            try:
-                await asyncio.to_thread(write_job_match, record)
-            except Exception:
-                _logger.warning("write_job_match failed for posting: %s", posting.get("title", "unknown"))
+        records = [
+            {"user_id": user_id, "resume_id": request.resume_id, **posting}
+            for posting in postings
+        ]
+        try:
+            # Single Delta transaction for the whole batch — avoids one
+            # commit + one tiny parquet file per posting.
+            await asyncio.to_thread(write_job_matches, records)
+        except Exception:
+            _logger.warning("write_job_matches failed for %d postings", len(records))
 
     background_tasks.add_task(_persist)
 
@@ -849,7 +716,8 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             current_resume = resume_text
 
         # ── Fabrication guard — flag unverified claims before rendering ────
-        guard_result = fabrication_guard(current_resume, ledger, resume_text)
+        # CPU-bound (spaCy NER + difflib over the whole resume) — keep it off the event loop.
+        guard_result = await asyncio.to_thread(fabrication_guard, current_resume, ledger, resume_text)
         if guard_result.gaps:
             _logger.warning(
                 "fabrication_guard flagged %d unverified claims for job %s",
@@ -923,6 +791,8 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             scores_json=scores,
             iteration=max(_iter, 1),
             cost_usd=total_cost_usd,
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
         )
 
         # ── Increment quota counter — only on success so failures are free ──

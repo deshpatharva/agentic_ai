@@ -19,7 +19,8 @@ def test_fabrication_guard_called_after_optimization():
     assert func_start != -1, "_run_pipeline_task not found in main.py"
     source = main_source[func_start:]
 
-    guard_pos = source.find("fabrication_guard(")
+    # matches both direct calls and asyncio.to_thread(fabrication_guard, ...)
+    guard_pos = source.find("fabrication_guard")
     docx_pos  = source.find("generate_docx")
     optim_pos = source.find("run_optimization_async(")
     assert guard_pos != -1, "fabrication_guard not called in _run_pipeline_task"

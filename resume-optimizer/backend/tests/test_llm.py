@@ -109,8 +109,9 @@ async def test_cached_prefix_sends_cache_control_for_anthropic():
 
 
 @pytest.mark.asyncio
-async def test_cached_prefix_ignored_for_non_anthropic():
-    """cached_prefix is a no-op for non-Anthropic models — single string content."""
+async def test_cached_prefix_structured_for_all_providers():
+    """cached_prefix builds the two-block structured message for every provider —
+    Gemini 2.5+ honors cache_control; others drop it via litellm.drop_params."""
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -127,7 +128,46 @@ async def test_cached_prefix_ignored_for_non_anthropic():
 
     messages = mock_acompletion.call_args.kwargs["messages"]
     content = messages[0]["content"]
-    assert isinstance(content, str), "Non-Anthropic models should use simple string content"
+    assert isinstance(content, list) and len(content) == 2
+    assert content[0]["cache_control"] == {"type": "ephemeral"}
+    assert content[1]["text"] == "rewrite"
+
+
+@pytest.mark.asyncio
+async def test_transient_failure_retries_once():
+    """A transient provider failure triggers exactly one retry, then succeeds."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    import litellm as _litellm
+
+    fake = _make_litellm_response("ok", 10, 5)
+    err = _litellm.exceptions.APIConnectionError(
+        message="boom", llm_provider="gemini", model="gemini/gemini-2.5-flash-lite"
+    )
+    mock_acompletion = AsyncMock(side_effect=[err, fake])
+    with patch("litellm.acompletion", new=mock_acompletion):
+        from llm import complete
+        result = await complete("hello", "gemini/gemini-2.5-flash-lite")
+
+    assert mock_acompletion.call_count == 2
+    assert result["text"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_llm_calls_carry_timeout():
+    """Every provider call must set a timeout so hung calls can't stall a pipeline."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+
+    fake = _make_litellm_response("ok", 10, 5)
+    mock_acompletion = AsyncMock(return_value=fake)
+    with patch("litellm.acompletion", new=mock_acompletion):
+        from llm import complete
+        await complete("hello", "gemini/gemini-2.5-flash-lite")
+
+    assert mock_acompletion.call_args.kwargs.get("timeout", 0) > 0
 
 
 @pytest.mark.asyncio

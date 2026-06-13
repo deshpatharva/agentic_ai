@@ -18,14 +18,9 @@ def _table_exists(conn, name: str) -> bool:
 
 
 def _column_exists(conn, table: str, column: str) -> bool:
-    result = conn.execute(
-        sa.text(
-            "SELECT 1 FROM information_schema.columns "
-            "WHERE table_name = :t AND column_name = :c"
-        ),
-        {"t": table, "c": column},
-    )
-    return result.fetchone() is not None
+    # Dialect-portable (SQLite has no information_schema)
+    cols = sa.inspect(conn).get_columns(table)
+    return any(c["name"] == column for c in cols)
 
 
 def upgrade() -> None:
@@ -46,10 +41,19 @@ def upgrade() -> None:
         op.create_index("ix_profiles_user_id", "profiles", ["user_id"])
 
     if not _column_exists(conn, "resumes", "profile_id"):
-        op.add_column(
-            "resumes",
-            sa.Column("profile_id", sa.Uuid(), sa.ForeignKey("profiles.id", ondelete="SET NULL"), nullable=True),
-        )
+        if conn.dialect.name == "sqlite":
+            # SQLite can't ALTER in a FK constraint — batch mode recreates the table.
+            with op.batch_alter_table("resumes") as batch_op:
+                batch_op.add_column(sa.Column("profile_id", sa.Uuid(), nullable=True))
+                batch_op.create_foreign_key(
+                    "fk_resumes_profile_id", "profiles",
+                    ["profile_id"], ["id"], ondelete="SET NULL",
+                )
+        else:
+            op.add_column(
+                "resumes",
+                sa.Column("profile_id", sa.Uuid(), sa.ForeignKey("profiles.id", ondelete="SET NULL"), nullable=True),
+            )
         op.create_index("ix_resumes_profile_id", "resumes", ["profile_id"])
 
     if not _table_exists(conn, "jd_scrape_cache"):

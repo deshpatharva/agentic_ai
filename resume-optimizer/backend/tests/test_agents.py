@@ -146,7 +146,7 @@ def test_guard_strips_metric_outside_tolerance():
 
 
 def test_guard_substitutes_with_closest_original():
-    """When a line is stripped and a close original exists, it substitutes."""
+    """A fabricated metric is flagged: stripped + gap recorded + line marked [VERIFY]."""
     source = "Led team of engineers to reduce operational costs by 30%."
     original_bullet = "Led team of engineers to reduce operational costs by 30%"
     ledger = ClaimsLedger(
@@ -160,7 +160,8 @@ def test_guard_substitutes_with_closest_original():
         source,
     )
     assert "99%" in result.stripped
-    assert original_bullet in result.text
+    assert result.gaps, "fabricated claim must be surfaced as a gap"
+    assert "[VERIFY]" in result.text
 
 
 def test_guard_adds_to_gaps_when_no_match():

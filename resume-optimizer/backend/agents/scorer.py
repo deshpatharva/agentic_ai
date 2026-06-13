@@ -7,59 +7,13 @@ All 4 scores returned from a single LLM call via MODEL_SCORER.
   4. Readability   — structure, tone, formatting
 """
 
-import json
-import re
 import logging
 from typing import List, Optional
-import spacy
-from sklearn.feature_extraction.text import TfidfVectorizer
 from llm import complete
 from config import MODEL_SCORER
-from utils import cache as result_cache
+from utils.llm_json import parse_llm_json
 
 _logger = logging.getLogger(__name__)
-
-try:
-    nlp = spacy.load("en_core_web_sm")
-except OSError:
-    raise RuntimeError(
-        "spaCy model 'en_core_web_sm' not found. "
-        "Run: python -m spacy download en_core_web_sm"
-    )
-
-
-def _extract_json(text: str) -> str:
-    """Extract the first JSON object from text, handling thinking tags, markdown fences, prose."""
-    text = text.strip()
-    # Strip thinking tags (Gemini 2.5 thinking models)
-    text = re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL).strip()
-    # Try to pull the outermost {...} block
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if match:
-        return match.group(0)
-    # Fallback: strip markdown fences
-    if text.startswith("```"):
-        parts = text.split("```")
-        candidate = parts[1] if len(parts) > 1 else text
-        if candidate.startswith("json"):
-            candidate = candidate[4:]
-        return candidate.strip()
-    return text
-
-
-def _extract_jd_keywords(jd_text: str, jd_keywords: list) -> list:
-    """Extract keywords from JD using spaCy + TF-IDF (used to build keyword list for ATS prompt)."""
-    doc = nlp(jd_text)
-    spacy_kw = [chunk.text.lower() for chunk in doc.noun_chunks]
-    spacy_kw += [t.text.lower() for t in doc if t.pos_ in ("NOUN", "PROPN") and not t.is_stop]
-    try:
-        tfidf = TfidfVectorizer(ngram_range=(1, 2), stop_words="english", max_features=30)
-        tfidf.fit([jd_text])
-        tfidf_kw = list(tfidf.get_feature_names_out())
-    except Exception:
-        tfidf_kw = []
-    all_kw = list(dict.fromkeys(spacy_kw + tfidf_kw + [k.lower() for k in jd_keywords]))
-    return [k for k in all_kw if len(k) > 2]
 
 
 async def _llm_complete(prompt: str, system: str = None, schema: dict = None) -> tuple:
@@ -70,8 +24,8 @@ async def _llm_complete(prompt: str, system: str = None, schema: dict = None) ->
     output_tokens = response.get("output_tokens", 0)
     raw = response["text"]
     try:
-        return json.loads(_extract_json(raw)), cost_usd, input_tokens, output_tokens
-    except (json.JSONDecodeError, ValueError):
+        return parse_llm_json(raw), cost_usd, input_tokens, output_tokens
+    except ValueError:
         _logger.error("scorer JSON parse failed. raw response (first 500 chars): %s", raw[:500])
         return {}, cost_usd, input_tokens, output_tokens
 

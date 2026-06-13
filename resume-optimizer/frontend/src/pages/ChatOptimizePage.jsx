@@ -1,11 +1,14 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Download } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Send } from 'lucide-react';
 import { clsx } from 'clsx';
-import client, { buildDownloadUrl } from '../api/client';
+import client from '../api/client';
 import useProfileStore from '../store/profileStore';
-import Sidebar from '../components/layout/Sidebar';
+import AppShell from '../components/layout/AppShell';
 import ChatMessage from '../components/ChatMessage';
 import ProfileMatchCard from '../components/ProfileMatchCard';
+import PipelineProgress from '../components/PipelineProgress';
+import ScoreReveal from '../components/ScoreReveal';
 
 function autoResize(el) {
   if (!el) return;
@@ -23,6 +26,11 @@ export default function ChatOptimizePage() {
   const [selectedProfile, setSelectedProfile] = useState(null);
   const [jdText, setJdText]                   = useState('');
   const [downloadUrl, setDownloadUrl]         = useState(null);
+  const [stage, setStage]                     = useState(null);
+  const [stageMessage, setStageMessage]       = useState('');
+  const [iteration, setIteration]             = useState(0);
+  const [liveScores, setLiveScores]           = useState(null);
+  const [result, setResult]                   = useState(null);
 
   const esRef       = useRef(null);
   const bottomRef   = useRef(null);
@@ -35,7 +43,7 @@ export default function ChatOptimizePage() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, matchedProfiles, downloadUrl]);
+  }, [messages, matchedProfiles, stage, result]);
 
   const addMsg = useCallback((role, content, isError = false) => {
     setMessages((prev) => [...prev, { role, content, isError, id: Date.now() + Math.random() }]);
@@ -43,16 +51,22 @@ export default function ChatOptimizePage() {
 
   const greeting =
     profiles.length === 0
-      ? "You don't have any profiles yet. Create one at /profiles/new first, then come back here."
+      ? <>You don't have any profiles yet. <Link to="/profiles/new" className="text-primary font-medium underline underline-offset-2">Create one first</Link>, then come back here.</>
       : "Paste a job URL or job description below to get started. I'll match it to your profiles and run the optimizer.";
 
   let placeholder = 'Paste a job URL or job description…';
-  if (phase === 'running')         placeholder = 'Pipeline running… send instructions to guide the optimizer';
+  if (phase === 'running')         placeholder = 'Pipeline running…';
   else if (jdText && !selectedProfile) placeholder = 'Click a profile card above, or type 1/2/3…';
   else if (selectedProfile)        placeholder = 'Add instructions or say "go" to start…';
 
   async function startPipeline(instruction = '') {
     setPhase('running');
+    setStage(null);
+    setStageMessage('');
+    setIteration(0);
+    setLiveScores(null);
+    setResult(null);
+    setDownloadUrl(null);
     addMsg('assistant', `Starting optimization with your "${selectedProfile.label}" profile…`);
 
     try {
@@ -70,13 +84,19 @@ export default function ChatOptimizePage() {
       es.onmessage = (e) => {
         try {
           const ev = JSON.parse(e.data);
-          if (ev.type === 'stage')   addMsg('assistant', `🔄 ${ev.message}`);
-          if (ev.type === 'iterate') addMsg('assistant', `↻ Iteration ${ev.iteration}`);
-          if (ev.type === 'average') addMsg('assistant', `📊 Score: ${ev.score}/100`);
+          // agent_step telemetry is intentionally ignored here (admin surface material)
+          if (ev.type === 'stage') {
+            setStage(ev.stage);
+            setStageMessage(ev.message || '');
+          }
+          if (ev.type === 'average') {
+            setIteration(ev.iteration || 0);
+            setLiveScores(ev);
+          }
           if (ev.type === 'done') {
             setPhase('done');
             setDownloadUrl(ev.download_url);
-            addMsg('assistant', '✅ Optimization complete! Download your resume below.');
+            setResult({ finalScore: ev.final_score ?? 0, iterations: ev.iterations ?? 0 });
             es.close();
           }
           if (ev.type === 'error') {
@@ -99,24 +119,23 @@ export default function ChatOptimizePage() {
         profile_id: selectedProfile.id,
         instruction,
       });
-    } catch {
+    } catch (err) {
+      esRef.current?.close();
       setPhase('error');
-      addMsg('assistant', 'Failed to start pipeline. Please try again.', true);
+      const detail = err?.response?.data?.detail;
+      const msg = err?.response?.status === 429
+        ? (detail?.upgrade_message || 'Daily limit reached — upgrade your plan to run more optimizations.')
+        : 'Failed to start pipeline. Please try again.';
+      addMsg('assistant', msg, true);
     }
   }
 
   async function handleSend() {
     const text = input.trim();
-    if (!text) return;
+    if (!text || phase === 'running') return;
 
     setInput('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
-
-    if (phase === 'running') {
-      addMsg('user', text);
-      addMsg('assistant', 'Instruction received — optimizer will apply it next iteration.');
-      return;
-    }
 
     if (!jdText) {
       addMsg('user', text);
@@ -189,12 +208,11 @@ export default function ChatOptimizePage() {
   const showProfiles = matchedProfiles.length > 0 && phase !== 'running' && phase !== 'done';
 
   return (
-    <div className="flex h-screen bg-surface overflow-hidden">
-      <Sidebar />
-      <div className="flex flex-col flex-1 min-w-0">
-        <header className="border-b border-gray-200 px-6 py-4 shrink-0 bg-surface">
-          <h1 className="text-base font-semibold text-gray-900 tracking-tight">Optimize</h1>
-          <p className="text-xs text-gray-400 mt-0.5">Paste a job URL or description · select a profile · download your resume</p>
+    <AppShell scroll={false}>
+      <div className="flex flex-col flex-1 min-h-0">
+        <header className="border-b border-line px-6 py-4 shrink-0 bg-surface">
+          <h1 className="text-base font-semibold text-ink tracking-tight">Optimize</h1>
+          <p className="text-xs text-ink-faint mt-0.5">Paste a job URL or description · select a profile · download your resume</p>
         </header>
 
         <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-8">
@@ -217,41 +235,48 @@ export default function ChatOptimizePage() {
             </div>
           )}
 
-          {phase === 'done' && downloadUrl && (
-            <div className="flex justify-center mt-5 mb-3">
-              <a
-                href={buildDownloadUrl(downloadUrl)}
-                className="inline-flex items-center gap-2 bg-primary text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-primary hover:opacity-90 transition-opacity active:scale-95"
-                download
-              >
-                <Download className="w-4 h-4" />
-                Download Optimized Resume
-              </a>
-            </div>
+          {phase === 'running' && (
+            <PipelineProgress
+              stage={stage}
+              iteration={iteration}
+              score={liveScores?.score}
+              message={stageMessage}
+            />
+          )}
+
+          {phase === 'done' && result && (
+            <ScoreReveal
+              finalScore={result.finalScore}
+              scores={liveScores?.scores}
+              iterations={result.iterations}
+              downloadUrl={downloadUrl}
+            />
           )}
 
           <div ref={bottomRef} />
         </div>
 
-        <div className="border-t border-gray-200 px-4 py-3 shrink-0 bg-surface">
-          <div className="flex items-end gap-2 bg-white border border-gray-200 rounded-2xl px-4 py-2 shadow-card focus-within:border-primary/50 transition-all">
+        <div className="border-t border-line px-4 py-3 shrink-0 bg-surface">
+          <div className="flex items-end gap-2 bg-card border border-line rounded-card px-4 py-2 shadow-card focus-within:border-primary/50 transition-all">
             <textarea
               ref={textareaRef}
               rows={1}
               value={input}
+              disabled={phase === 'running'}
               onChange={(e) => { setInput(e.target.value); autoResize(e.target); }}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
               placeholder={placeholder}
-              className="flex-1 resize-none text-sm text-gray-900 bg-transparent focus:outline-none max-h-32 leading-relaxed placeholder:text-gray-400 py-1"
+              className="flex-1 resize-none text-sm text-ink bg-transparent focus:outline-none max-h-32 leading-relaxed placeholder:text-ink-faint py-1 disabled:opacity-60"
             />
             <button
               onClick={handleSend}
               disabled={sendDisabled}
+              aria-label="Send message"
               className={clsx(
-                'shrink-0 mb-0.5 w-8 h-8 rounded-xl flex items-center justify-center transition-all',
+                'shrink-0 mb-0.5 w-8 h-8 rounded-lg flex items-center justify-center transition-all',
                 sendDisabled
-                  ? 'text-gray-300 cursor-not-allowed'
-                  : 'bg-primary text-white hover:opacity-90 shadow-primary active:scale-95'
+                  ? 'text-ink-faint/50 cursor-not-allowed'
+                  : 'bg-primary text-white dark:text-ink hover:bg-primary-dark shadow-primary active:scale-95'
               )}
             >
               <Send className="w-4 h-4" />
@@ -259,6 +284,6 @@ export default function ChatOptimizePage() {
           </div>
         </div>
       </div>
-    </div>
+    </AppShell>
   );
 }

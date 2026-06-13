@@ -10,9 +10,9 @@ const TYPE_LABELS = {
 };
 
 const STATUS_STYLES = {
-  active:       'bg-green-900 text-green-300',
-  expired:      'bg-yellow-900 text-yellow-300',
-  deactivated:  'bg-gray-800 text-gray-500',
+  active:       'bg-accent-soft text-primary',
+  expired:      'bg-hilite-soft text-hilite',
+  deactivated:  'bg-surface-2 text-ink-faint',
 };
 
 const EMPTY_FORM = {
@@ -33,8 +33,8 @@ function CopyButton({ text }) {
     setTimeout(() => setCopied(false), 1500);
   };
   return (
-    <button onClick={copy} className="ml-1 text-gray-600 hover:text-gray-300 transition-colors">
-      {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
+    <button onClick={copy} aria-label="Copy code" className="ml-1 text-ink-faint hover:text-ink-mute transition-colors">
+      {copied ? <Check className="w-3 h-3 text-primary" /> : <Copy className="w-3 h-3" />}
     </button>
   );
 }
@@ -101,20 +101,20 @@ export default function PromoCodes() {
     onChange: (e) => setForm(f => ({ ...f, [key]: e.target.value })),
   });
 
-  const inputCls = 'w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-gray-500';
-  const labelCls = 'block text-xs text-gray-500 mb-1';
+  const inputCls = 'w-full bg-surface-2 border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:border-primary';
+  const labelCls = 'block text-xs text-ink-faint mb-1';
 
   return (
-    <div className="p-8">
+    <div className="p-4 sm:p-8">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-xl font-bold text-white">Promo Codes</h1>
-          <p className="text-xs text-gray-500 mt-0.5">{total} code{total !== 1 ? 's' : ''} total</p>
+          <h1 className="text-xl font-bold text-ink">Promo Codes</h1>
+          <p className="text-xs text-ink-faint mt-0.5">{total} code{total !== 1 ? 's' : ''} total</p>
         </div>
         <button
           onClick={() => setShowForm(v => !v)}
-          className="flex items-center gap-2 px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white rounded-lg text-sm font-medium transition-colors"
+          className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-dark text-white dark:text-ink rounded-lg text-sm font-medium transition-colors"
         >
           {showForm ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
           {showForm ? 'Cancel' : 'Create Code'}
@@ -123,10 +123,10 @@ export default function PromoCodes() {
 
       {/* Create form */}
       {showForm && (
-        <form onSubmit={handleCreate} className="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6 space-y-4">
-          <p className="text-sm font-semibold text-white mb-2">New Promo Code</p>
+        <form onSubmit={handleCreate} className="bg-card border border-line rounded-card p-6 mb-6 space-y-4">
+          <p className="text-sm font-semibold text-ink mb-2">New Promo Code</p>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className={labelCls}>Code *</label>
               <input {...field('code')} required placeholder="SUMMER25" className={inputCls}
@@ -167,7 +167,7 @@ export default function PromoCodes() {
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className={labelCls}>Max Uses *</label>
               <input {...field('max_uses')} type="number" min="1" required
@@ -182,7 +182,7 @@ export default function PromoCodes() {
           <button
             type="submit"
             disabled={saving}
-            className="w-full py-2.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
+            className="w-full py-2.5 bg-primary hover:bg-primary-dark disabled:opacity-50 text-white dark:text-ink rounded-lg text-sm font-medium transition-colors"
           >
             {saving ? 'Creating…' : 'Create Promo Code'}
           </button>
@@ -196,8 +196,8 @@ export default function PromoCodes() {
             onClick={() => setFilter(f)}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
               filter === f
-                ? 'bg-gray-700 text-white'
-                : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'
+                ? 'bg-surface-2 text-ink'
+                : 'text-ink-faint hover:text-ink-mute hover:bg-surface-2/60'
             }`}
           >
             {f === '' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
@@ -206,10 +206,11 @@ export default function PromoCodes() {
       </div>
 
       {/* Table */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="bg-card border border-line rounded-card overflow-hidden">
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[720px]">
           <thead>
-            <tr className="border-b border-gray-800 text-gray-500 text-xs uppercase tracking-wide">
+            <tr className="border-b border-line text-ink-faint text-xs uppercase tracking-wide">
               <th className="px-4 py-3 text-left">Code</th>
               <th className="px-4 py-3 text-left">Type</th>
               <th className="px-4 py-3 text-left">Details</th>
@@ -221,35 +222,35 @@ export default function PromoCodes() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} className="px-4 py-10 text-center text-gray-600">Loading…</td></tr>
+              <tr><td colSpan={7} className="px-4 py-10 text-center text-ink-faint">Loading…</td></tr>
             ) : codes.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-gray-600">
+                <td colSpan={7} className="px-4 py-10 text-center text-ink-faint">
                   <Tag className="w-8 h-8 mx-auto mb-2 opacity-30" />
                   No promo codes yet
                 </td>
               </tr>
             ) : codes.map(c => (
-              <tr key={c.id} className="border-b border-gray-800 hover:bg-gray-800/50 transition-colors">
+              <tr key={c.id} className="border-b border-line/60 hover:bg-surface-2/60 transition-colors">
                 <td className="px-4 py-3">
-                  <div className="flex items-center gap-1 font-mono text-white text-xs font-semibold">
+                  <div className="flex items-center gap-1 font-mono text-ink text-xs font-semibold">
                     {c.code}
                     <CopyButton text={c.code} />
                   </div>
                 </td>
-                <td className="px-4 py-3 text-gray-400 text-xs">{TYPE_LABELS[c.type] || c.type}</td>
-                <td className="px-4 py-3 text-gray-400 text-xs">
+                <td className="px-4 py-3 text-ink-mute text-xs">{TYPE_LABELS[c.type] || c.type}</td>
+                <td className="px-4 py-3 text-ink-mute text-xs">
                   {c.type === 'plan_upgrade'    && `→ ${c.target_plan}`}
                   {c.type === 'trial_extension' && `+${c.days_to_add}d`}
                   {c.type === 'discount'        && `${c.discount_percent}% off`}
                 </td>
-                <td className="px-4 py-3 text-gray-400 text-xs">
+                <td className="px-4 py-3 text-ink-mute text-xs">
                   {c.current_uses} / {c.max_uses}
                 </td>
-                <td className="px-4 py-3 text-gray-400 text-xs">
+                <td className="px-4 py-3 text-ink-mute text-xs">
                   {c.expires_at
                     ? new Date(c.expires_at).toLocaleDateString()
-                    : <span className="text-gray-600">Never</span>}
+                    : <span className="text-ink-faint">Never</span>}
                 </td>
                 <td className="px-4 py-3">
                   <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_STYLES[c.status] || STATUS_STYLES.deactivated}`}>
@@ -260,7 +261,7 @@ export default function PromoCodes() {
                   {c.status === 'active' && (
                     <button
                       onClick={() => deactivate(c.id, c.code)}
-                      className="text-xs text-red-500 hover:text-red-400 transition-colors"
+                      className="text-xs text-err hover:opacity-80 transition-colors"
                     >
                       Deactivate
                     </button>
@@ -270,6 +271,7 @@ export default function PromoCodes() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   );

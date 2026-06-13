@@ -33,19 +33,24 @@ async def _override_get_db():
         yield session
 
 
-app.dependency_overrides[get_db] = _override_get_db
 
 
 @pytest_asyncio.fixture(autouse=True, scope="module")
 async def setup_db():
+    # Scope the get_db override to THIS module — the app object is shared
+    # across test modules, so an import-time override leaks between files.
+    app.dependency_overrides[get_db] = _override_get_db
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
+    app.dependency_overrides.pop(get_db, None)
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+    # Dispose BEFORE removing the file — Windows locks open pool connections.
+    await _engine.dispose()
     try:
         os.remove("./test_admin.db")
-    except FileNotFoundError:
+    except (FileNotFoundError, PermissionError):
         pass
 
 
@@ -57,19 +62,23 @@ async def client():
 
 @pytest_asyncio.fixture
 async def admin_token(client):
-    """Register a user and promote directly via DB (bypasses bootstrap)."""
+    """Register-or-login an admin user, promoting via DB (bypasses bootstrap).
+
+    The fixture is function-scoped while the DB is module-scoped, so the email
+    already exists on every test after the first — fall back to login.
+    """
     r = await client.post("/auth/register", json={
         "email": "admin_fixture@test.com",
         "password": "Test1234!",
         "full_name": "Admin",
     })
-    user_id = r.json()["user"]["id"]
-
-    async with _TestSession() as session:
-        await session.execute(
-            update(User).where(User.id == uuid.UUID(user_id)).values(is_admin=True)
-        )
-        await session.commit()
+    if r.status_code in (200, 201):
+        user_id = r.json()["user"]["id"]
+        async with _TestSession() as session:
+            await session.execute(
+                update(User).where(User.id == uuid.UUID(user_id)).values(is_admin=True)
+            )
+            await session.commit()
 
     r2 = await client.post("/auth/login", json={
         "email": "admin_fixture@test.com", "password": "Test1234!"
@@ -79,11 +88,16 @@ async def admin_token(client):
 
 @pytest_asyncio.fixture
 async def user_token(client):
-    """Register a regular non-admin user."""
+    """Register-or-login a regular non-admin user."""
     r = await client.post("/auth/register", json={
         "email": "regular_fixture@test.com", "password": "Test1234!"
     })
-    return r.json()["access_token"]
+    if r.status_code in (200, 201):
+        return r.json()["access_token"]
+    r2 = await client.post("/auth/login", json={
+        "email": "regular_fixture@test.com", "password": "Test1234!"
+    })
+    return r2.json()["access_token"]
 
 
 # ── Bootstrap ─────────────────────────────────────────────────────────────────
@@ -94,7 +108,10 @@ async def test_bootstrap_creates_first_admin(client):
     await client.post("/auth/register", json={
         "email": "bootstrap_user@test.com", "password": "Test1234!"
     })
-    r = await client.post("/admin/bootstrap", json={"email": "bootstrap_user@test.com"})
+    r = await client.post("/admin/bootstrap", json={
+        "email": "bootstrap_user@test.com",
+        "secret": os.environ["BOOTSTRAP_SECRET"],
+    })
     assert r.status_code == 200
     assert r.json()["is_admin"] is True
 
@@ -105,7 +122,10 @@ async def test_bootstrap_blocks_second_call(client):
     await client.post("/auth/register", json={
         "email": "bootstrap_user2@test.com", "password": "Test1234!"
     })
-    r = await client.post("/admin/bootstrap", json={"email": "bootstrap_user2@test.com"})
+    r = await client.post("/admin/bootstrap", json={
+        "email": "bootstrap_user2@test.com",
+        "secret": os.environ["BOOTSTRAP_SECRET"],
+    })
     assert r.status_code == 403
 
 

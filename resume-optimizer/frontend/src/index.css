@@ -1,15 +1,79 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* ── Manila & Ink design tokens ─────────────────────────────────────────────
+   RGB triplets so Tailwind can apply <alpha-value>.
+   Light = "paper", dark = "ink". Toggled via .dark on <html>. */
+:root {
+  --c-bg:            250 246 239;  /* paper        #FAF6EF */
+  --c-surface:       255 255 255;  /* card         #FFFFFF */
+  --c-surface-2:     246 240 230;  /* subtle fill  #F6F0E6 */
+  --c-ink:           28 25 23;     /* text         #1C1917 */
+  --c-ink-mute:      87 83 78;     /* secondary    #57534E */
+  --c-ink-faint:     140 133 125;  /* tertiary     #8C857D */
+  --c-line:          231 223 210;  /* hairline     #E7DFD2 */
+  --c-accent:        26 107 82;    /* editorial green #1A6B52 */
+  --c-accent-strong: 17 82 62;     /* hover        #11523E */
+  --c-accent-soft:   228 239 234;  /* green tint   #E4EFEA */
+  --c-hilite:        178 117 21;   /* amber        #B27515 */
+  --c-hilite-soft:   247 237 219;  /* amber tint   #F7EDDB */
+  --c-err:           179 56 44;    /* error        #B3382C */
+  --c-err-soft:      248 232 229;  /* error tint   #F8E8E5 */
+
+  --shadow-card:   0 1px 2px rgba(28, 25, 23, 0.05), 0 4px 14px rgba(28, 25, 23, 0.05);
+  --shadow-lifted: 0 2px 6px rgba(28, 25, 23, 0.08), 0 10px 28px rgba(28, 25, 23, 0.09);
+  --shadow-accent: 0 4px 14px rgba(26, 107, 82, 0.28);
+}
+
+.dark {
+  --c-bg:            22 19 15;     /* ink          #16130F */
+  --c-surface:       30 26 21;     /* card         #1E1A15 */
+  --c-surface-2:     42 36 29;     /* subtle fill  #2A241D */
+  --c-ink:           237 230 218;  /* text         #EDE6DA */
+  --c-ink-mute:      178 169 155;  /* secondary    #B2A99B */
+  --c-ink-faint:     126 118 106;  /* tertiary     #7E766A */
+  --c-line:          60 52 42;     /* hairline     #3C342A */
+  --c-accent:        77 184 146;   /* green        #4DB892 */
+  --c-accent-strong: 110 205 172;  /* hover        #6ECDAC */
+  --c-accent-soft:   33 51 43;     /* green tint   #21332B */
+  --c-hilite:        217 160 63;   /* amber        #D9A03F */
+  --c-hilite-soft:   56 44 26;     /* amber tint   #382C1A */
+  --c-err:           224 109 97;   /* error        #E06D61 */
+  --c-err-soft:      59 33 30;     /* error tint   #3B211E */
+
+  --shadow-card:   0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(0, 0, 0, 0.3);
+  --shadow-lifted: 0 2px 6px rgba(0, 0, 0, 0.5), 0 10px 28px rgba(0, 0, 0, 0.45);
+  --shadow-accent: 0 4px 14px rgba(77, 184, 146, 0.22);
+}
+
 * { box-sizing: border-box; }
-body { font-family: 'Inter', system-ui, sans-serif; background: #FAFAF8; color: #1a1a1a; }
+
+body {
+  font-family: 'Archivo', system-ui, sans-serif;
+  background: rgb(var(--c-bg));
+  color: rgb(var(--c-ink));
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
+/* Paper grain — barely-there texture that sells the editorial feel. Static, zero GPU cost. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+}
 
 @layer base {
+  h1, h2 {
+    font-family: 'Fraunces', Georgia, serif;
+    letter-spacing: -0.01em;
+  }
   button, a, input, textarea, select {
-    transition: color 150ms ease, background-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+    transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
   }
 }
 
@@ -21,11 +85,44 @@ body { font-family: 'Inter', system-ui, sans-serif; background: #FAFAF8; color: 
   to   { opacity: 1; }
 }
 
-/* Custom scrollbar */
+/* Staggered load reveal (landing hero) */
+.reveal { animation: rise 600ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.reveal-1 { animation-delay: 60ms; }
+.reveal-2 { animation-delay: 160ms; }
+.reveal-3 { animation-delay: 280ms; }
+.reveal-4 { animation-delay: 400ms; }
+@keyframes rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Gentle float for the static hero papers */
+.hero-float { animation: heroFloat 7s ease-in-out infinite; }
+@keyframes heroFloat {
+  0%, 100% { transform: translateY(0) rotate(var(--tw-rotate, 0deg)) scale(var(--tw-scale-x, 1), var(--tw-scale-y, 1)); }
+  50%      { transform: translateY(-10px) rotate(var(--tw-rotate, 0deg)) scale(var(--tw-scale-x, 1), var(--tw-scale-y, 1)); }
+}
+
+/* Pipeline stage pulse */
+.stage-pulse { animation: stagePulse 1.4s ease-in-out infinite; }
+@keyframes stagePulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.55; transform: scale(0.82); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-fade { animation: none; }
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* Custom scrollbar — follows theme */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #c4c3dc #e5e7eb;
+  scrollbar-color: rgb(var(--c-line)) transparent;
 }
 ::-webkit-scrollbar       { width: 6px; height: 6px; }
-::-webkit-scrollbar-track  { background: #e5e7eb; border-radius: 99px; }
-::-webkit-scrollbar-thumb  { background: #c4c3dc; border-radius: 99px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  { background: rgb(var(--c-line)); border-radius: 99px; }

@@ -8,20 +8,10 @@ industry, tech stack, and ATS-critical keywords — plus legacy keys
 (keywords, requirements, skills) for backward compatibility.
 """
 
-import json
 from llm import complete
 from config import MODEL_JD_ANALYZER
 from utils import cache as result_cache
-
-
-def _clean_json(text: str) -> str:
-    text = text.strip()
-    if text.startswith("```"):
-        parts = text.split("```")
-        text = parts[1] if len(parts) > 1 else text
-        if text.startswith("json"):
-            text = text[4:]
-    return text.strip()
+from utils.llm_json import parse_llm_json
 
 
 async def _llm_complete(prompt: str, system: str = None, schema: dict = None) -> tuple:
@@ -36,8 +26,8 @@ async def _llm_complete(prompt: str, system: str = None, schema: dict = None) ->
     output_tokens = response.get("output_tokens", 0)
     raw = response["text"]
     try:
-        return json.loads(_clean_json(raw)), cost_usd, input_tokens, output_tokens
-    except (json.JSONDecodeError, ValueError):
+        return parse_llm_json(raw), cost_usd, input_tokens, output_tokens
+    except ValueError:
         return {}, cost_usd, input_tokens, output_tokens
 
 

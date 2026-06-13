@@ -7,6 +7,8 @@ import Button from '../components/ui/Button';
 import client from '../api/client';
 import useAuthStore from '../store/authStore';
 
+const inputCls = 'w-full bg-card text-ink border border-line rounded-lg px-4 py-2.5 text-sm placeholder:text-ink-faint focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all';
+
 export default function Login() {
   const [form, setForm] = useState({ email: '', password: '' });
   const [show, setShow] = useState(false);
@@ -32,18 +34,18 @@ export default function Login() {
     <AuthLayout title="Welcome back" subtitle="Sign in to your account to continue">
       <form onSubmit={submit} className="space-y-5 page-fade">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">Email</label>
+          <label className="block text-sm font-medium text-ink-mute mb-1.5">Email</label>
           <input type="email" required value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-            className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all"
+            className={inputCls}
             placeholder="you@example.com" />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">Password</label>
+          <label className="block text-sm font-medium text-ink-mute mb-1.5">Password</label>
           <div className="relative">
             <input type={show ? 'text' : 'password'} required value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-              className="w-full border border-gray-200 rounded-xl px-4 py-2.5 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all"
+              className={`${inputCls} pr-10`}
               placeholder="••••••••" />
-            <button type="button" onClick={() => setShow(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
+            <button type="button" onClick={() => setShow(s => !s)} aria-label={show ? 'Hide password' : 'Show password'} className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-faint hover:text-ink-mute">
               {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
@@ -52,7 +54,7 @@ export default function Login() {
           {loading ? 'Signing in…' : 'Sign in'}
         </Button>
       </form>
-      <p className="text-center text-sm text-gray-500 mt-6">
+      <p className="text-center text-sm text-ink-mute mt-6">
         Don't have an account? <Link to="/register" className="text-primary font-medium hover:underline">Create one</Link>
       </p>
     </AuthLayout>

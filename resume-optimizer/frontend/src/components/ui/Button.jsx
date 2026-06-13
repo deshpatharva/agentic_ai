@@ -1,15 +1,15 @@
 import { clsx } from 'clsx';
 
 const variants = {
-  primary:   '[background:linear-gradient(135deg,#8b84e0,#7F77DD)] hover:opacity-90 text-white shadow-primary',
-  secondary: 'bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 shadow-card',
-  ghost:     'bg-transparent hover:bg-gray-100 text-gray-600',
-  danger:    'bg-red-600 hover:bg-red-700 text-white shadow-sm',
+  primary:   'bg-primary hover:bg-primary-dark text-white dark:text-ink shadow-primary',
+  secondary: 'bg-card hover:bg-surface-2 text-ink border border-line shadow-card',
+  ghost:     'bg-transparent hover:bg-surface-2 text-ink-mute',
+  danger:    'bg-err hover:opacity-90 text-white shadow-sm',
 };
 const sizes = {
-  sm: 'px-3 py-1.5 text-sm rounded-xl',
-  md: 'px-4 py-2 text-sm rounded-xl',
-  lg: 'px-6 py-3 text-base rounded-xl',
+  sm: 'px-3 py-1.5 text-sm rounded-lg',
+  md: 'px-4 py-2 text-sm rounded-lg',
+  lg: 'px-6 py-3 text-base rounded-lg',
 };
 
 export default function Button({ variant = 'primary', size = 'md', className, disabled, children, ...props }) {

@@ -1,5 +1,5 @@
 """
-Tests for GET /dashboard/match-analytics and GET /admin/analytics endpoints.
+Tests for GET /admin/analytics endpoints.
 
 Run with:
     pytest backend/tests/test_analytics.py -v
@@ -40,16 +40,20 @@ async def _override_get_db():
         yield session
 
 
-app.dependency_overrides[get_db] = _override_get_db
 
 
 @pytest_asyncio.fixture(autouse=True, scope="module")
 async def setup_db():
+    # Scope the get_db override to THIS module — the app object is shared
+    # across test modules, so an import-time override leaks between files.
+    app.dependency_overrides[get_db] = _override_get_db
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
+    app.dependency_overrides.pop(get_db, None)
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+    await _engine.dispose()
     import os as _os
     import time
     try:
@@ -148,181 +152,6 @@ def _create_test_matches_data(user_id: str):
     return results
 
 
-@pytest.mark.asyncio
-async def test_match_analytics_returns_correct_shape(client, auth_token, test_user_id):
-    """Test that endpoint returns correct response shape."""
-    matches = _create_test_matches_data(test_user_id)
-
-    with patch("dashboard.router.read_job_matches") as mock_read:
-        mock_read.return_value = {
-            "total": len(matches),
-            "page": 1,
-            "per_page": 1000,
-            "results": matches,
-        }
-
-        r = await client.get(
-            "/dashboard/match-analytics",
-            headers={"Authorization": f"Bearer {auth_token}"},
-        )
-        assert r.status_code == 200, r.text
-        data = r.json()
-
-        # Check response shape
-        assert "analytics" in data
-        assert isinstance(data["analytics"], list)
-        assert len(data["analytics"]) > 0
-
-        # Check first analytics object structure
-        first = data["analytics"][0]
-        assert "date" in first
-        assert "match_count" in first
-        assert "avg_similarity_score" in first
-        assert "source_breakdown" in first
-
-        # Check data types
-        assert isinstance(first["date"], str)
-        assert isinstance(first["match_count"], int)
-        assert isinstance(first["avg_similarity_score"], (int, float))
-        assert isinstance(first["source_breakdown"], dict)
-
-
-@pytest.mark.asyncio
-async def test_match_analytics_calculates_aggregates_correctly(client, auth_token, test_user_id):
-    """Test that endpoint correctly aggregates and calculates analytics."""
-    matches = _create_test_matches_data(test_user_id)
-
-    with patch("dashboard.router.read_job_matches") as mock_read:
-        mock_read.return_value = {
-            "total": len(matches),
-            "page": 1,
-            "per_page": 1000,
-            "results": matches,
-        }
-
-        r = await client.get(
-            "/dashboard/match-analytics?days=30",
-            headers={"Authorization": f"Bearer {auth_token}"},
-        )
-        assert r.status_code == 200, r.text
-        data = r.json()
-
-        analytics = data["analytics"]
-
-        # Should have 3 days of data
-        assert len(analytics) == 3, f"Expected 3 days, got {len(analytics)}: {analytics}"
-
-        # Verify sorted by date descending (most recent first)
-        dates = [a["date"] for a in analytics]
-        assert dates == sorted(dates, reverse=True), f"Dates not in descending order: {dates}"
-
-        # Find the day with 3 linkedin matches (match_count=3, avg_similarity_score=~0.86)
-        day_with_3 = next((a for a in analytics if a["match_count"] == 3), None)
-        assert day_with_3 is not None, f"Could not find day with 3 matches in {analytics}"
-        assert day_with_3["source_breakdown"]["linkedin"] == 3
-        assert round(day_with_3["avg_similarity_score"], 2) == 0.86  # (0.85 + 0.86 + 0.87) / 3 = 0.86
-
-        # Find the day with 2 indeed matches
-        day_with_2 = next((a for a in analytics if a["match_count"] == 2), None)
-        assert day_with_2 is not None, f"Could not find day with 2 matches in {analytics}"
-        assert day_with_2["source_breakdown"]["indeed"] == 2
-        assert round(day_with_2["avg_similarity_score"], 2) == 0.79  # (0.78 + 0.80) / 2 = 0.79
-
-        # Find the day with 1 linkedin match
-        day_with_1 = next((a for a in analytics if a["match_count"] == 1), None)
-        assert day_with_1 is not None, f"Could not find day with 1 match in {analytics}"
-        assert day_with_1["source_breakdown"]["linkedin"] == 1
-        assert round(day_with_1["avg_similarity_score"], 2) == 0.92
-
-
-@pytest.mark.asyncio
-async def test_match_analytics_requires_auth(client):
-    """Test that endpoint requires authentication."""
-    r = await client.get("/dashboard/match-analytics")
-    assert r.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_match_analytics_respects_days_param(client, auth_token, test_user_id):
-    """Test that days parameter limits results correctly."""
-    matches = _create_test_matches_data(test_user_id)
-
-    with patch("dashboard.router.read_job_matches") as mock_read:
-        mock_read.return_value = {
-            "total": len(matches),
-            "page": 1,
-            "per_page": 1000,
-            "results": matches,
-        }
-
-        # Request only last 1 day
-        r = await client.get(
-            "/dashboard/match-analytics?days=1",
-            headers={"Authorization": f"Bearer {auth_token}"},
-        )
-        assert r.status_code == 200
-        # Should work with days=1 (doesn't error on validation)
-
-
-@pytest.mark.asyncio
-async def test_match_analytics_default_days_is_30(client, auth_token, test_user_id):
-    """Test that default days parameter is 30."""
-    matches = _create_test_matches_data(test_user_id)
-
-    with patch("dashboard.router.read_job_matches") as mock_read:
-        mock_read.return_value = {
-            "total": len(matches),
-            "page": 1,
-            "per_page": 1000,
-            "results": matches,
-        }
-
-        r = await client.get(
-            "/dashboard/match-analytics",
-            headers={"Authorization": f"Bearer {auth_token}"},
-        )
-        assert r.status_code == 200
-        # Should work with default (doesn't error on validation)
-
-
-@pytest.mark.asyncio
-async def test_match_analytics_empty_when_no_matches(client, auth_token):
-    """Test that endpoint returns empty list when no matches exist."""
-    with patch("dashboard.router.read_job_matches") as mock_read:
-        mock_read.return_value = {
-            "total": 0,
-            "page": 1,
-            "per_page": 1000,
-            "results": [],
-        }
-
-        r = await client.get(
-            "/dashboard/match-analytics",
-            headers={"Authorization": f"Bearer {auth_token}"},
-        )
-        assert r.status_code == 200
-        data = r.json()
-        assert data["analytics"] == []
-
-
-@pytest.mark.asyncio
-async def test_match_analytics_rejects_invalid_days(client, auth_token):
-    """Test that endpoint rejects invalid days parameter."""
-    # Test days > 90
-    r = await client.get(
-        "/dashboard/match-analytics?days=91",
-        headers={"Authorization": f"Bearer {auth_token}"},
-    )
-    assert r.status_code == 422  # Validation error
-
-    # Test days < 1
-    r = await client.get(
-        "/dashboard/match-analytics?days=0",
-        headers={"Authorization": f"Bearer {auth_token}"},
-    )
-    assert r.status_code == 422  # Validation error
-
-
 # ── Admin Analytics Tests ────────────────────────────────────────────────────
 
 @pytest_asyncio.fixture(scope="module")
@@ -345,10 +174,11 @@ async def admin_token(client):
         # New user created
         token = r.json()["access_token"]
         # Bootstrap to admin
-        bootstrap_r = await client.post("/admin/bootstrap", json={"email": admin_email})
+        import os as _os_env
+        bootstrap_r = await client.post("/admin/bootstrap", json={"email": admin_email, "secret": _os_env.environ["BOOTSTRAP_SECRET"]})
         if bootstrap_r.status_code != 200:
             raise AssertionError(f"Bootstrap failed: {bootstrap_r.status_code} {bootstrap_r.text}")
-    elif r.status_code == 409:
+    elif r.status_code in (400, 409):
         # User already exists, login
         r = await client.post("/auth/login", json={
             "email": admin_email,

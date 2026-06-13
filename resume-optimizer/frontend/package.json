@@ -8,8 +8,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@radix-ui/react-dialog": "^1.1.15",
-    "@radix-ui/react-slot": "^1.2.4",
+    "@react-three/fiber": "^8.17.10",
     "axios": "^1.13.6",
     "clsx": "^2.1.1",
     "lucide-react": "^1.6.0",
@@ -18,7 +17,7 @@
     "react-hot-toast": "^2.6.0",
     "react-router-dom": "^7.13.2",
     "recharts": "^3.8.0",
-    "tailwind-merge": "^3.5.0",
+    "three": "^0.169.0",
     "zustand": "^5.0.12"
   },
   "devDependencies": {

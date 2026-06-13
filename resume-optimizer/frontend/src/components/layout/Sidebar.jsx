@@ -1,8 +1,9 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, FileText, Briefcase, BarChart2, Settings, LogOut, Zap, ShieldCheck, User } from 'lucide-react';
+import { LayoutDashboard, FileText, Briefcase, Settings, LogOut, Zap, ShieldCheck, User, Feather } from 'lucide-react';
 import { clsx } from 'clsx';
 import useAuthStore from '../../store/authStore';
 import Badge from '../ui/Badge';
+import ThemeToggle from '../ui/ThemeToggle';
 import TrialBanner from '../TrialBanner';
 
 const nav = [
@@ -11,7 +12,6 @@ const nav = [
   { to: '/profiles',          icon: User,            label: 'Profiles' },
   { to: '/dashboard/resumes', icon: FileText,         label: 'My Resumes' },
   { to: '/dashboard/matches', icon: Briefcase,        label: 'Job Matches', proBadge: true },
-  { to: '/dashboard/usage',   icon: BarChart2,        label: 'Usage' },
   { to: '/dashboard/settings',icon: Settings,         label: 'Settings' },
 ];
 
@@ -19,7 +19,10 @@ const adminNav = [
   { to: '/admin',            icon: ShieldCheck, label: 'Admin' },
 ];
 
-export default function Sidebar() {
+/* The sidebar is a fixed "book spine": warm ink in both themes, so colors are
+   literal rather than tokenized. Accent values match the dark-theme palette.
+   SidebarContent is shared by the desktop aside and the mobile drawer. */
+export function SidebarContent() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuthStore();
@@ -29,11 +32,11 @@ export default function Sidebar() {
   const isAdmin = user?.is_admin === true;
 
   return (
-    <aside className="w-60 shrink-0 h-screen sticky top-0 bg-gray-900 text-white flex flex-col">
-      <div className="px-6 py-5 border-b border-gray-800">
+    <div className="h-full bg-[#1E1A15] text-[#EDE6DA] flex flex-col">
+      <div className="px-6 py-5 border-b border-[#3C342A]">
         <Link to="/dashboard" className="flex items-center gap-2">
-          <Zap className="w-5 h-5 text-primary" />
-          <span className="font-bold text-lg">ResumeAI</span>
+          <Feather className="w-5 h-5 text-[#4DB892]" />
+          <span className="font-display font-semibold text-lg tracking-tight">ResumeAI</span>
         </Link>
       </div>
 
@@ -45,8 +48,8 @@ export default function Sidebar() {
               className={clsx(
                 'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-150 border-l-2',
                 active
-                  ? 'border-primary bg-primary/10 text-primary'
-                  : 'border-transparent text-gray-400 hover:bg-white/5 hover:text-white'
+                  ? 'border-[#4DB892] bg-[#4DB892]/10 text-[#4DB892]'
+                  : 'border-transparent text-[#B2A99B] hover:bg-white/5 hover:text-[#EDE6DA]'
               )}>
               <Icon className="w-4 h-4 shrink-0" />
               <span className="flex-1">{label}</span>
@@ -56,7 +59,7 @@ export default function Sidebar() {
         })}
         {isAdmin && (
           <>
-            <div className="pt-3 pb-1 px-3 text-[10px] font-semibold uppercase tracking-widest text-gray-600">Admin</div>
+            <div className="pt-3 pb-1 px-3 text-[10px] font-semibold uppercase tracking-widest text-[#7E766A]">Admin</div>
             {adminNav.map(({ to, icon: Icon, label }) => {
               const active = location.pathname === to || location.pathname.startsWith(to + '/');
               return (
@@ -64,8 +67,8 @@ export default function Sidebar() {
                   className={clsx(
                     'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-150 border-l-2',
                     active
-                      ? 'border-amber-400 bg-amber-400/10 text-amber-400'
-                      : 'border-transparent text-gray-400 hover:bg-white/5 hover:text-white'
+                      ? 'border-[#D9A03F] bg-[#D9A03F]/10 text-[#D9A03F]'
+                      : 'border-transparent text-[#B2A99B] hover:bg-white/5 hover:text-[#EDE6DA]'
                   )}>
                   <Icon className="w-4 h-4 shrink-0" />
                   <span className="flex-1">{label}</span>
@@ -76,16 +79,16 @@ export default function Sidebar() {
         )}
       </nav>
 
-      <div className="px-4 py-4 border-t border-gray-800">
+      <div className="px-4 py-4 border-t border-[#3C342A]">
         <TrialBanner />
         {user?.plan === 'free' && (
           <Link to="/dashboard/settings"
-            className="flex items-center gap-2 w-full bg-primary/10 hover:bg-primary/20 text-primary px-3 py-2.5 rounded-lg text-sm font-medium mb-3 transition-colors">
+            className="flex items-center gap-2 w-full bg-[#4DB892]/10 hover:bg-[#4DB892]/20 text-[#4DB892] px-3 py-2.5 rounded-lg text-sm font-medium mb-3 transition-colors">
             <Zap className="w-4 h-4" />Upgrade to Pro
           </Link>
         )}
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-primary/20 text-primary flex items-center justify-center text-sm font-bold shrink-0">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-full bg-[#4DB892]/20 text-[#4DB892] flex items-center justify-center text-sm font-bold shrink-0">
             {(user?.full_name || user?.email || 'U')[0].toUpperCase()}
           </div>
           <div className="flex-1 min-w-0">
@@ -94,11 +97,21 @@ export default function Sidebar() {
               {isAdmin ? 'admin' : (user?.plan || 'free')}
             </Badge>
           </div>
-          <button onClick={handleLogout} className="text-gray-500 hover:text-white transition-colors">
+          <ThemeToggle className="text-[#7E766A] hover:text-[#EDE6DA] hover:bg-white/5" />
+          <button onClick={handleLogout} aria-label="Log out" className="p-2 rounded-lg text-[#7E766A] hover:text-[#EDE6DA] hover:bg-white/5 transition-colors">
             <LogOut className="w-4 h-4" />
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Desktop-only sidebar. On mobile, AppShell renders the drawer instead. */
+export default function Sidebar() {
+  return (
+    <aside className="hidden lg:block w-60 shrink-0 h-screen sticky top-0">
+      <SidebarContent />
     </aside>
   );
 }

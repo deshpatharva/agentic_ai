@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Download, FileText, ChevronLeft, ChevronRight } from 'lucide-react';
-import Sidebar from '../components/layout/Sidebar';
+import AppShell from '../components/layout/AppShell';
 import Card from '../components/ui/Card';
 import client, { buildDownloadUrl } from '../api/client';
 
 function scoreColor(s) {
-  if (s >= 85) return 'text-green-600 bg-green-50';
-  if (s >= 70) return 'text-amber-600 bg-amber-50';
-  return 'text-red-600 bg-red-50';
+  if (s >= 85) return 'text-primary bg-accent-soft';
+  if (s >= 70) return 'text-hilite bg-hilite-soft';
+  return 'text-err bg-err-soft';
 }
 
 export default function Resumes() {
@@ -16,30 +16,32 @@ export default function Resumes() {
   const [total, setTotal]     = useState(0);
   const [page, setPage]       = useState(1);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const perPage = 10;
 
   useEffect(() => {
     setLoading(true);
+    setLoadError(null);
     client.get('/dashboard/resumes', { params: { page, per_page: perPage } })
       .then(r => { setResumes(r.data.results); setTotal(r.data.total); })
+      .catch(err => setLoadError(err.response?.data?.detail || 'Could not load your resumes.'))
       .finally(() => setLoading(false));
   }, [page]);
 
   const totalPages = Math.ceil(total / perPage);
 
   return (
-    <div className="flex h-screen bg-surface overflow-hidden page-fade">
-      <Sidebar />
-      <main className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto px-8 py-8">
-          <div className="flex items-center justify-between mb-6">
+    <AppShell>
+      <div className="page-fade">
+        <div className="max-w-4xl mx-auto px-4 sm:px-8 py-8">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">My Resumes</h1>
-              <p className="text-gray-500 text-sm mt-1">{total} resume{total !== 1 ? 's' : ''} optimized</p>
+              <h1 className="font-display text-2xl font-semibold text-ink">My Resumes</h1>
+              <p className="text-ink-mute text-sm mt-1">{total} resume{total !== 1 ? 's' : ''} optimized</p>
             </div>
             <Link
-              to="/app"
-              className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:bg-primary-dark transition-colors"
+              to="/optimize"
+              className="flex items-center gap-2 px-4 py-2 bg-primary text-white dark:text-ink rounded-lg text-sm font-medium hover:bg-primary-dark transition-colors"
             >
               <FileText className="w-4 h-4" /> Optimize New Resume
             </Link>
@@ -47,19 +49,22 @@ export default function Resumes() {
 
           <Card>
             {loading ? (
-              <div className="py-16 text-center text-gray-400">Loading…</div>
+              <div className="py-16 text-center text-ink-faint">Loading…</div>
+            ) : loadError ? (
+              <div className="py-16 text-center text-sm text-err">{String(loadError)}</div>
             ) : resumes.length === 0 ? (
               <div className="py-16 text-center">
-                <FileText className="w-10 h-10 text-gray-200 mx-auto mb-3" />
-                <p className="text-gray-400 text-sm">No resumes yet.</p>
-                <Link to="/app" className="text-primary text-sm hover:underline mt-1 inline-block">
+                <FileText className="w-10 h-10 text-ink-faint/40 mx-auto mb-3" />
+                <p className="text-ink-faint text-sm">No resumes yet.</p>
+                <Link to="/optimize" className="text-primary text-sm hover:underline mt-1 inline-block">
                   Optimize your first resume →
                 </Link>
               </div>
             ) : (
-              <table className="w-full text-sm">
+              <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[560px]">
                 <thead>
-                  <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
+                  <tr className="text-left text-xs text-ink-faint border-b border-line">
                     <th className="pb-3 font-medium">File</th>
                     <th className="pb-3 font-medium">Score</th>
                     <th className="pb-3 font-medium">Iterations</th>
@@ -68,18 +73,18 @@ export default function Resumes() {
                     <th className="pb-3 font-medium"></th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-50">
+                <tbody className="divide-y divide-line/50">
                   {resumes.map(r => (
-                    <tr key={r.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="py-3 font-medium text-gray-800 truncate max-w-[200px]">{r.filename}</td>
+                    <tr key={r.id} className="hover:bg-surface-2 transition-colors">
+                      <td className="py-3 font-medium text-ink truncate max-w-[200px]">{r.filename}</td>
                       <td className="py-3">
-                        <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${scoreColor(r.final_score || 0)}`}>
+                        <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium font-mono ${scoreColor(r.final_score || 0)}`}>
                           {r.final_score ? Math.round(r.final_score) : '—'}
                         </span>
                       </td>
-                      <td className="py-3 text-gray-500">{r.iterations}</td>
-                      <td className="py-3 text-gray-400">v{r.version}</td>
-                      <td className="py-3 text-gray-400 text-xs">
+                      <td className="py-3 text-ink-mute">{r.iterations}</td>
+                      <td className="py-3 text-ink-faint">v{r.version}</td>
+                      <td className="py-3 text-ink-faint text-xs">
                         {new Date(r.created_at).toLocaleDateString()}
                       </td>
                       <td className="py-3">
@@ -94,6 +99,7 @@ export default function Resumes() {
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </Card>
 
@@ -102,22 +108,24 @@ export default function Resumes() {
               <button
                 disabled={page === 1}
                 onClick={() => setPage(p => p - 1)}
-                className="p-2 text-gray-400 hover:text-gray-700 disabled:opacity-30 transition-colors"
+                aria-label="Previous page"
+                className="p-2 text-ink-faint hover:text-ink disabled:opacity-30 transition-colors"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
-              <span className="text-sm text-gray-500">Page {page} of {totalPages}</span>
+              <span className="text-sm text-ink-mute">Page {page} of {totalPages}</span>
               <button
                 disabled={page === totalPages}
                 onClick={() => setPage(p => p + 1)}
-                className="p-2 text-gray-400 hover:text-gray-700 disabled:opacity-30 transition-colors"
+                aria-label="Next page"
+                className="p-2 text-ink-faint hover:text-ink disabled:opacity-30 transition-colors"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>
             </div>
           )}
         </div>
-      </main>
-    </div>
+      </div>
+    </AppShell>
   );
 }

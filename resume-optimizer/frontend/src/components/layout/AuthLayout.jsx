@@ -1,9 +1,13 @@
-import { Zap } from 'lucide-react';
+import { Feather } from 'lucide-react';
 
 export default function AuthLayout({ children, title, subtitle }) {
   return (
     <div className="min-h-screen flex">
-      <div className="hidden lg:flex w-1/2 bg-gradient-to-br from-primary to-primary-dark flex-col justify-center px-16 text-white relative overflow-hidden">
+      {/* Brand panel — fixed deep-green "cover board", identical in both themes */}
+      <div
+        className="hidden lg:flex w-1/2 flex-col justify-center px-16 text-[#F2EFE6] relative overflow-hidden"
+        style={{ background: 'linear-gradient(165deg, #11523E 0%, #1A6B52 70%, #1F7A5E 100%)' }}
+      >
         {/* Dot-grid texture overlay */}
         <div
           className="absolute inset-0 opacity-10 pointer-events-none"
@@ -14,29 +18,29 @@ export default function AuthLayout({ children, title, subtitle }) {
         />
         <div className="relative z-10">
           <div className="flex items-center gap-3 mb-8">
-            <Zap className="w-8 h-8" />
-            <span className="text-2xl font-bold">ResumeAI</span>
+            <Feather className="w-8 h-8" />
+            <span className="font-display text-2xl font-semibold tracking-tight">ResumeAI</span>
           </div>
-          <h2 className="text-4xl font-bold leading-tight mb-4">Your resume, optimized by AI</h2>
-          <p className="text-purple-200 text-lg">Upload once. Score on 4 dimensions. Iterate until perfect. Get hired faster.</p>
+          <h2 className="font-display text-4xl font-semibold leading-tight mb-4">Your resume, set in type that gets you read.</h2>
+          <p className="text-[#CFE8DD] text-lg">Upload once. Score on 4 dimensions. Iterate until perfect. Get hired faster.</p>
           <div className="mt-12 grid grid-cols-2 gap-4">
-            {[['4 AI Scorers','ATS, Impact, Skills, Structure'],['Smart Rewriter','Aligned to your exact JD'],['Job Matching','Nightly scrape of matched roles'],['Real-time Progress','Live pipeline status']].map(([t,d]) => (
+            {[['4 AI Scorers','ATS, Impact, Skills, Readability'],['Smart Rewriter','Aligned to your exact JD'],['Job Matching','Nightly scrape of matched roles'],['Real-time Progress','Live pipeline status']].map(([t,d]) => (
               <div key={t} className="bg-white/10 backdrop-blur-sm rounded-xl p-4 hover:bg-white/15 transition-colors">
                 <div className="font-semibold mb-1">{t}</div>
-                <div className="text-purple-200 text-sm">{d}</div>
+                <div className="text-[#CFE8DD] text-sm">{d}</div>
               </div>
             ))}
           </div>
         </div>
       </div>
-      <div className="flex-1 flex flex-col justify-center px-8 lg:px-16 bg-white">
+      <div className="flex-1 flex flex-col justify-center px-8 lg:px-16 bg-card">
         <div className="max-w-md w-full mx-auto">
           <div className="flex items-center gap-2 mb-8 lg:hidden">
-            <Zap className="w-6 h-6 text-primary" />
-            <span className="text-xl font-bold">ResumeAI</span>
+            <Feather className="w-6 h-6 text-primary" />
+            <span className="font-display text-xl font-semibold text-ink">ResumeAI</span>
           </div>
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">{title}</h1>
-          <p className="text-gray-500 mb-8">{subtitle}</p>
+          <h1 className="font-display text-2xl font-semibold text-ink mb-2">{title}</h1>
+          <p className="text-ink-mute mb-8">{subtitle}</p>
           {children}
         </div>
       </div>
