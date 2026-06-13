@@ -1,7 +1,7 @@
 # Stage B · Phase 0 — Backend Profiling & Inventory
 
 **Date:** 2026-06-12 · **Scope:** read-only analysis; no code changed.
-**Status:** ✅ **P1 (B1–B6) approved and implemented 2026-06-12.** ✅ **P3 (R1–R6) + E1 approved and implemented 2026-06-12** (see record below). P2 dead-code removal and P4 consolidation remain unapproved and untouched.
+**Status:** ✅ **P1 (B1–B6) approved and implemented 2026-06-12.** ✅ **P3 (R1–R6) + E1 approved and implemented 2026-06-12.** ✅ **P2 (D1–D3) approved and implemented 2026-06-12** — `/upload`, `/analyze-jd`, `/generate-doc`, `/dashboard/match-analytics`, and the dead scorer helper (with its sklearn dependency and second spaCy load) removed along with their 11 orphaned tests; suite green at 194/194. **Only P4 (LLM-JSON consolidation) remains unapproved.**
 
 ## P3 + E1 implementation record
 
