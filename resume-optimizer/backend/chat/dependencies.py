@@ -1,4 +1,4 @@
-"""FastAPI dependency that resolves or creates a ChatSession for the current user."""
+"""FastAPI dependencies for the optimize co-pilot."""
 
 import uuid
 from datetime import datetime, timezone
@@ -41,3 +41,24 @@ async def get_or_create_session(
     await db.commit()
     await db.refresh(sess)
     return sess
+
+
+async def require_complete_profile(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Raise 403 with a structured directive if the user has no usable profile."""
+    from profiles.status import compute_profile_status
+    if await compute_profile_status(current_user, db) == "incomplete":
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "profile_incomplete",
+                "message": (
+                    "You need at least one saved profile before using the optimization chat. "
+                    "Create a profile to continue."
+                ),
+                "action": {"label": "Create your profile", "href": "/profiles/new"},
+            },
+        )
+    return current_user

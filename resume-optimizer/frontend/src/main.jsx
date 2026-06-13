@@ -7,6 +7,7 @@ import './index.css';
 import ProtectedRoute from './components/ProtectedRoute';
 import GuestRoute from './components/GuestRoute';
 import AdminRoute from './components/AdminRoute';
+import RequireProfile from './components/RequireProfile';
 
 // Route-level code splitting: each page loads on demand, keeping the
 // landing 3D bundle and admin charts out of the initial chunk.
@@ -58,7 +59,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
           <Route path="/login"    element={<GuestRoute><Login /></GuestRoute>} />
           <Route path="/register" element={<GuestRoute><Register /></GuestRoute>} />
           <Route path="/app"      element={<Navigate to="/optimize" />} />
-          <Route path="/optimize" element={<ProtectedRoute><ChatOptimizePage /></ProtectedRoute>} />
+          <Route path="/optimize" element={<ProtectedRoute><RequireProfile><ChatOptimizePage /></RequireProfile></ProtectedRoute>} />
 
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
           <Route path="/dashboard/matches"  element={<ProtectedRoute><JobMatches /></ProtectedRoute>} />

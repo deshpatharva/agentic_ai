@@ -31,6 +31,10 @@ export function SidebarContent() {
   const isPro = user?.plan === 'pro' || user?.plan === 'enterprise';
   const isAdmin = user?.is_admin === true;
 
+  // Single source of truth for identity rendering — avatar and name share the same fallback chain.
+  const displayName = user?.full_name?.trim() || user?.email?.split('@')[0] || 'User';
+  const initial = (user?.full_name?.trim() || user?.email || 'U')[0].toUpperCase();
+
   return (
     <div className="h-full bg-[#1E1A15] text-[#EDE6DA] flex flex-col">
       <div className="px-6 py-5 border-b border-[#3C342A]">
@@ -89,10 +93,10 @@ export function SidebarContent() {
         )}
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-full bg-[#4DB892]/20 text-[#4DB892] flex items-center justify-center text-sm font-bold shrink-0">
-            {(user?.full_name || user?.email || 'U')[0].toUpperCase()}
+            {initial}
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium truncate">{user?.full_name || 'User'}</div>
+            <div className="text-sm font-medium truncate">{displayName}</div>
             <Badge variant={isAdmin ? 'admin' : (user?.plan || 'free')} className="mt-0.5">
               {isAdmin ? 'admin' : (user?.plan || 'free')}
             </Badge>

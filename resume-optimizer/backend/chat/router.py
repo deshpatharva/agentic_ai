@@ -15,7 +15,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from auth.dependencies import get_current_user
 from chat.agent import extract_handoff, in_sentinel, render_system_prompt
-from chat.dependencies import get_or_create_session
+from chat.dependencies import get_or_create_session, require_complete_profile
 from chat.handoff import fire_optimizer
 from chat.window import build_window
 from config import MODEL_CHAT_AGENT, CHAT_WINDOW_TURNS
@@ -129,7 +129,7 @@ async def _check_quota(user: User, db: AsyncSession) -> None:
 @router.post("/chat")
 async def optimize_chat(
     body: ChatTurnRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_complete_profile),
     db: AsyncSession = Depends(get_db),
 ):
     """Stateful co-pilot turn. Returns an SSE stream read via fetch() + ReadableStream.

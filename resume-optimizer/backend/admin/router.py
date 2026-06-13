@@ -13,7 +13,7 @@ from admin.dependencies import get_admin_user
 from admin.schemas import AdminStats, BootstrapRequest, UserUpdate, ProviderCostCreate, ProviderCostsResponse, AnalyticsResponse, PromoCodeCreate
 from limiter import limiter
 from config import STUCK_JOB_TIMEOUT_MINUTES, BOOTSTRAP_SECRET
-from db.models import JobStatus, PipelineEvent, PipelineJob, PlanType, Resume, User, ProviderCost
+from db.models import JobStatus, LlmCallLog, PipelineEvent, PipelineJob, PlanType, Resume, User, ProviderCost
 from db.session import get_db
 from delta.writer import read_job_matches
 from utils.time_utils import ensure_utc
@@ -841,5 +841,124 @@ async def get_pipeline_run_events(
         "events": [
             {"at": ev.created_at.isoformat(), **(ev.event_json or {})}
             for ev in events
+        ],
+    }
+
+
+# ── LLM analytics ─────────────────────────────────────────────────────────────
+
+@router.get("/analytics/tokens")
+@limiter.limit("10/minute")
+async def token_analytics(
+    request: Request,
+    days: int = Query(30, ge=1, le=365),
+    _: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Daily input vs output token split across all models."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    rows = (await db.execute(
+        select(
+            func.date(LlmCallLog.created_at).label("day"),
+            func.coalesce(func.sum(LlmCallLog.input_tokens), 0).label("input_tokens"),
+            func.coalesce(func.sum(LlmCallLog.output_tokens), 0).label("output_tokens"),
+        )
+        .where(LlmCallLog.created_at >= cutoff)
+        .group_by(func.date(LlmCallLog.created_at))
+        .order_by(func.date(LlmCallLog.created_at))
+    )).all()
+
+    series = [
+        {
+            "date": str(r.day),
+            "input_tokens": int(r.input_tokens),
+            "output_tokens": int(r.output_tokens),
+        }
+        for r in rows
+    ]
+    return {
+        "window_days":          days,
+        "total_input_tokens":   sum(r["input_tokens"] for r in series),
+        "total_output_tokens":  sum(r["output_tokens"] for r in series),
+        "series":               series,
+    }
+
+
+@router.get("/analytics/by-model")
+@limiter.limit("10/minute")
+async def by_model_analytics(
+    request: Request,
+    days: int = Query(30, ge=1, le=365),
+    _: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Per-model token, cost, and latency matrix."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    rows = (await db.execute(
+        select(
+            LlmCallLog.model,
+            LlmCallLog.provider,
+            func.count().label("calls"),
+            func.coalesce(func.sum(LlmCallLog.input_tokens),  0).label("input_tokens"),
+            func.coalesce(func.sum(LlmCallLog.output_tokens), 0).label("output_tokens"),
+            func.coalesce(func.sum(LlmCallLog.cost_usd),      0.0).label("cost_usd"),
+            func.avg(LlmCallLog.latency_ms).label("avg_latency_ms"),
+            func.avg(LlmCallLog.ttft_ms).label("avg_ttft_ms"),
+        )
+        .where(LlmCallLog.created_at >= cutoff)
+        .group_by(LlmCallLog.model, LlmCallLog.provider)
+        .order_by(func.sum(LlmCallLog.cost_usd).desc())
+    )).all()
+
+    return {
+        "window_days": days,
+        "models": [
+            {
+                "model":          r.model,
+                "provider":       r.provider,
+                "calls":          r.calls,
+                "input_tokens":   int(r.input_tokens),
+                "output_tokens":  int(r.output_tokens),
+                "cost_usd":       round(float(r.cost_usd), 6),
+                "avg_latency_ms": round(float(r.avg_latency_ms or 0), 1),
+                "avg_ttft_ms":    round(float(r.avg_ttft_ms or 0), 1),
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/analytics/cost-audit")
+@limiter.limit("10/minute")
+async def cost_audit(
+    request: Request,
+    days: int = Query(7, ge=1, le=90),
+    _: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Breakdown of cost_source values — reveals how often LiteLLM pricing is missing."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    rows = (await db.execute(
+        select(
+            LlmCallLog.cost_source,
+            func.count().label("calls"),
+            func.coalesce(func.sum(LlmCallLog.cost_usd), 0.0).label("total_cost_usd"),
+        )
+        .where(LlmCallLog.created_at >= cutoff)
+        .group_by(LlmCallLog.cost_source)
+    )).all()
+
+    total_calls = sum(r.calls for r in rows)
+    return {
+        "window_days": days,
+        "total_calls": total_calls,
+        "by_source": [
+            {
+                "source":        r.cost_source,
+                "calls":         r.calls,
+                "pct":           round(100.0 * r.calls / total_calls, 1) if total_calls else 0.0,
+                "total_cost_usd": round(float(r.total_cost_usd), 6),
+            }
+            for r in rows
         ],
     }

@@ -17,6 +17,8 @@ To switch a model, change config.py only. To add a provider, no code change need
 
 import asyncio
 import logging
+import time
+from datetime import datetime, timezone
 from typing import AsyncIterator
 
 import litellm
@@ -30,6 +32,47 @@ _logger = logging.getLogger(__name__)
 _CALL_TIMEOUT_S = 120
 _TRANSIENT = (litellm.exceptions.Timeout, litellm.exceptions.APIConnectionError,
               litellm.exceptions.InternalServerError, asyncio.TimeoutError)
+
+
+def _provider(model: str) -> str:
+    return model.split("/", 1)[0]
+
+
+async def _record_call(row_kwargs: dict) -> None:
+    """Fire-and-forget: write one LlmCallLog row in a fresh session."""
+    try:
+        from db.models import LlmCallLog
+        from db.session import AsyncSessionLocal
+        async with AsyncSessionLocal() as db:
+            db.add(LlmCallLog(**row_kwargs))
+            await db.commit()
+    except Exception:
+        _logger.exception("Failed to write LlmCallLog row")
+
+
+async def _provider_rates() -> dict[str, tuple[float, float]]:
+    """Return {provider: (in_rate, out_rate)} from the ProviderCost table (cached 5 min)."""
+    now = time.monotonic()
+    if now - _rates_cache["ts"] < 300 and _rates_cache["data"]:
+        return _rates_cache["data"]
+    try:
+        from db.models import ProviderCost
+        from db.session import AsyncSessionLocal
+        from sqlalchemy import select
+        async with AsyncSessionLocal() as db:
+            rows = (await db.execute(
+                select(ProviderCost).where(ProviderCost.active == True)
+            )).scalars().all()
+        data = {r.provider: (r.input_cost_per_1m_tokens, r.output_cost_per_1m_tokens)
+                for r in rows}
+        _rates_cache["data"] = data
+        _rates_cache["ts"] = now
+        return data
+    except Exception:
+        return _rates_cache.get("data") or {}
+
+
+_rates_cache: dict = {"ts": 0.0, "data": {}}
 
 
 async def complete(
@@ -53,6 +96,7 @@ async def complete(
             - text (str): Generated response text
             - input_tokens (int): Input token count
             - output_tokens (int): Output token count
+            - cost_usd (float): Resolved cost
     """
     if cached_prefix:
         messages = [{
@@ -64,6 +108,8 @@ async def complete(
         }]
     else:
         messages = [{"role": "user", "content": prompt}]
+
+    t0 = time.perf_counter()
 
     # One bounded retry on transient failures (timeout / connection / 5xx).
     try:
@@ -80,13 +126,33 @@ async def complete(
             timeout=_CALL_TIMEOUT_S,
         )
 
-    cost_usd = getattr(response, "_hidden_params", {}).get("response_cost") or 0.0
+    latency_ms = int((time.perf_counter() - t0) * 1000)
+    in_tok  = response.usage.prompt_tokens
+    out_tok = response.usage.completion_tokens
+
+    from utils.cost import resolve_cost
+    rates = await _provider_rates()
+    cost_usd, cost_source = resolve_cost(response, model, in_tok, out_tok, rates)
+
+    from observability.trace import current_trace, current_call_kind
+    asyncio.create_task(_record_call({
+        "trace_id":      current_trace() or None,
+        "model":         model,
+        "provider":      _provider(model),
+        "call_kind":     current_call_kind() or None,
+        "input_tokens":  in_tok,
+        "output_tokens": out_tok,
+        "cost_usd":      cost_usd,
+        "cost_source":   cost_source,
+        "latency_ms":    latency_ms,
+        "created_at":    datetime.now(timezone.utc),
+    }))
 
     return {
-        "text": response.choices[0].message.content.strip(),
-        "input_tokens": response.usage.prompt_tokens,
-        "output_tokens": response.usage.completion_tokens,
-        "cost_usd": float(cost_usd),
+        "text":          response.choices[0].message.content.strip(),
+        "input_tokens":  in_tok,
+        "output_tokens": out_tok,
+        "cost_usd":      cost_usd,
     }
 
 
@@ -100,6 +166,9 @@ async def stream_chat(messages: list[dict], model: str) -> AsyncIterator[dict]:
 
     `messages` is [{role, content}, ...] — system + sliding window.
     """
+    t0 = time.perf_counter()
+    ttft_ms: int | None = None
+
     response = await litellm.acompletion(
         model=model,
         messages=messages,
@@ -109,16 +178,39 @@ async def stream_chat(messages: list[dict], model: str) -> AsyncIterator[dict]:
     )
 
     in_tok = out_tok = 0
-    cost = 0.0
+    last_response = None
     async for chunk in response:
+        last_response = chunk
         delta = chunk.choices[0].delta.content if chunk.choices else None
         if delta:
+            if ttft_ms is None:
+                ttft_ms = int((time.perf_counter() - t0) * 1000)
             yield {"type": "token", "text": delta}
         usage = getattr(chunk, "usage", None)
         if usage:
-            in_tok = getattr(usage, "prompt_tokens", 0) or 0
+            in_tok  = getattr(usage, "prompt_tokens", 0) or 0
             out_tok = getattr(usage, "completion_tokens", 0) or 0
-            cost = getattr(chunk, "_hidden_params", {}).get("response_cost") or 0.0
+
+    latency_ms = int((time.perf_counter() - t0) * 1000)
+
+    from utils.cost import resolve_cost
+    rates = await _provider_rates()
+    cost_usd, cost_source = resolve_cost(last_response, model, in_tok, out_tok, rates)
+
+    from observability.trace import current_trace, current_call_kind
+    asyncio.create_task(_record_call({
+        "trace_id":      current_trace() or None,
+        "model":         model,
+        "provider":      _provider(model),
+        "call_kind":     current_call_kind() or None,
+        "input_tokens":  in_tok,
+        "output_tokens": out_tok,
+        "cost_usd":      cost_usd,
+        "cost_source":   cost_source,
+        "latency_ms":    latency_ms,
+        "ttft_ms":       ttft_ms,
+        "created_at":    datetime.now(timezone.utc),
+    }))
 
     yield {"type": "usage", "input_tokens": in_tok, "output_tokens": out_tok,
-           "cost_usd": float(cost)}
+           "cost_usd": float(cost_usd)}
