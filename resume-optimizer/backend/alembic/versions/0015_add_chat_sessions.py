@@ -8,7 +8,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0015_add_chat_sessions"
-down_revision = "0014_add_tokens_to_pipeline_jobs"
+down_revision = "0014"
 branch_labels = None
 depends_on = None
 
