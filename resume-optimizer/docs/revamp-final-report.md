@@ -66,6 +66,8 @@ Exactly **one**: read-only `GET /admin/pipeline-runs` + `GET /admin/pipeline-run
 
 The endpoints orphaned by the Stage A frontend (`/upload`, `/analyze-jd`, `/generate-doc`), the consumer-less `/dashboard/match-analytics`, and the never-called scorer helper (whose removal also drops scikit-learn and a duplicate spaCy model load — faster cold start, less memory) are gone, along with their 11 orphaned tests. Suite green at **194/194**.
 
-## Not done (explicitly unapproved — awaiting sign-off if ever wanted)
+## Addendum — P4 LLM-JSON consolidation (approved & implemented 2026-06-12)
 
-Stage B inventory group **P4** (LLM-JSON parser consolidation) — benefit estimate in the inventory doc.
+One robust `utils/llm_json.parse_llm_json` (thinking-tag strip, fence strip, object/array recovery from prose, shape validation) replaces the four divergent copies in scorer, jd_analyzer, profiles, and profile matching. 10 unit tests; suite green at **204/204**.
+
+**Every approved inventory item is now implemented. The engagement is complete.** The branch awaits push/PR on request.

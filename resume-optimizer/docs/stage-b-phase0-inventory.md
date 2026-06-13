@@ -1,7 +1,7 @@
 # Stage B · Phase 0 — Backend Profiling & Inventory
 
 **Date:** 2026-06-12 · **Scope:** read-only analysis; no code changed.
-**Status:** ✅ **P1 (B1–B6) approved and implemented 2026-06-12.** ✅ **P3 (R1–R6) + E1 approved and implemented 2026-06-12.** ✅ **P2 (D1–D3) approved and implemented 2026-06-12** — `/upload`, `/analyze-jd`, `/generate-doc`, `/dashboard/match-analytics`, and the dead scorer helper (with its sklearn dependency and second spaCy load) removed along with their 11 orphaned tests; suite green at 194/194. **Only P4 (LLM-JSON consolidation) remains unapproved.**
+**Status:** ✅ **P1 (B1–B6) approved and implemented 2026-06-12.** ✅ **P3 (R1–R6) + E1 approved and implemented 2026-06-12.** ✅ **P2 (D1–D3) approved and implemented 2026-06-12** — `/upload`, `/analyze-jd`, `/generate-doc`, `/dashboard/match-analytics`, and the dead scorer helper (with its sklearn dependency and second spaCy load) removed along with their 11 orphaned tests; suite green at 194/194. ✅ **P4 (X1) approved and implemented 2026-06-12** — `utils/llm_json.parse_llm_json` replaces the four divergent parsing copies (scorer, jd_analyzer, profiles parse/interview, profile matching); 10 unit tests; suite 204/204. **Every inventory item is now resolved.**
 
 ## P3 + E1 implementation record
 
