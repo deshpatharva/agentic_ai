@@ -107,19 +107,21 @@ async def test_jd_analyzer_returns_dict_with_text_and_tokens():
 
         result = await analyze_jd("Sample JD with Python and SQL requirements.")
 
-        # Verify result is a flat dict (new schema)
+        # Current schema: {"text": <structured dict>, "tokens": {...}, "cost_usd": float}
         assert isinstance(result, dict)
+        assert "text" in result and "tokens" in result
+        payload = result["text"]
 
         # Legacy keys still present for backward compatibility
-        assert "keywords" in result
-        assert "requirements" in result
-        assert "skills" in result
+        assert "keywords" in payload
+        assert "requirements" in payload
+        assert "skills" in payload
 
         # New structured keys
-        assert "required_hard_skills" in result
-        assert "seniority_level" in result
-        assert "industry" in result
-        assert "tech_stack" in result
+        assert "required_hard_skills" in payload
+        assert "seniority_level" in payload
+        assert "industry" in payload
+        assert "tech_stack" in payload
 
 
 # ── Scorer tests ──────────────────────────────────────────────────────────────
@@ -136,17 +138,20 @@ async def test_scorer_returns_dict_with_text_and_tokens():
     }
 
     async def mock_llm_complete(prompt, system=None, schema=None):
-        return fake_scores
+        # real _llm_complete returns (parsed_json, cost_usd, input_tokens, output_tokens)
+        return fake_scores, 0.0, 100, 50
 
     with patch("agents.scorer._llm_complete", side_effect=mock_llm_complete):
         result = await score_combined("Resume text.", "JD text.", ["python"])
 
-        # Verify result structure — flat dict with scoring sections
+        # Current schema: {"text": <scores dict>, "tokens": {...}, "cost_usd": float}
         assert isinstance(result, dict)
-        assert "ats" in result
-        assert "impact" in result
-        assert "skills_gap" in result
-        assert "readability" in result
+        assert "text" in result and "tokens" in result
+        scores = result["text"]
+        assert "ats" in scores
+        assert "impact" in scores
+        assert "skills_gap" in scores
+        assert "readability" in scores
 
 
 # ── Rewriter tests ────────────────────────────────────────────────────────────

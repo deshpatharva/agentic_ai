@@ -35,14 +35,17 @@ async def _override_get_db():
         yield session
 
 
-app.dependency_overrides[get_db] = _override_get_db
 
 
 @pytest_asyncio.fixture(autouse=True, scope="module")
 async def setup_db():
+    # Scope the get_db override to THIS module — the app object is shared
+    # across test modules, so an import-time override leaks between files.
+    app.dependency_overrides[get_db] = _override_get_db
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
+    app.dependency_overrides.pop(get_db, None)
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
     await _engine.dispose()

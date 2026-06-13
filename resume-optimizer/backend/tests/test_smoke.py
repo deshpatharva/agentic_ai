@@ -42,20 +42,30 @@ async def _override_get_db():
         yield session
 
 
-app.dependency_overrides[get_db] = _override_get_db
 
 
 @pytest_asyncio.fixture(autouse=True, scope="module")
 async def setup_db():
+    # Scope the get_db override to THIS module — the app object is shared
+    # across test modules, so an import-time override leaks between files.
+    app.dependency_overrides[get_db] = _override_get_db
+    # /download and /status bypass the get_db dependency and use
+    # main.AsyncSessionLocal directly — point it at this module's DB too.
+    import main as _main
+    _orig_session_local = _main.AsyncSessionLocal
+    _main.AsyncSessionLocal = _TestSession
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
+    app.dependency_overrides.pop(get_db, None)
+    _main.AsyncSessionLocal = _orig_session_local
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+    await _engine.dispose()
     import os as _os
     try:
         _os.remove("./test_smoke.db")
-    except FileNotFoundError:
+    except (FileNotFoundError, PermissionError):
         pass
 
 
@@ -250,3 +260,63 @@ async def test_download_redirects_in_cloud_mode(client, monkeypatch, tmp_path):
     )
     assert r2.status_code == 302
     assert "myaccount.blob.core.windows.net" in r2.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_download_falls_back_to_pipeline_job(client, monkeypatch, tmp_path):
+    """Stage B P3 (R2): when no Resume row exists (save failed), /download/{job_id}
+    resolves the blob via the completed PipelineJob instead of 404ing."""
+    import uuid as _uuid
+    from db.models import JobStatus, PipelineJob
+
+    r = await client.post("/auth/register", json={
+        "email": "dl_fallback@test.com", "password": "Test1234!"})
+    assert r.status_code == 200
+    token = r.json()["access_token"]
+    user_id = _uuid.UUID(r.json()["user"]["id"])
+
+    blob_name = "fallback-job.docx"
+    output_dir = tmp_path / "outputs"
+    output_dir.mkdir()
+    (output_dir / blob_name).write_bytes(b"PK fake docx")
+
+    monkeypatch.setattr(_s, "AZURE_STORAGE_ACCOUNT_NAME", "")
+    monkeypatch.setattr(_s, "_LOCAL_OUTPUTS_DIR", output_dir)
+
+    async with _TestSession() as session:
+        job = PipelineJob(
+            user_id=user_id,
+            original_filename="original.pdf",
+            resume_text="text",
+            status=JobStatus.done,
+            download_path=blob_name,
+        )
+        session.add(job)
+        await session.commit()
+        await session.refresh(job)
+        job_id = str(job.id)
+
+    r2 = await client.get(
+        f"/download/{job_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r2.status_code == 200
+
+    # a pending job (no output yet) must still 404
+    async with _TestSession() as session:
+        job2 = PipelineJob(
+            user_id=user_id,
+            original_filename="o.pdf",
+            resume_text="t",
+            status=JobStatus.running,
+        )
+        session.add(job2)
+        await session.commit()
+        await session.refresh(job2)
+        job2_id = str(job2.id)
+
+    r3 = await client.get(
+        f"/download/{job2_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r3.status_code == 404

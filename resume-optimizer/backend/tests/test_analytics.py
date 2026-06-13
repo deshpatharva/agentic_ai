@@ -40,16 +40,20 @@ async def _override_get_db():
         yield session
 
 
-app.dependency_overrides[get_db] = _override_get_db
 
 
 @pytest_asyncio.fixture(autouse=True, scope="module")
 async def setup_db():
+    # Scope the get_db override to THIS module — the app object is shared
+    # across test modules, so an import-time override leaks between files.
+    app.dependency_overrides[get_db] = _override_get_db
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
+    app.dependency_overrides.pop(get_db, None)
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+    await _engine.dispose()
     import os as _os
     import time
     try:
@@ -345,10 +349,11 @@ async def admin_token(client):
         # New user created
         token = r.json()["access_token"]
         # Bootstrap to admin
-        bootstrap_r = await client.post("/admin/bootstrap", json={"email": admin_email})
+        import os as _os_env
+        bootstrap_r = await client.post("/admin/bootstrap", json={"email": admin_email, "secret": _os_env.environ["BOOTSTRAP_SECRET"]})
         if bootstrap_r.status_code != 200:
             raise AssertionError(f"Bootstrap failed: {bootstrap_r.status_code} {bootstrap_r.text}")
-    elif r.status_code == 409:
+    elif r.status_code in (400, 409):
         # User already exists, login
         r = await client.post("/auth/login", json={
             "email": admin_email,

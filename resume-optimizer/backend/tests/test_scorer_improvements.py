@@ -46,7 +46,8 @@ async def test_scorer_returns_extended_fields(monkeypatch):
     }
 
     async def mock_complete(prompt, system=None, schema=None):
-        return fake_response
+        # real _llm_complete returns (parsed_dict, cost_usd, input_tokens, output_tokens)
+        return fake_response, 0.0, 100, 50
 
     monkeypatch.setattr("agents.scorer._llm_complete", mock_complete)
 
@@ -56,12 +57,13 @@ async def test_scorer_returns_extended_fields(monkeypatch):
         seniority_level="senior",
         required_hard_skills=["kubernetes"],
     )
-    assert "keyword_coverage_pct" in result["ats"]
-    assert "worst_section" in result["readability"]
-    assert "critical_missing" in result["skills_gap"]
-    assert "strong_bullets" in result["impact"]
-    assert "has_summary" in result["readability"]
-    assert "tense_consistent" in result["readability"]
+    scores = result["text"]
+    assert "keyword_coverage_pct" in scores["ats"]
+    assert "worst_section" in scores["readability"]
+    assert "critical_missing" in scores["skills_gap"]
+    assert "strong_bullets" in scores["impact"]
+    assert "has_summary" in scores["readability"]
+    assert "tense_consistent" in scores["readability"]
 
 
 def test_scorer_no_max_3_in_prompt():

@@ -30,15 +30,17 @@ async def test_jd_analyzer_returns_structured_schema(monkeypatch):
     }
 
     async def mock_complete(prompt, system=None, schema=None):
-        return fake_response
+        # real _llm_complete returns (parsed_dict, cost_usd, input_tokens, output_tokens)
+        return fake_response, 0.0, 100, 50
 
     monkeypatch.setattr("agents.jd_analyzer._llm_complete", mock_complete)
 
     result = await analyze_jd("Senior Python engineer at fintech, K8s required")
-    assert "required_hard_skills" in result
-    assert "seniority_level" in result
-    assert "industry" in result
-    assert "tech_stack" in result
-    assert "preferred_soft_skills" in result
-    assert "critical_keywords" in result
-    assert result["seniority_level"] in ("entry", "mid", "senior", "lead")
+    payload = result["text"]
+    assert "required_hard_skills" in payload
+    assert "seniority_level" in payload
+    assert "industry" in payload
+    assert "tech_stack" in payload
+    assert "preferred_soft_skills" in payload
+    assert "critical_keywords" in payload
+    assert payload["seniority_level"] in ("entry", "mid", "senior", "lead")

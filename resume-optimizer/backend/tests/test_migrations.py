@@ -35,7 +35,7 @@ def test_migrations_create_all_tables(tmp_path, monkeypatch):
     }
     conn.close()
 
-    assert tables == {"users", "resumes", "pipeline_jobs", "pipeline_events", "plan_limits", "promo_codes", "user_promo_redemptions", "provider_costs", "daily_usage_counters", "token_blocklist"}
+    assert tables == {"users", "resumes", "pipeline_jobs", "pipeline_events", "plan_limits", "promo_codes", "user_promo_redemptions", "provider_costs", "daily_usage_counters", "token_blocklist", "profiles", "jd_scrape_cache"}
 
 
 def test_migrations_idempotent(tmp_path, monkeypatch):
@@ -59,4 +59,11 @@ def test_migrations_stamped_after_run(tmp_path, monkeypatch):
     conn.close()
 
     assert len(rows) == 1
-    assert rows[0][0] == "0011"
+    # Compare against the actual script head so this never drifts again
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    backend_dir = Path(__file__).parent.parent
+    acfg = Config(str(backend_dir / "alembic.ini"))
+    acfg.set_main_option("script_location", str(backend_dir / "alembic"))
+    head = ScriptDirectory.from_config(acfg).get_current_head()
+    assert rows[0][0] == head
