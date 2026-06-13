@@ -237,4 +237,4 @@ async def optimize_chat(
 
         yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(event_generator(), sep="\n")
