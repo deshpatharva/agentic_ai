@@ -27,6 +27,11 @@ try:
 except ImportError:
     pass  # local dev / non-Bullseye environments have a recent enough sqlite3
 
+# Suppress huggingface_hub rate-limit warnings — CrewAI pulls it in but we
+# use Gemini/Groq exclusively; no HF model calls are made.
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 # Ensure backend/ is on the path regardless of where uvicorn is launched from
 sys.path.insert(0, str(Path(__file__).parent))
 from logging_config import setup_logging
