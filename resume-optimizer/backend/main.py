@@ -66,6 +66,8 @@ from agents.fabrication_guard import fabrication_guard
 from agents.humanizer import humanize_resume
 from orchestration.optimizer import run_optimization_async, _WORK_THRESHOLD
 from generators.docx_generator import generate_docx
+from utils.skills_normalizer import normalize_skills
+from utils.section_parser import detect_sections as _detect_sections
 import storage as _storage
 from delta.writer import write_daily_usage, write_job_matches, vacuum_old_matches
 from scraper.scraper import scrape_jobs
@@ -741,6 +743,22 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             total_cost_usd      += humanize_result.get("cost_usd", 0.0)
         except Exception:
             _logger.exception("job=%s: humanize_resume failed — skipping humanization", job_id)
+
+        # ── Normalize skills section ───────────────────────────────────────
+        # Reconcile experience→skills, dedup, strip filler — pure CPU, no LLM.
+        try:
+            _resume_sections = _detect_sections(current_resume)
+            _skills_raw = _resume_sections.get("skills", "")
+            _exp_raw    = _resume_sections.get("experience", "")
+            if _skills_raw:
+                _normalized_skills = normalize_skills(
+                    _skills_raw,
+                    experience_text=_exp_raw,
+                    seniority=seniority_level,
+                )
+                current_resume = current_resume.replace(_skills_raw, _normalized_skills, 1)
+        except Exception:
+            _logger.exception("job=%s: skills normalization failed — skipping", job_id)
 
         # ── Phase 3: Generate .docx (no DB held during file I/O) ───────────
         await emit({"type": "stage", "message": "Generating optimized .docx file...", "stage": "generate"})

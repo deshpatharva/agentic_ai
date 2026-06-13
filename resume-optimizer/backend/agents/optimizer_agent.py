@@ -243,9 +243,15 @@ def keyword_inject_tool(
             return msg + f" Partially updated: {updated}."
 
         prompt = f"""Inject these missing keywords into the resume section below.
-Integrate them naturally into existing sentences and bullets.
-Do NOT keyword-stuff. Do NOT add new bullet points solely for keywords.
-Do NOT change any metrics, dates, company names, or facts.
+
+RULES — strictly follow all of them:
+- Weave keywords into EXISTING sentences/bullets only. Do NOT add new sentences, clauses, or bullets.
+- Keywords must describe the candidate's actual technical work (tools, languages, frameworks, platforms).
+- REJECT any keyword that describes a job function the candidate does not hold (e.g. recruiting,
+  talent acquisition, HR, sales, legal, finance) — skip it entirely rather than injecting it.
+- Do NOT introduce any new responsibilities, collaborations, or role claims not already in the text.
+- Do NOT change any metrics, dates, company names, or facts.
+- Plain text only — no markdown bold (**), no asterisks.
 
 Keywords to inject: {', '.join(keywords)}
 

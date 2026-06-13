@@ -5,6 +5,7 @@ import { Toaster } from 'react-hot-toast';
 import './index.css';
 
 import ProtectedRoute from './components/ProtectedRoute';
+import GuestRoute from './components/GuestRoute';
 import AdminRoute from './components/AdminRoute';
 
 // Route-level code splitting: each page loads on demand, keeping the
@@ -54,8 +55,8 @@ ReactDOM.createRoot(document.getElementById('root')).render(
       <Suspense fallback={<PageFallback />}>
         <Routes>
           <Route path="/"         element={<Landing />} />
-          <Route path="/login"    element={<Login />} />
-          <Route path="/register" element={<Register />} />
+          <Route path="/login"    element={<GuestRoute><Login /></GuestRoute>} />
+          <Route path="/register" element={<GuestRoute><Register /></GuestRoute>} />
           <Route path="/app"      element={<Navigate to="/optimize" />} />
           <Route path="/optimize" element={<ProtectedRoute><ChatOptimizePage /></ProtectedRoute>} />
 
