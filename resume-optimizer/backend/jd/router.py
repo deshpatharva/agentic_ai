@@ -2,7 +2,6 @@ import asyncio
 import hashlib
 import json as _json
 import logging
-import re as _re
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -17,6 +16,7 @@ from config import MODEL_PROFILE_PARSER
 from db.models import JdScrapeCache, Profile, User
 from db.session import get_db
 from llm import complete
+from utils.llm_json import parse_llm_json
 
 router = APIRouter()
 
@@ -146,26 +146,13 @@ Job description (first 3000 chars):
 {jd_text[:3000]}"""
 
     result = await complete(prompt, MODEL_PROFILE_PARSER)
-    text = result["text"].strip()
-    if text.startswith("```"):
-        lines = text.split("\n")
-        text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:]).strip()
 
-    # LLM output is untrusted — recover the array from surrounding prose if
-    # needed, and degrade with a clear 502 instead of an unhandled 500.
+    # LLM output is untrusted — recover the array from fences/prose, degrade
+    # with a clear 502 instead of an unhandled 500.
     try:
-        scored = _json.loads(text)
-    except _json.JSONDecodeError:
-        match = _re.search(r"\[.*\]", text, _re.DOTALL)
-        if not match:
-            _logger.error("profile match returned unparseable JSON (first 300 chars): %s", text[:300])
-            raise HTTPException(status_code=502, detail="Profile matching failed — please try again.")
-        try:
-            scored = _json.loads(match.group(0))
-        except _json.JSONDecodeError:
-            _logger.error("profile match JSON recovery failed (first 300 chars): %s", text[:300])
-            raise HTTPException(status_code=502, detail="Profile matching failed — please try again.")
-    if not isinstance(scored, list):
+        scored = parse_llm_json(result["text"], kind="array")
+    except ValueError:
+        _logger.error("profile match returned unparseable JSON (first 300 chars): %s", result["text"][:300])
         raise HTTPException(status_code=502, detail="Profile matching failed — please try again.")
 
     score_map = {item.get("profile_id"): item for item in scored if isinstance(item, dict)}

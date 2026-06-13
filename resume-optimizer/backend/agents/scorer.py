@@ -7,33 +7,13 @@ All 4 scores returned from a single LLM call via MODEL_SCORER.
   4. Readability   — structure, tone, formatting
 """
 
-import json
-import re
 import logging
 from typing import List, Optional
 from llm import complete
 from config import MODEL_SCORER
+from utils.llm_json import parse_llm_json
 
 _logger = logging.getLogger(__name__)
-
-
-def _extract_json(text: str) -> str:
-    """Extract the first JSON object from text, handling thinking tags, markdown fences, prose."""
-    text = text.strip()
-    # Strip thinking tags (Gemini 2.5 thinking models)
-    text = re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL).strip()
-    # Try to pull the outermost {...} block
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if match:
-        return match.group(0)
-    # Fallback: strip markdown fences
-    if text.startswith("```"):
-        parts = text.split("```")
-        candidate = parts[1] if len(parts) > 1 else text
-        if candidate.startswith("json"):
-            candidate = candidate[4:]
-        return candidate.strip()
-    return text
 
 
 async def _llm_complete(prompt: str, system: str = None, schema: dict = None) -> tuple:
@@ -44,8 +24,8 @@ async def _llm_complete(prompt: str, system: str = None, schema: dict = None) ->
     output_tokens = response.get("output_tokens", 0)
     raw = response["text"]
     try:
-        return json.loads(_extract_json(raw)), cost_usd, input_tokens, output_tokens
-    except (json.JSONDecodeError, ValueError):
+        return parse_llm_json(raw), cost_usd, input_tokens, output_tokens
+    except ValueError:
         _logger.error("scorer JSON parse failed. raw response (first 500 chars): %s", raw[:500])
         return {}, cost_usd, input_tokens, output_tokens
 
