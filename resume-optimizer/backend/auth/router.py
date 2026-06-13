@@ -219,6 +219,21 @@ async def logout(
 
 # ── User routes ────────────────────────────────────────────────────────────────
 
+def _mint_sse_token(user_id: str) -> str:
+    """Mint a 60-second SSE-only JWT for the given user_id string.
+
+    Extracted so chat/handoff.py can issue SSE tokens without going through HTTP.
+    """
+    import time
+    payload = {
+        "sub": user_id,
+        "sse": True,
+        "exp": int(time.time()) + 60,
+        "iat": int(time.time()),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
 @user_router.post("/sse-token")
 async def get_sse_token(current_user: User = Depends(get_current_user)):
     """Issue a 60-second token valid only for SSE connections.
@@ -227,15 +242,7 @@ async def get_sse_token(current_user: User = Depends(get_current_user)):
     Using the 7-day session token in a URL leaks it into server logs and browser history.
     This endpoint issues a short-lived, SSE-only token that expires before it can be abused.
     """
-    import time
-    payload = {
-        "sub": str(current_user.id),
-        "sse": True,
-        "exp": int(time.time()) + 60,
-        "iat": int(time.time()),
-    }
-    token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-    return {"sse_token": token}
+    return {"sse_token": _mint_sse_token(str(current_user.id))}
 
 
 @user_router.post("/redeem-promo-code")

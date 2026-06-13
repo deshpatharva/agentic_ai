@@ -80,6 +80,7 @@ from dashboard.router import router as dashboard_router
 from admin.router import router as admin_router
 from profiles.router import router as profiles_router, profile_ops as profile_ops_router
 from jd.router import router as jd_router
+from chat.router import router as chat_router
 
 
 # ── App setup ────────────────────────────────────────────────────────────────
@@ -230,6 +231,7 @@ app.include_router(admin_router)
 app.include_router(profiles_router, prefix="/profiles", tags=["profiles"], dependencies=[Depends(get_current_user)])
 app.include_router(profile_ops_router, prefix="/profile", tags=["profiles"], dependencies=[Depends(get_current_user)])
 app.include_router(jd_router, tags=["jd"])
+app.include_router(chat_router)
 
 
 @app.get("/health")

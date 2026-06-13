@@ -17,6 +17,7 @@ To switch a model, change config.py only. To add a provider, no code change need
 
 import asyncio
 import logging
+from typing import AsyncIterator
 
 import litellm
 
@@ -87,3 +88,37 @@ async def complete(
         "output_tokens": response.usage.completion_tokens,
         "cost_usd": float(cost_usd),
     }
+
+
+async def stream_chat(messages: list[dict], model: str) -> AsyncIterator[dict]:
+    """Stream a multi-turn chat completion token-by-token via LiteLLM.
+
+    Yields dicts:
+      {"type": "token", "text": "<delta>"}            # 0..N times
+      {"type": "usage", "input_tokens": int,          # exactly once, last
+                        "output_tokens": int, "cost_usd": float}
+
+    `messages` is [{role, content}, ...] — system + sliding window.
+    """
+    response = await litellm.acompletion(
+        model=model,
+        messages=messages,
+        timeout=_CALL_TIMEOUT_S,
+        stream=True,
+        stream_options={"include_usage": True},
+    )
+
+    in_tok = out_tok = 0
+    cost = 0.0
+    async for chunk in response:
+        delta = chunk.choices[0].delta.content if chunk.choices else None
+        if delta:
+            yield {"type": "token", "text": delta}
+        usage = getattr(chunk, "usage", None)
+        if usage:
+            in_tok = getattr(usage, "prompt_tokens", 0) or 0
+            out_tok = getattr(usage, "completion_tokens", 0) or 0
+            cost = getattr(chunk, "_hidden_params", {}).get("response_cost") or 0.0
+
+    yield {"type": "usage", "input_tokens": in_tok, "output_tokens": out_tok,
+           "cost_usd": float(cost)}
