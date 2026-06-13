@@ -75,6 +75,10 @@ MODEL_SECTION_HUMANIZE   = "gemini/gemini-2.5-flash-lite"   # Readability tool
 AGENT_MAX_ITER     = 10       # max CrewAI agent iterations before forced stop
 AGENT_TOKEN_BUDGET = 20_000   # cumulative input+output tokens across all Phase 2 tool calls
 
+# Conversational optimize co-pilot — Llama 3.1 8B via Groq (fast, cheap, good instruction-following)
+MODEL_CHAT_AGENT  = "groq/llama-3.1-8b-instant"
+CHAT_WINDOW_TURNS = 10   # last N turns sent to Groq per call
+
 # ── API URLs ──────────────────────────────────────────────────────────────────
 BACKEND_URL  = os.environ.get("BACKEND_URL",  "http://localhost:8000")
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")

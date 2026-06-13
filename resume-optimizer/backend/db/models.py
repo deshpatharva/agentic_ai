@@ -215,3 +215,34 @@ class JdScrapeCache(Base):
     url_hash   = Column(String(64), primary_key=True)
     jd_text    = Column(Text, nullable=False)
     scraped_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
+class ChatSession(Base):
+    """One optimization conversation thread per user."""
+    __tablename__ = "chat_sessions"
+
+    id         = Column(Uuid(), primary_key=True, default=uuid.uuid4)
+    user_id    = Column(Uuid(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    context    = Column(JSON, nullable=True)  # {jd_text, profiles:[{id,label}], ...}
+    job_id     = Column(Uuid(), ForeignKey("pipeline_jobs.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    messages = relationship("ChatMessage", back_populates="session",
+                            cascade="all, delete-orphan", order_by="ChatMessage.id")
+
+
+class ChatMessage(Base):
+    """Append-only turn log; id ordering is canonical."""
+    __tablename__ = "chat_messages"
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    session_id    = Column(Uuid(), ForeignKey("chat_sessions.id", ondelete="CASCADE"),
+                           nullable=False, index=True)
+    role          = Column(String(16), nullable=False)   # "user" | "assistant"
+    content       = Column(Text, nullable=False)
+    input_tokens  = Column(Integer, nullable=True, default=0)
+    output_tokens = Column(Integer, nullable=True, default=0)
+    created_at    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    session = relationship("ChatSession", back_populates="messages")
