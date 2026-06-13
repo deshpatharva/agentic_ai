@@ -43,6 +43,10 @@ Rewrite the resume following THREE priorities in order:
 PRIORITY 1 — KEYWORD SATURATION
   Weave all JD keywords naturally into bullets and summary.
   Every required keyword must appear at least once; critical keywords ideally 2-3 times.
+  ONLY inject keywords that match the candidate's actual technical discipline (tools, languages,
+  frameworks, platforms). SKIP any keyword that belongs to a different job function
+  (e.g. recruiting, talent acquisition, HR, sales, legal, finance) — do NOT inject those.
+  Do NOT add new sentences or bullet points to carry keywords; weave them into existing content only.
 
 PRIORITY 2 — QUANTIFIED IMPACT
   Every bullet must contain a metric (%, $, count, time). If a bullet has no metric, add a
@@ -61,6 +65,7 @@ and the word count is under {max_words}.
 
 Preserve all company names, job titles, dates, and degrees exactly as written.
 Do NOT add parenthetical qualifiers like "(Established Company)" after company names.
+Do NOT use markdown formatting — no **bold**, no *italic*, no bullet markers other than plain hyphens.
 Return ONLY the rewritten resume text. No commentary, no fences."""
 
     prompt = f"""{system}

@@ -16,12 +16,27 @@ Nothing unverifiable is ever kept in the output.
 from __future__ import annotations
 
 import difflib
+import re
 from dataclasses import dataclass, field
 from typing import List
 
 from agents.fact_extractor import (
     METRIC_RE, ClaimsLedger, _BULLET_STRIP_RE, nlp
 )
+
+# Role-domain terms that should never appear in a resume unless the candidate's
+# *source* resume already contains them. If the LLM injected these from a JD
+# that belongs to a different job function, we drop the offending sentence.
+_PERSONA_TERMS: frozenset[str] = frozenset({
+    "talent acquisition", "recruiting", "recruitment", "headhunting",
+    "sourcing candidates", "people operations", "hr operations",
+    "human resources", "payroll", "benefits administration",
+    "accounts receivable", "accounts payable", "bookkeeping",
+    "underwriting", "loan origination", "financial planning",
+    "cold calling", "sales pipeline", "account executive",
+})
+
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 
 @dataclass
@@ -68,6 +83,35 @@ def _company_attested(company: str, source_companies: frozenset) -> bool:
     return False
 
 
+def _persona_terms_in_source(source_text: str) -> frozenset[str]:
+    """Return the subset of _PERSONA_TERMS that appear in the source resume."""
+    src_lower = source_text.lower()
+    return frozenset(t for t in _PERSONA_TERMS if t in src_lower)
+
+
+def _drop_persona_sentences(line: str, allowed_terms: frozenset[str]) -> str:
+    """
+    Remove individual sentences from a line that contain persona-domain terms
+    NOT present in the source resume. Returns the cleaned line; empty string
+    means the whole line should be dropped.
+    """
+    line_lower = line.lower()
+    # Fast path: no persona terms in this line at all
+    if not any(t in line_lower for t in _PERSONA_TERMS):
+        return line
+
+    sentences = _SENTENCE_SPLIT.split(line)
+    kept: list[str] = []
+    for sent in sentences:
+        sent_lower = sent.lower()
+        bad = [t for t in _PERSONA_TERMS if t in sent_lower and t not in allowed_terms]
+        if bad:
+            continue  # drop this sentence
+        kept.append(sent)
+
+    return " ".join(kept).strip()
+
+
 def _closest_original(line: str, raw_bullets: tuple) -> str:
     """Return the most similar original bullet if ratio > 0.35, else empty string."""
     if not raw_bullets:
@@ -100,11 +144,24 @@ def fabrication_guard(
         if not _company_attested(c, ledger.companies)
     }
 
+    # Persona terms that are legitimately in the source (candidate's own words)
+    allowed_persona = _persona_terms_in_source(source_text)
+
     output_lines: list = []
     stripped: list     = []
     gaps: list         = []
 
     for line in generated_text.splitlines():
+        # ── Persona novelty check — drop sentences with out-of-role domain terms ──
+        cleaned = _drop_persona_sentences(line, allowed_persona)
+        if not cleaned:
+            stripped.append(f"[persona] {line.strip()[:80]}")
+            gaps.append(f"persona-domain sentence dropped: {line.strip()[:80]!r}")
+            continue
+        if cleaned != line:
+            stripped.append(f"[persona-partial] {line.strip()[:80]}")
+            line = cleaned
+
         bare = _BULLET_STRIP_RE.sub("", line).strip()
 
         # Which metrics on this line are NOT attested in the source?

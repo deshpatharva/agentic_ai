@@ -35,6 +35,12 @@ DATE_PATTERN = re.compile(
 # Also match simple year ranges like "2020 – 2022"
 YEAR_RANGE_PATTERN = re.compile(r"\b(20\d{2}|19\d{2})\s*[-–—]\s*(20\d{2}|19\d{2}|Current|Present)\b", re.IGNORECASE)
 
+# Match numeric MM/YYYY dates (with optional stray space after slash): "12/2023", "12/ 2023"
+NUMERIC_DATE_PATTERN = re.compile(r"\b(\d{1,2})/\s?(\d{4})\b")
+
+# Split text on markdown bold markers (**...**) into alternating plain/bold segments
+_BOLD_SPLIT = re.compile(r"\*\*(.+?)\*\*")
+
 # Parenthetical annotations added by AI that should be stripped
 AI_ANNOTATIONS = re.compile(
     r"\s*\((Established Company|Fortune 500|Startup|MNC|Listed Company|Public Company|Private Company)\)",
@@ -59,7 +65,41 @@ def _add_horizontal_rule(paragraph):
 
 
 def _has_date(line: str) -> bool:
-    return bool(DATE_PATTERN.search(line) or YEAR_RANGE_PATTERN.search(line))
+    return bool(
+        DATE_PATTERN.search(line)
+        or YEAR_RANGE_PATTERN.search(line)
+        or NUMERIC_DATE_PATTERN.search(line)
+    )
+
+
+def _normalize_dates(text: str) -> str:
+    """Collapse stray whitespace inside numeric dates: '12/ 2023' → '12/2023'."""
+    return NUMERIC_DATE_PATTERN.sub(lambda m: f"{m.group(1)}/{m.group(2)}", text)
+
+
+def _add_formatted_runs(paragraph, text: str, size_pt: float, color: RGBColor | None = None,
+                        italic: bool = False) -> None:
+    """
+    Add runs to a paragraph, converting markdown **bold** markers to actual bold runs.
+    Strips any orphan/unmatched asterisks left over after substitution.
+    """
+    parts = _BOLD_SPLIT.split(text)
+    # split() with one capture group gives [plain, bold, plain, bold, ...]
+    for i, part in enumerate(parts):
+        if not part:
+            continue
+        # Odd-indexed parts are the captured bold groups
+        is_bold = (i % 2 == 1)
+        # Strip orphan asterisks from plain segments
+        clean = part.replace("*", "") if not is_bold else part
+        if not clean:
+            continue
+        run = paragraph.add_run(clean)
+        run.bold = is_bold
+        run.italic = italic
+        run.font.size = Pt(size_pt)
+        if color:
+            run.font.color.rgb = color
 
 
 def _split_company_date(line: str):
@@ -155,7 +195,7 @@ def generate_docx(resume_text: str, output_path: str) -> str:
     prev_was_name = False
 
     for seq_idx, (orig_idx, line) in enumerate(non_empty):
-        stripped = _clean_ai_annotations(line.strip())
+        stripped = _normalize_dates(_clean_ai_annotations(line.strip()))
         if not stripped:
             prev_was_company = False
             continue
@@ -184,9 +224,7 @@ def generate_docx(resume_text: str, output_path: str) -> str:
         ):
             p = doc.add_paragraph()
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            run = p.add_run(stripped)
-            run.font.size = Pt(9.5)
-            run.font.color.rgb = RGBColor(0x44, 0x44, 0x44)
+            _add_formatted_runs(p, stripped, 9.5, color=RGBColor(0x44, 0x44, 0x44))
             prev_was_company = False
             continue
 
@@ -209,8 +247,7 @@ def generate_docx(resume_text: str, output_path: str) -> str:
             p = doc.add_paragraph(style="List Bullet")
             p.paragraph_format.space_after = Pt(2)
             p.paragraph_format.left_indent = Pt(18)
-            run = p.add_run(bullet_match.group(1))
-            run.font.size = Pt(10.5)
+            _add_formatted_runs(p, bullet_match.group(1), 10.5)
             prev_was_company = False
             continue
 
@@ -252,10 +289,7 @@ def generate_docx(resume_text: str, output_path: str) -> str:
             p = doc.add_paragraph()
             p.paragraph_format.space_before = Pt(0)
             p.paragraph_format.space_after = Pt(3)
-            run = p.add_run(stripped)
-            run.italic = True
-            run.bold = False
-            run.font.size = Pt(10.5)
+            _add_formatted_runs(p, stripped, 10.5, italic=True)
             prev_was_company = False
             continue
 
@@ -267,16 +301,14 @@ def generate_docx(resume_text: str, output_path: str) -> str:
             run_label = p.add_run(f"{label_match.group(1)}:")
             run_label.bold = True
             run_label.font.size = Pt(10.5)
-            run_rest = p.add_run(f"  {label_match.group(2)}")
-            run_rest.font.size = Pt(10.5)
+            _add_formatted_runs(p, f"  {label_match.group(2)}", 10.5)
             prev_was_company = False
             continue
 
         # ── Regular paragraph ───────────────────────────────────────────────
         p = doc.add_paragraph()
         p.paragraph_format.space_after = Pt(2)
-        run = p.add_run(stripped)
-        run.font.size = Pt(10.5)
+        _add_formatted_runs(p, stripped, 10.5)
         prev_was_company = False
 
     doc.save(output_path)

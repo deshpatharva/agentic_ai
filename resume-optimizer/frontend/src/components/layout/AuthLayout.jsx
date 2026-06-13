@@ -1,4 +1,5 @@
-import { Feather } from 'lucide-react';
+import { Feather, ArrowLeft } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 export default function AuthLayout({ children, title, subtitle }) {
   return (
@@ -17,10 +18,10 @@ export default function AuthLayout({ children, title, subtitle }) {
           }}
         />
         <div className="relative z-10">
-          <div className="flex items-center gap-3 mb-8">
+          <Link to="/" className="flex items-center gap-3 mb-8 hover:opacity-80 transition-opacity">
             <Feather className="w-8 h-8" />
             <span className="font-display text-2xl font-semibold tracking-tight">ResumeAI</span>
-          </div>
+          </Link>
           <h2 className="font-display text-4xl font-semibold leading-tight mb-4">Your resume, set in type that gets you read.</h2>
           <p className="text-[#CFE8DD] text-lg">Upload once. Score on 4 dimensions. Iterate until perfect. Get hired faster.</p>
           <div className="mt-12 grid grid-cols-2 gap-4">
@@ -35,10 +36,20 @@ export default function AuthLayout({ children, title, subtitle }) {
       </div>
       <div className="flex-1 flex flex-col justify-center px-8 lg:px-16 bg-card">
         <div className="max-w-md w-full mx-auto">
-          <div className="flex items-center gap-2 mb-8 lg:hidden">
-            <Feather className="w-6 h-6 text-primary" />
-            <span className="font-display text-xl font-semibold text-ink">ResumeAI</span>
+          <div className="flex items-center justify-between mb-8 lg:hidden">
+            <Link to="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
+              <Feather className="w-6 h-6 text-primary" />
+              <span className="font-display text-xl font-semibold text-ink">ResumeAI</span>
+            </Link>
+            <Link to="/" className="flex items-center gap-1 text-sm text-ink-mute hover:text-ink transition-colors">
+              <ArrowLeft className="w-4 h-4" />
+              Back to home
+            </Link>
           </div>
+          <Link to="/" className="hidden lg:flex items-center gap-1 text-sm text-ink-mute hover:text-ink transition-colors mb-6">
+            <ArrowLeft className="w-4 h-4" />
+            Back to home
+          </Link>
           <h1 className="font-display text-2xl font-semibold text-ink mb-2">{title}</h1>
           <p className="text-ink-mute mb-8">{subtitle}</p>
           {children}
