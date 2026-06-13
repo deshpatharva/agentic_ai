@@ -13,9 +13,10 @@ from admin.dependencies import get_admin_user
 from admin.schemas import AdminStats, BootstrapRequest, UserUpdate, ProviderCostCreate, ProviderCostsResponse, AnalyticsResponse, PromoCodeCreate
 from limiter import limiter
 from config import STUCK_JOB_TIMEOUT_MINUTES, BOOTSTRAP_SECRET
-from db.models import JobStatus, PipelineJob, PlanType, Resume, User, ProviderCost
+from db.models import JobStatus, PipelineEvent, PipelineJob, PlanType, Resume, User, ProviderCost
 from db.session import get_db
 from delta.writer import read_job_matches
+from utils.time_utils import ensure_utc
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -477,7 +478,8 @@ async def update_user(
 def _promo_status(code) -> str:
     if code.deactivated_at:
         return "deactivated"
-    if code.expires_at and code.expires_at <= datetime.now(timezone.utc):
+    # SQLite returns naive datetimes — normalize before comparing
+    if code.expires_at and ensure_utc(code.expires_at) <= datetime.now(timezone.utc):
         return "expired"
     return "active"
 
@@ -570,7 +572,7 @@ async def list_promo_codes(
         status_val = _promo_status(code)
         days_until = None
         if code.expires_at:
-            delta = (code.expires_at - datetime.now(timezone.utc)).days
+            delta = (ensure_utc(code.expires_at) - datetime.now(timezone.utc)).days
             days_until = max(0, delta)
 
         items.append({
@@ -746,3 +748,98 @@ async def list_provider_costs(
             for cost in costs
         ]
     )
+
+
+# ── Pipeline run observability (read-only, Stage A) ──────────────────────────
+
+@router.get("/pipeline-runs")
+@limiter.limit("30/minute")
+async def list_pipeline_runs(
+    request: Request,
+    _: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    status: Optional[str] = Query(None),
+):
+    """Recent pipeline runs with status, score, cost, and timing. Read-only."""
+    filters = []
+    if status:
+        try:
+            filters.append(PipelineJob.status == JobStatus(status))
+        except ValueError:
+            raise HTTPException(status_code=422, detail=f"Unknown status '{status}'")
+
+    total = (
+        await db.execute(select(func.count(PipelineJob.id)).where(*filters))
+    ).scalar() or 0
+
+    rows = (
+        await db.execute(
+            select(PipelineJob, User.email)
+            .join(User, PipelineJob.user_id == User.id, isouter=True)
+            .where(*filters)
+            .order_by(PipelineJob.created_at.desc())
+            .offset((page - 1) * per_page)
+            .limit(per_page)
+        )
+    ).all()
+
+    def _final_score(job: PipelineJob):
+        scores = job.scores_json or {}
+        avg = scores.get("average")
+        return round(avg, 1) if isinstance(avg, (int, float)) else None
+
+    return {
+        "total": total,
+        "results": [
+            {
+                "id":            str(job.id),
+                "user_email":    email,
+                "status":        job.status.value,
+                "filename":      job.original_filename,
+                "final_score":   _final_score(job),
+                "iterations":    job.iteration,
+                "cost_usd":      round(job.cost_usd, 4) if job.cost_usd else 0.0,
+                "tokens":        (job.input_tokens or 0) + (job.output_tokens or 0),
+                "error_message": job.error_message,
+                "created_at":    job.created_at.isoformat(),
+                "duration_s":    max(0, int((job.updated_at - job.created_at).total_seconds()))
+                                 if job.status in (JobStatus.done, JobStatus.error) else None,
+            }
+            for job, email in rows
+        ],
+    }
+
+
+@router.get("/pipeline-runs/{job_id}/events")
+@limiter.limit("30/minute")
+async def get_pipeline_run_events(
+    request: Request,
+    job_id: uuid.UUID,
+    _: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stage-by-stage event timeline for one run (events expire after 24h). Read-only."""
+    job = (
+        await db.execute(select(PipelineJob).where(PipelineJob.id == job_id))
+    ).scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    events = (
+        await db.execute(
+            select(PipelineEvent)
+            .where(PipelineEvent.job_id == job_id)
+            .order_by(PipelineEvent.id.asc())
+        )
+    ).scalars().all()
+
+    return {
+        "job_id": str(job_id),
+        "status": job.status.value,
+        "events": [
+            {"at": ev.created_at.isoformat(), **(ev.event_json or {})}
+            for ev in events
+        ],
+    }

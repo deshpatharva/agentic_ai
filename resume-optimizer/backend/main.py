@@ -70,7 +70,7 @@ from parsers.pdf_parser import parse_pdf
 from parsers.docx_parser import parse_docx
 from generators.docx_generator import generate_docx
 import storage as _storage
-from delta.writer import write_daily_usage, write_job_match, vacuum_old_matches
+from delta.writer import write_daily_usage, write_job_matches, vacuum_old_matches
 from scraper.scraper import scrape_jobs
 from db.session import get_db, init_db, AsyncSessionLocal
 from db.models import JobStatus, PipelineEvent, PipelineJob, Profile, Resume, User, TokenBlocklist
@@ -287,7 +287,8 @@ _UPLOAD_MAGIC = {
 
 
 class AnalyzeJDRequest(BaseModel):
-    jd_text: str  # truncated to MAX_JD_CHARS in the endpoint
+    # 422 on oversized bodies (test_prod_fixes Task 1) rather than silent truncation
+    jd_text: str = Field(max_length=MAX_JD_CHARS)
 
 
 class RunPipelineRequest(BaseModel):
@@ -581,15 +582,27 @@ async def download_resume(
 
         result = await db.execute(select(Resume).where(Resume.id == resume_uuid))
         resume = result.scalar_one_or_none()
-        if not resume or str(resume.user_id) != str(current_user.id):
-            raise HTTPException(status_code=404, detail="Resume not found.")
+        if resume and str(resume.user_id) == str(current_user.id) and resume.file_path:
+            file_path = resume.file_path
+            original_filename = resume.original_filename
+        else:
+            # Fallback: the done-event links /download/{job_id} when the Resume
+            # row failed to save — resolve the blob via the completed job instead.
+            job_result = await db.execute(
+                select(PipelineJob).where(PipelineJob.id == resume_uuid)
+            )
+            job = job_result.scalar_one_or_none()
+            if (
+                not job
+                or str(job.user_id) != str(current_user.id)
+                or job.status != JobStatus.done
+                or not job.download_path
+            ):
+                raise HTTPException(status_code=404, detail="Resume not found.")
+            file_path = job.download_path
+            original_filename = job.original_filename
 
-        if not resume.file_path:
-            raise HTTPException(status_code=404, detail="Output file not found.")
-
-        original_filename = resume.original_filename
-
-    url = await asyncio.to_thread(_storage.generate_download_url, resume.file_path)
+    url = await asyncio.to_thread(_storage.generate_download_url, file_path)
     if url.startswith("http"):
         return RedirectResponse(url, status_code=302)
     return FileResponse(
@@ -678,16 +691,16 @@ async def scrape_jobs_endpoint(
     user_id = str(current_user.id)
 
     async def _persist():
-        for posting in postings:
-            record = {
-                "user_id":   user_id,
-                "resume_id": request.resume_id,
-                **posting,
-            }
-            try:
-                await asyncio.to_thread(write_job_match, record)
-            except Exception:
-                _logger.warning("write_job_match failed for posting: %s", posting.get("title", "unknown"))
+        records = [
+            {"user_id": user_id, "resume_id": request.resume_id, **posting}
+            for posting in postings
+        ]
+        try:
+            # Single Delta transaction for the whole batch — avoids one
+            # commit + one tiny parquet file per posting.
+            await asyncio.to_thread(write_job_matches, records)
+        except Exception:
+            _logger.warning("write_job_matches failed for %d postings", len(records))
 
     background_tasks.add_task(_persist)
 
@@ -849,7 +862,8 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             current_resume = resume_text
 
         # ── Fabrication guard — flag unverified claims before rendering ────
-        guard_result = fabrication_guard(current_resume, ledger, resume_text)
+        # CPU-bound (spaCy NER + difflib over the whole resume) — keep it off the event loop.
+        guard_result = await asyncio.to_thread(fabrication_guard, current_resume, ledger, resume_text)
         if guard_result.gaps:
             _logger.warning(
                 "fabrication_guard flagged %d unverified claims for job %s",
@@ -923,6 +937,8 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             scores_json=scores,
             iteration=max(_iter, 1),
             cost_usd=total_cost_usd,
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
         )
 
         # ── Increment quota counter — only on success so failures are free ──

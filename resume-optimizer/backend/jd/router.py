@@ -1,5 +1,8 @@
+import asyncio
 import hashlib
 import json as _json
+import logging
+import re as _re
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -16,6 +19,8 @@ from db.session import get_db
 from llm import complete
 
 router = APIRouter()
+
+_logger = logging.getLogger(__name__)
 
 _CACHE_TTL_HOURS = 24
 
@@ -91,13 +96,9 @@ async def match_profiles(
     return sorted(ranked, key=lambda x: x["match_pct"], reverse=True)[:3]
 
 
-async def _fetch_jd_from_url(url: str) -> str:
-    """Fetch URL and extract job description text via HTML parsing."""
-    async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
-        response = await client.get(url, headers={"User-Agent": "Mozilla/5.0 ResumeOptimizer/1.0"})
-        response.raise_for_status()
-
-    soup = BeautifulSoup(response.text, "html.parser")
+def _extract_jd_text(html: str) -> str:
+    """Extract job description text from HTML. CPU-bound — call via to_thread."""
+    soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "nav", "footer", "header"]):
         tag.decompose()
 
@@ -117,6 +118,16 @@ async def _fetch_jd_from_url(url: str) -> str:
                 return text[:15000]
 
     return soup.get_text(separator="\n", strip=True)[:15000]
+
+
+async def _fetch_jd_from_url(url: str) -> str:
+    """Fetch URL and extract job description text via HTML parsing."""
+    async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
+        response = await client.get(url, headers={"User-Agent": "Mozilla/5.0 ResumeOptimizer/1.0"})
+        response.raise_for_status()
+
+    # Parsing multi-MB job pages can take long enough to stall other requests.
+    return await asyncio.to_thread(_extract_jd_text, response.text)
 
 
 async def _score_profiles(profile_dicts: list[dict], jd_text: str) -> list[dict]:
@@ -139,8 +150,25 @@ Job description (first 3000 chars):
     if text.startswith("```"):
         lines = text.split("\n")
         text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:]).strip()
-    scored = _json.loads(text)
-    score_map = {item["profile_id"]: item for item in scored}
+
+    # LLM output is untrusted — recover the array from surrounding prose if
+    # needed, and degrade with a clear 502 instead of an unhandled 500.
+    try:
+        scored = _json.loads(text)
+    except _json.JSONDecodeError:
+        match = _re.search(r"\[.*\]", text, _re.DOTALL)
+        if not match:
+            _logger.error("profile match returned unparseable JSON (first 300 chars): %s", text[:300])
+            raise HTTPException(status_code=502, detail="Profile matching failed — please try again.")
+        try:
+            scored = _json.loads(match.group(0))
+        except _json.JSONDecodeError:
+            _logger.error("profile match JSON recovery failed (first 300 chars): %s", text[:300])
+            raise HTTPException(status_code=502, detail="Profile matching failed — please try again.")
+    if not isinstance(scored, list):
+        raise HTTPException(status_code=502, detail="Profile matching failed — please try again.")
+
+    score_map = {item.get("profile_id"): item for item in scored if isinstance(item, dict)}
     return [
         {
             **p,

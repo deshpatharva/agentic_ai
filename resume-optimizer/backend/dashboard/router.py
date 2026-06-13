@@ -4,6 +4,7 @@ All require authentication.
 """
 
 import asyncio
+import logging
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -13,7 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from auth.dependencies import get_current_user
 from db.models import DailyUsageCounter, PlanLimit, Resume, User, ProviderCost
 from db.session import get_db
-from delta.writer import read_job_matches, read_usage_last_n_days
+from delta.writer import count_unread_matches, read_job_matches
+
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
@@ -43,8 +47,6 @@ async def summary(
     )
     recent = recent_q.scalars().all()
 
-    from datetime import date
-    from db.models import DailyUsageCounter
     today_str = date.today().isoformat()
 
     # runs_today: use transactional counter — authoritative for quota display
@@ -56,19 +58,15 @@ async def summary(
     )
     runs_today = counter.runs if counter else 0
 
-    # uploads_today, tokens_today: best-effort from Delta analytics
-    try:
-        df = await asyncio.to_thread(read_usage_last_n_days, user_id, 1)
-        today_df = df[df["date"] == today_str]
-        uploads_today = int(today_df["uploads"].sum()) if not today_df.empty else 0
-        tokens_today  = int(today_df["tokens_used"].sum()) if not today_df.empty else 0
-    except Exception:
-        uploads_today = tokens_today = 0
+    # uploads mirrors runs (one upload per run); per-run token totals live in
+    # Delta analytics and are no longer surfaced here (approved Stage B item B2 —
+    # this removed one full Delta scan from every dashboard load).
+    uploads_today = runs_today
+    tokens_today = 0
 
-    # Unread job matches from Delta
+    # Unread job matches — count-only, column-pruned Delta read
     try:
-        matches = await asyncio.to_thread(read_job_matches, user_id, 30, 1, 1000)
-        unread_count = sum(1 for r in matches["results"] if not r.get("is_read"))
+        unread_count = await asyncio.to_thread(count_unread_matches, user_id, 30)
     except Exception:
         unread_count = 0
 
@@ -176,8 +174,9 @@ async def usage_history(
             })
 
         return {"days": days, "rows": rows}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read usage: {str(e)}")
+    except Exception:
+        logger.exception("usage_history read failed for user=%s", user.id)
+        raise HTTPException(status_code=500, detail="Failed to read usage.")
 
 
 @router.get("/job-matches")
@@ -190,17 +189,14 @@ async def job_matches(
     min_score: float = Query(None, ge=0.0, le=1.0),
 ):
     try:
-        result = await asyncio.to_thread(read_job_matches, str(user.id), days, page, per_page)
-        rows = result["results"]
-        if source:
-            rows = [r for r in rows if r.get("source") == source]
-        if min_score is not None:
-            rows = [r for r in rows if (r.get("similarity_score") or 0) >= min_score]
-        result["results"] = rows
-        result["total"]   = len(rows)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read job matches: {str(e)}")
+        # Filters are applied inside the read, BEFORE pagination, so `total`
+        # and page boundaries stay correct.
+        return await asyncio.to_thread(
+            read_job_matches, str(user.id), days, page, per_page, source, min_score
+        )
+    except Exception:
+        logger.exception("job_matches read failed for user=%s", user.id)
+        raise HTTPException(status_code=500, detail="Failed to read job matches.")
 
 
 @router.get("/match-analytics")
@@ -268,5 +264,6 @@ async def match_analytics(
             })
 
         return {"analytics": analytics}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read match analytics: {str(e)}")
+    except Exception:
+        logger.exception("match_analytics read failed for user=%s", user.id)
+        raise HTTPException(status_code=500, detail="Failed to read match analytics.")

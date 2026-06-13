@@ -15,9 +15,20 @@ Model names use LiteLLM provider prefixes (e.g. "gemini/...", "anthropic/...", "
 To switch a model, change config.py only. To add a provider, no code change needed.
 """
 
+import asyncio
+import logging
+
 import litellm
 
 litellm.drop_params = True  # silently ignore unsupported provider params
+
+_logger = logging.getLogger(__name__)
+
+# A hung provider call would otherwise stall a pipeline run until the
+# 15-minute stuck-job reaper kills it.
+_CALL_TIMEOUT_S = 120
+_TRANSIENT = (litellm.exceptions.Timeout, litellm.exceptions.APIConnectionError,
+              litellm.exceptions.InternalServerError, asyncio.TimeoutError)
 
 
 async def complete(
@@ -53,10 +64,20 @@ async def complete(
     else:
         messages = [{"role": "user", "content": prompt}]
 
-    response = await litellm.acompletion(
-        model=model,
-        messages=messages,
-    )
+    # One bounded retry on transient failures (timeout / connection / 5xx).
+    try:
+        response = await litellm.acompletion(
+            model=model,
+            messages=messages,
+            timeout=_CALL_TIMEOUT_S,
+        )
+    except _TRANSIENT as exc:
+        _logger.warning("LLM call to %s failed transiently (%s) — retrying once", model, type(exc).__name__)
+        response = await litellm.acompletion(
+            model=model,
+            messages=messages,
+            timeout=_CALL_TIMEOUT_S,
+        )
 
     cost_usd = getattr(response, "_hidden_params", {}).get("response_cost") or 0.0
 

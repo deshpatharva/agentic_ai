@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import JWT_ALGORITHM, JWT_EXPIRE_DAYS, JWT_SECRET, RATE_LIMIT_AUTH, TRIAL_DAYS
 from limiter import limiter
 from db.models import PlanLimit, PlanType, PromoCode, User, UserPromoRedemption, TokenBlocklist
+from utils.time_utils import ensure_utc
 from db.session import get_db
 from auth.dependencies import get_current_user, oauth2_scheme
 
@@ -256,10 +257,10 @@ async def redeem_promo_code(
     if not promo:
         raise HTTPException(status_code=400, detail="Invalid code")
 
-    # Check validity
+    # Check validity (SQLite returns naive datetimes — normalize before comparing)
     if promo.deactivated_at:
         raise HTTPException(status_code=409, detail="Code deactivated")
-    if promo.expires_at and promo.expires_at <= datetime.now(timezone.utc):
+    if promo.expires_at and ensure_utc(promo.expires_at) <= datetime.now(timezone.utc):
         raise HTTPException(status_code=409, detail="Code expired")
 
     # Check already redeemed
@@ -279,9 +280,10 @@ async def redeem_promo_code(
         user.trial_expires_at = None
         message = f"{promo.target_plan.capitalize()} plan activated!"
     elif promo.type == "trial_extension":
-        if not user.trial_expires_at or user.trial_expires_at <= datetime.now(timezone.utc):
+        trial_end = ensure_utc(user.trial_expires_at)
+        if not trial_end or trial_end <= datetime.now(timezone.utc):
             raise HTTPException(status_code=400, detail="No active trial to extend")
-        user.trial_expires_at = user.trial_expires_at + timedelta(days=promo.days_to_add)
+        user.trial_expires_at = trial_end + timedelta(days=promo.days_to_add)
         message = f"Trial extended {promo.days_to_add} days"
     elif promo.type == "discount":
         message = "Discount code recorded — your discount will apply at your next billing cycle when Stripe billing is enabled."

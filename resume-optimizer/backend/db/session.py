@@ -28,13 +28,18 @@ def _dbg(msg: str) -> None:
         pass
     print(line, end="", file=sys.stderr, flush=True)
 
+# SQLite (dev/tests) uses StaticPool/NullPool which reject QueuePool kwargs.
+_pool_kwargs = {} if DATABASE_URL.startswith("sqlite") else {
+    "pool_size": 3,     # B1 has 1.75GB; keep idle connections low to avoid OOM
+    "max_overflow": 7,  # burst up to 10 total when needed
+    "pool_timeout": 30,
+}
+
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
     pool_pre_ping=True,
-    pool_size=3,       # B1 has 1.75GB; keep idle connections low to avoid OOM
-    max_overflow=7,    # burst up to 10 total when needed
-    pool_timeout=30,
+    **_pool_kwargs,
 )
 AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
