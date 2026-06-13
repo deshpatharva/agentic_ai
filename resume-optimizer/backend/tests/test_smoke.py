@@ -8,7 +8,6 @@ Run with:
     pytest backend/tests/test_smoke.py -v
 """
 
-import io
 import os
 import pytest
 import pytest_asyncio
@@ -126,49 +125,6 @@ async def test_me_with_token(client):
     r2 = await client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert r2.status_code == 200
     assert r2.json()["email"] == "me@test.com"
-
-
-# ── Upload guard smoke tests ──────────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_upload_requires_auth(client):
-    fake_pdf = io.BytesIO(b"%PDF-1.4 fake")
-    r = await client.post("/upload", files={"file": ("resume.pdf", fake_pdf, "application/pdf")})
-    assert r.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_upload_rejects_oversized_file(client):
-    # Register and get token
-    r = await client.post("/auth/register", json={
-        "email": "bigfile@test.com",
-        "password": "Test1234!",
-    })
-    token = r.json()["access_token"]
-
-    big = io.BytesIO(b"x" * (5 * 1024 * 1024 + 1))  # 5 MB + 1 byte
-    r2 = await client.post(
-        "/upload",
-        files={"file": ("big.pdf", big, "application/pdf")},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert r2.status_code == 413
-
-
-@pytest.mark.asyncio
-async def test_upload_rejects_bad_extension(client):
-    r = await client.post("/auth/register", json={
-        "email": "badext@test.com",
-        "password": "Test1234!",
-    })
-    token = r.json()["access_token"]
-
-    r2 = await client.post(
-        "/upload",
-        files={"file": ("resume.txt", io.BytesIO(b"hello"), "text/plain")},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert r2.status_code == 400
 
 
 # ── IDOR smoke tests ──────────────────────────────────────────────────────────

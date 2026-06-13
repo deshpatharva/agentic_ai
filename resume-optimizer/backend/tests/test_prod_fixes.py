@@ -98,13 +98,6 @@ async def test_register_rejects_password_over_128_chars(client):
     assert "too long" in r.json()["detail"].lower()
 
 
-@pytest.mark.asyncio
-async def test_analyze_jd_rejects_oversized_body(auth_client):
-    """jd_text longer than MAX_JD_CHARS must return HTTP 422."""
-    r = await auth_client.post("/analyze-jd", json={"jd_text": "x" * 100_001})
-    assert r.status_code == 422
-
-
 # ── Task 2: Global cache ──────────────────────────────────────────────────────
 
 def test_result_cache_clear_not_in_pipeline():

@@ -11,21 +11,10 @@ import json
 import re
 import logging
 from typing import List, Optional
-import spacy
-from sklearn.feature_extraction.text import TfidfVectorizer
 from llm import complete
 from config import MODEL_SCORER
-from utils import cache as result_cache
 
 _logger = logging.getLogger(__name__)
-
-try:
-    nlp = spacy.load("en_core_web_sm")
-except OSError:
-    raise RuntimeError(
-        "spaCy model 'en_core_web_sm' not found. "
-        "Run: python -m spacy download en_core_web_sm"
-    )
 
 
 def _extract_json(text: str) -> str:
@@ -45,21 +34,6 @@ def _extract_json(text: str) -> str:
             candidate = candidate[4:]
         return candidate.strip()
     return text
-
-
-def _extract_jd_keywords(jd_text: str, jd_keywords: list) -> list:
-    """Extract keywords from JD using spaCy + TF-IDF (used to build keyword list for ATS prompt)."""
-    doc = nlp(jd_text)
-    spacy_kw = [chunk.text.lower() for chunk in doc.noun_chunks]
-    spacy_kw += [t.text.lower() for t in doc if t.pos_ in ("NOUN", "PROPN") and not t.is_stop]
-    try:
-        tfidf = TfidfVectorizer(ngram_range=(1, 2), stop_words="english", max_features=30)
-        tfidf.fit([jd_text])
-        tfidf_kw = list(tfidf.get_feature_names_out())
-    except Exception:
-        tfidf_kw = []
-    all_kw = list(dict.fromkeys(spacy_kw + tfidf_kw + [k.lower() for k in jd_keywords]))
-    return [k for k in all_kw if len(k) > 2]
 
 
 async def _llm_complete(prompt: str, system: str = None, schema: dict = None) -> tuple:
