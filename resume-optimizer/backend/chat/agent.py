@@ -17,8 +17,16 @@ and say why in one sentence. If only one profile exists, confirm it.
 3. Surface gaps conversationally: skills or keywords the JD wants that the chosen profile may be \
 light on. Ask at most TWO clarifying questions total — keep momentum, don't interrogate.
 4. When the user clearly says go ahead (e.g. "run it", "do it", "go", "optimize"), LAUNCH.
+5. After the optimizer finishes (the user will tell you, or you'll see the result), you may help \
+the user save the optimized resume as a new profile if they ask.
 
 STYLE: concise, warm, expert. 1–3 sentences per reply. Never invent the user's experience or skills.
+
+CRITICAL RULES — VIOLATIONS BREAK THE SYSTEM:
+- NEVER print or mention any profile id (the UUID strings in the list below) in your replies.
+- NEVER print or repeat the internal `- id=… label=…` profile list in your replies.
+- NEVER emit [READY_TO_OPTIMIZE] or [SAVE_PROFILE] tokens except as described in the protocols below.
+- If you reference profiles, call them by their LABEL only (e.g. "your Data Engineer profile").
 
 LAUNCH PROTOCOL — read carefully:
 When and ONLY when the user has (a) given a job description or URL AND (b) chosen a profile AND \
@@ -26,12 +34,26 @@ When and ONLY when the user has (a) given a job description or URL AND (b) chose
 
 [READY_TO_OPTIMIZE: {"profile_id": "<id from the list>", "instruction": "<one-line note or empty>"}]
 
-Rules for the token:
-- Emit it at most once, only at launch, as the LAST thing in your message.
+Rules for the READY_TO_OPTIMIZE token:
+- Emit it at most ONCE, only at launch, as the LAST thing in your message.
 - profile_id MUST be one of the ids in the profile list below — never fabricate one.
 - Put any special user instruction (e.g. "emphasize leadership") in instruction; otherwise use "".
 - Do NOT include the job text in the token — the system already has it.
-- Before the token, write one short human sentence confirming the launch."""
+- Before the token, write one short human sentence confirming the launch.
+- The token is stripped automatically — users NEVER see it; do NOT explain or mention it.
+
+SAVE PROFILE PROTOCOL:
+After optimization completes, if the user asks to save the result as a (new) profile, end your \
+reply with EXACTLY this control token on its own line:
+
+[SAVE_PROFILE: {"label": "<profile name the user chose>"}]
+
+Rules for the SAVE_PROFILE token:
+- Emit it ONLY when the user explicitly asks to save the optimized resume as a profile.
+- label MUST be the exact name the user gave (ask them if they didn't specify one).
+- The system will create the profile automatically — do NOT claim it's saved until you emit the token.
+- The token is stripped automatically — users NEVER see it; do NOT explain or mention it.
+- After emitting it, confirm in one sentence that the profile has been saved."""
 
 
 def render_system_prompt(context: dict) -> str:
@@ -51,31 +73,80 @@ def render_system_prompt(context: dict) -> str:
         )
     else:
         jd_state = "No job description yet — ask the user for one (they can paste the text or a URL)."
-    return f"{_SYSTEM_PROMPT}\n\nUSER'S SAVED PROFILES:\n{listing}\n\nSTATE: {jd_state}"
+
+    has_result = bool(context.get("last_result"))
+    result_state = (
+        "An optimized resume was produced in this session. If the user asks to save it as a profile, "
+        "use the SAVE PROFILE PROTOCOL above."
+        if has_result
+        else ""
+    )
+    extra = f"\n\nRESULT STATE: {result_state}" if result_state else ""
+    return f"{_SYSTEM_PROMPT}\n\nUSER'S SAVED PROFILES:\n{listing}\n\nSTATE: {jd_state}{extra}"
 
 
-_HANDOFF_RE = re.compile(r"\[READY_TO_OPTIMIZE:\s*(\{.*?\})\s*\]", re.DOTALL)
-# The sentinel prefix — used to suppress the trailing token while streaming.
-_SENTINEL_PREFIX = "[READY_TO_OPTIMIZE:"
+# ── READY_TO_OPTIMIZE token ──────────────────────────────────────────────────
+
+# Primary regex: well-formed token with valid JSON.
+_HANDOFF_RE = re.compile(r"\[READY_TO_OPTIMIZE\s*:\s*(\{.*?\})\s*\]", re.DOTALL)
+# Fallback: strip the token even when JSON or closing bracket is missing/malformed.
+_HANDOFF_FALLBACK_RE = re.compile(r"\[READY_TO_OPTIMIZE\b[^\]]*(?:\]|$)", re.DOTALL)
+
+# Sentinel prefix for live-stream suppression — no colon needed so variant forms are caught.
+_SENTINEL_PREFIX = "[READY_TO_OPTIMIZE"
 
 
 def extract_handoff(text: str) -> tuple[str, dict | None]:
     """Split assistant text into (visible_text, handoff_payload | None).
 
-    Strips the control token from what we store and display. Returns parsed
-    JSON payload if present and valid; None on parse failure (keep talking).
+    Strips ALL occurrences of the control token from what we store and display.
+    Returns a parsed JSON payload if found and valid; None on parse failure.
+    clean_text is GUARANTEED to contain no [READY_TO_OPTIMIZE…] fragment.
     """
+    payload: dict | None = None
+
+    # Try to parse the primary (well-formed) match first.
     m = _HANDOFF_RE.search(text)
-    if not m:
-        return text.strip(), None
-    visible = (text[: m.start()] + text[m.end() :]).strip()
-    try:
-        payload = json.loads(m.group(1))
-    except json.JSONDecodeError:
-        return visible, None
-    return visible, payload
+    if m:
+        try:
+            payload = json.loads(m.group(1))
+        except json.JSONDecodeError:
+            payload = None
+
+    # Strip ALL occurrences (primary + any malformed) from visible text.
+    clean = _HANDOFF_FALLBACK_RE.sub("", text).strip()
+    return clean, payload
 
 
 def in_sentinel(text: str) -> bool:
     """True once the sentinel prefix has started appearing in the accumulated text."""
     return _SENTINEL_PREFIX in text
+
+
+# ── SAVE_PROFILE token ────────────────────────────────────────────────────────
+
+_SAVE_RE = re.compile(r"\[SAVE_PROFILE\s*:\s*(\{.*?\})\s*\]", re.DOTALL)
+_SAVE_FALLBACK_RE = re.compile(r"\[SAVE_PROFILE\b[^\]]*(?:\]|$)", re.DOTALL)
+_SAVE_SENTINEL_PREFIX = "[SAVE_PROFILE"
+
+
+def extract_save_profile(text: str) -> tuple[str, dict | None]:
+    """Split assistant text into (visible_text, save_payload | None).
+
+    Strips ALL occurrences of [SAVE_PROFILE…] from the visible text.
+    Returns {"label": "..."} on success; None if absent or malformed.
+    """
+    payload: dict | None = None
+    m = _SAVE_RE.search(text)
+    if m:
+        try:
+            payload = json.loads(m.group(1))
+        except json.JSONDecodeError:
+            payload = None
+    clean = _SAVE_FALLBACK_RE.sub("", text).strip()
+    return clean, payload
+
+
+def in_save_sentinel(text: str) -> bool:
+    """True once [SAVE_PROFILE prefix appears in accumulated stream text."""
+    return _SAVE_SENTINEL_PREFIX in text

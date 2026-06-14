@@ -55,5 +55,16 @@ def sections_to_text(sections: dict) -> str:
         parts.append("")
     if sections.get("skills"):
         parts.append("Skills")
-        parts.append(", ".join(sections["skills"]))
+        skill_categories: dict | None = sections.get("skill_categories")
+        if skill_categories and isinstance(skill_categories, dict):
+            # Emit one "Category: a, b, c" line per group — docx LABEL_LINE_PATTERN bolds the label.
+            for cat, cat_skills in skill_categories.items():
+                if not cat_skills:
+                    continue
+                if cat:
+                    parts.append(f"{cat}: {', '.join(cat_skills)}")
+                else:
+                    parts.append(", ".join(cat_skills))
+        else:
+            parts.append(", ".join(sections["skills"]))
     return "\n".join(parts).strip()

@@ -14,9 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from auth.dependencies import get_current_user
-from chat.agent import extract_handoff, in_sentinel, render_system_prompt
+from chat.agent import (
+    extract_handoff, extract_save_profile,
+    in_sentinel, in_save_sentinel,
+    render_system_prompt,
+)
 from chat.dependencies import get_or_create_session, require_complete_profile
-from chat.handoff import fire_optimizer
+from chat.handoff import fire_optimizer, save_profile_from_session
 from chat.window import build_window
 from config import MODEL_CHAT_AGENT, CHAT_WINDOW_TURNS
 from db.models import ChatMessage, ChatSession, DailyUsageCounter, PlanLimit, User
@@ -77,11 +81,13 @@ async def get_session(
         .where(ChatMessage.session_id == sess.id)
         .order_by(ChatMessage.id)
     )).scalars().all()
+    ctx = sess.context or {}
     return {
         "id": str(sess.id),
         "title": sess.title or "New chat",
         "updated_at": sess.updated_at.isoformat(),
         "job_id": str(sess.job_id) if sess.job_id else None,
+        "last_result": ctx.get("last_result"),
         "messages": [
             {
                 "id": m.id,
@@ -324,11 +330,12 @@ async def optimize_chat(
                 if ev["type"] == "token":
                     assembled.append(ev["text"])
                     accumulated = "".join(assembled)
-                    # Once the sentinel prefix appears, hold back output (token is internal).
-                    if not sentinel_started and not in_sentinel(accumulated):
-                        yield {"event": "token", "data": json.dumps({"text": ev["text"]})}
-                    elif in_sentinel(accumulated):
-                        sentinel_started = True
+                    # Suppress output once any control-token prefix appears in the stream.
+                    if not sentinel_started:
+                        if in_sentinel(accumulated) or in_save_sentinel(accumulated):
+                            sentinel_started = True
+                        else:
+                            yield {"event": "token", "data": json.dumps({"text": ev["text"]})}
                 elif ev["type"] == "usage":
                     usage = ev
         except Exception:
@@ -337,7 +344,10 @@ async def optimize_chat(
             return
 
         full_text = "".join(assembled)
+        # Strip READY_TO_OPTIMIZE token (all occurrences, tolerant of malformed).
         clean_text, handoff_payload = extract_handoff(full_text)
+        # Strip SAVE_PROFILE token from whatever remains.
+        clean_text, save_payload = extract_save_profile(clean_text)
 
         # 4. Persist the assistant turn.
         async with AsyncSessionLocal() as wdb:
@@ -351,7 +361,11 @@ async def optimize_chat(
             ))
             await wdb.commit()
 
-        # 5. If agent signalled launch, check quota then fire.
+        # 4b. Emit `final` event so the frontend can replace the live (potentially
+        #     partially-leaked) streaming bubble with the guaranteed-clean persisted text.
+        yield {"event": "final", "data": json.dumps({"content": clean_text})}
+
+        # 5a. If agent signalled launch, check quota then fire.
         if handoff_payload:
             try:
                 await _check_quota(current_user, db)
@@ -366,6 +380,14 @@ async def optimize_chat(
             try:
                 job_id, sse_token = await fire_optimizer(current_user, session, handoff_payload)
                 yield {"event": "handoff", "data": json.dumps({"job_id": job_id, "sse_token": sse_token})}
+            except HTTPException as exc:
+                yield {"event": "error", "data": json.dumps({"message": str(exc.detail)})}
+
+        # 5b. If agent requested profile save, create the profile now.
+        if save_payload:
+            try:
+                saved = await save_profile_from_session(current_user, session, save_payload)
+                yield {"event": "saved_profile", "data": json.dumps(saved)}
             except HTTPException as exc:
                 yield {"event": "error", "data": json.dumps({"message": str(exc.detail)})}
 

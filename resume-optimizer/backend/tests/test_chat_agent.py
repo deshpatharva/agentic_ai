@@ -10,7 +10,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # ── agent.py ─────────────────────────────────────────────────────────────────
 
-from chat.agent import extract_handoff, in_sentinel, render_system_prompt
+from chat.agent import (
+    extract_handoff, extract_save_profile,
+    in_sentinel, in_save_sentinel,
+    render_system_prompt,
+)
 
 
 class TestExtractHandoff:
@@ -48,11 +52,85 @@ class TestInSentinel:
     def test_true_when_prefix_present(self):
         assert in_sentinel("partial [READY_TO_OPTIMIZE: {") is True
 
+    def test_true_without_colon(self):
+        # Generalized sentinel — no colon required.
+        assert in_sentinel("partial [READY_TO_OPTIMIZE {") is True
+
     def test_false_when_no_prefix(self):
         assert in_sentinel("just a normal reply") is False
 
     def test_false_on_empty(self):
         assert in_sentinel("") is False
+
+
+class TestExtractHandoffHardened:
+    """Token must be fully stripped even in pathological cases."""
+
+    def test_strips_malformed_json(self):
+        text = "Hi there.\n[READY_TO_OPTIMIZE: {not valid json}]"
+        clean, payload = extract_handoff(text)
+        assert "READY_TO_OPTIMIZE" not in clean
+        assert payload is None
+
+    def test_strips_missing_closing_bracket(self):
+        text = "Launching.\n[READY_TO_OPTIMIZE: {\"profile_id\": \"x\", \"instruction\": \"\""
+        clean, _ = extract_handoff(text)
+        assert "READY_TO_OPTIMIZE" not in clean
+
+    def test_strips_all_occurrences(self):
+        text = ('[READY_TO_OPTIMIZE: {"profile_id":"a","instruction":""}] '
+                'extra [READY_TO_OPTIMIZE: {"profile_id":"b","instruction":""}]')
+        clean, _ = extract_handoff(text)
+        assert "READY_TO_OPTIMIZE" not in clean
+
+    def test_clean_text_has_no_token(self):
+        text = 'Ready to go!\n[READY_TO_OPTIMIZE: {"profile_id": "abc", "instruction": ""}]'
+        clean, payload = extract_handoff(text)
+        assert "READY_TO_OPTIMIZE" not in clean
+        assert payload is not None
+        assert payload["profile_id"] == "abc"
+
+
+class TestExtractSaveProfile:
+    def test_valid_payload(self):
+        text = 'Sure, I\'ll save it.\n[SAVE_PROFILE: {"label": "Data Engineer"}]'
+        clean, payload = extract_save_profile(text)
+        assert payload == {"label": "Data Engineer"}
+        assert "SAVE_PROFILE" not in clean
+        assert "Sure" in clean
+
+    def test_malformed_returns_none(self):
+        text = "Done.\n[SAVE_PROFILE: {bad json}]"
+        clean, payload = extract_save_profile(text)
+        assert payload is None
+        assert "SAVE_PROFILE" not in clean
+
+    def test_absent_returns_none(self):
+        _, payload = extract_save_profile("regular message")
+        assert payload is None
+
+    def test_sentinel_prefix_detected(self):
+        assert in_save_sentinel("partial [SAVE_PROFILE {") is True
+        assert in_save_sentinel("no token here") is False
+
+
+class TestPromptHardening:
+    def test_no_id_leak_instruction_present(self):
+        prompt = render_system_prompt({"profiles": [{"id": "abc", "label": "SWE"}]})
+        assert "NEVER print or mention any profile id" in prompt
+
+    def test_save_protocol_in_prompt(self):
+        prompt = render_system_prompt({})
+        assert "SAVE_PROFILE" in prompt
+        assert "SAVE PROFILE PROTOCOL" in prompt
+
+    def test_last_result_state_shown(self):
+        prompt = render_system_prompt({"last_result": {"sections": {}, "final_score": 80}})
+        assert "optimized resume was produced" in prompt
+
+    def test_no_last_result_no_result_state(self):
+        prompt = render_system_prompt({})
+        assert "optimized resume was produced" not in prompt
 
 
 class TestRenderSystemPrompt:
@@ -147,6 +225,56 @@ class TestAutoTitle:
 
     def test_existing_title_preserved(self):
         assert _derive_title("New msg", existing="Old title") == "Old title"
+
+
+# ── sections_to_text grouped skills ──────────────────────────────────────────
+
+from utils.profile_utils import sections_to_text
+
+
+class TestSectionsToTextSkills:
+    def test_flat_skills_when_no_categories(self):
+        text = sections_to_text({"skills": ["Python", "SQL"]})
+        assert "Python, SQL" in text
+
+    def test_grouped_skills_emit_label_lines(self):
+        sections = {
+            "skills": ["Python", "SQL", "AWS"],
+            "skill_categories": {
+                "Languages": ["Python", "SQL"],
+                "Cloud": ["AWS"],
+            },
+        }
+        text = sections_to_text(sections)
+        assert "Languages: Python, SQL" in text
+        assert "Cloud: AWS" in text
+
+    def test_empty_category_skipped(self):
+        sections = {
+            "skills": ["Python"],
+            "skill_categories": {"Languages": ["Python"], "Empty": []},
+        }
+        text = sections_to_text(sections)
+        assert "Empty" not in text
+
+
+# ── categorize_skills fallback ────────────────────────────────────────────────
+
+import asyncio
+
+
+class TestCategorizeSkillsFallback:
+    def test_returns_flat_on_empty_input(self):
+        from utils.skills_normalizer import categorize_skills
+        result = asyncio.run(categorize_skills([], ""))
+        assert result == {"": []}
+
+    def test_returns_flat_on_empty_tokens_immediately(self):
+        """categorize_skills short-circuits on empty input without any LLM call."""
+        from utils.skills_normalizer import categorize_skills
+        # Empty input → immediate flat return, no LLM call at all.
+        result = asyncio.run(categorize_skills([], "data engineer"))
+        assert result == {"": []}
 
 
 # ── domain threshold constant is set and is numeric ───────────────────────────
