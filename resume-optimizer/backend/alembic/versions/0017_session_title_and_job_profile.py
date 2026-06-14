@@ -7,7 +7,7 @@ Create Date: 2026-06-14
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0017_session_title_and_job_profile"
+revision = "0017_session_and_profile"
 down_revision = "0016_add_llm_call_log"
 branch_labels = None
 depends_on = None
