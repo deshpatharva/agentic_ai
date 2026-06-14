@@ -4,23 +4,33 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
 import client from '../../api/client';
-import { ChartCard, ChartState, CHART } from './adminUi';
+import { ChartCard, ChartState, CHART, formatUsd } from './adminUi';
 
 const PIE_COLORS = [CHART.neutral, CHART.green, CHART.amber];
 
+// fmt helpers
+function fmtMs(ms) { return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`; }
+function fmtK(n)   { return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n); }
+
 export default function Analytics() {
-  const [analytics, setAnalytics] = useState(null);
-  const [providers, setProviders] = useState([]);
-  const [days, setDays] = useState(30);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [analytics,  setAnalytics]  = useState(null);
+  const [providers,  setProviders]  = useState([]);
+  const [tokens,     setTokens]     = useState(null);
+  const [byModel,    setByModel]    = useState(null);
+  const [costAudit,  setCostAudit]  = useState(null);
+  const [days,       setDays]       = useState(30);
+  const [loading,    setLoading]    = useState(true);
+  const [error,      setError]      = useState(null);
 
   useEffect(() => {
     setLoading(true);
     setError(null);
     Promise.allSettled([
-      client.get('/admin/analytics', { params: { days } }).then(r => setAnalytics(r.data)),
-      client.get('/admin/provider-costs').then(r => setProviders(r.data.providers || [])),
+      client.get('/admin/analytics',        { params: { days } }).then(r => setAnalytics(r.data)),
+      client.get('/admin/provider-costs')                        .then(r => setProviders(r.data.providers || [])),
+      client.get('/admin/analytics/tokens', { params: { days } }).then(r => setTokens(r.data)),
+      client.get('/admin/analytics/by-model',{ params: { days } }).then(r => setByModel(r.data)),
+      client.get('/admin/analytics/cost-audit',{ params: { days } }).then(r => setCostAudit(r.data)),
     ]).then((results) => {
       const failed = results[0].status === 'rejected' ? results[0] : null;
       if (failed) setError(failed.reason?.response?.data?.detail || failed.reason?.message);
@@ -42,6 +52,16 @@ export default function Analytics() {
 
   const sourceData = Object.entries(analytics?.source_counts || {}).map(([source, count]) => ({ source, count }));
 
+  // Token series: stacked bar data
+  const tokenSeries = (tokens?.series || []).map(d => ({
+    ...d,
+    input_k:  +(d.input_tokens  / 1000).toFixed(1),
+    output_k: +(d.output_tokens / 1000).toFixed(1),
+  }));
+
+  const totalInput  = tokens?.total_input_tokens  || 0;
+  const totalOutput = tokens?.total_output_tokens || 0;
+
   return (
     <div className="p-4 sm:p-8">
       <div className="flex justify-between items-center mb-8">
@@ -57,6 +77,7 @@ export default function Analytics() {
         </select>
       </div>
 
+      {/* ── Row 1: User growth + Plan distribution ───────────────────────────── */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
         <ChartCard title="User growth">
           <ChartState isLoading={loading} error={error} empty={!analytics?.user_growth?.length}>
@@ -96,6 +117,7 @@ export default function Analytics() {
         </ChartCard>
       </div>
 
+      {/* ── Row 2: LLM spend + Input vs Output tokens ────────────────────────── */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
         <ChartCard title="LLM spend per day (USD)">
           <ChartState isLoading={loading} error={error} empty={!costData.length}>
@@ -117,22 +139,101 @@ export default function Analytics() {
           </ChartState>
         </ChartCard>
 
-        <ChartCard title="Job match sources">
-          <ChartState isLoading={loading} error={error} empty={!sourceData.length}>
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={sourceData}>
+        <ChartCard title="Input vs output tokens per day (thousands)">
+          <ChartState isLoading={loading} empty={!tokenSeries.length}>
+            {tokens && (
+              <p className="text-[11px] text-ink-faint mb-3">
+                Total — in: <span className="font-mono text-ink">{fmtK(totalInput)}</span>
+                &nbsp;·&nbsp;out: <span className="font-mono text-ink">{fmtK(totalOutput)}</span>
+                &nbsp;·&nbsp;ratio: <span className="font-mono text-ink">
+                  {totalInput ? (totalOutput / totalInput).toFixed(2) : '—'}
+                </span>
+              </p>
+            )}
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={tokenSeries}>
                 <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} />
-                <XAxis dataKey="source" tick={CHART.tick} />
-                <YAxis tick={CHART.tick} allowDecimals={false} />
-                <Tooltip contentStyle={CHART.tooltip} />
-                <Bar dataKey="count" fill={CHART.green} radius={[4, 4, 0, 0]} />
+                <XAxis dataKey="date" tick={CHART.tick} tickFormatter={d => d.slice(5)} />
+                <YAxis tick={CHART.tick} tickFormatter={v => `${v}k`} />
+                <Tooltip
+                  contentStyle={CHART.tooltip}
+                  formatter={(v, name) => [`${v}k`, name === 'input_k' ? 'Input' : 'Output']}
+                />
+                <Legend wrapperStyle={{ fontSize: 12 }} formatter={v => v === 'input_k' ? 'Input' : 'Output'} />
+                <Bar dataKey="input_k"  fill={CHART.green}  radius={[3, 3, 0, 0]} stackId="tok" name="input_k" />
+                <Bar dataKey="output_k" fill={CHART.amber}  radius={[3, 3, 0, 0]} stackId="tok" name="output_k" />
               </BarChart>
             </ResponsiveContainer>
           </ChartState>
         </ChartCard>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+      {/* ── Row 3: Model-wise spend table ────────────────────────────────────── */}
+      <div className="mb-6">
+        <ChartCard title="LLM spend by model">
+          <ChartState isLoading={loading} empty={!byModel?.models?.length}>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-line text-ink-faint text-xs uppercase tracking-wide">
+                    <th className="py-2 text-left">Model</th>
+                    <th className="py-2 text-left">Provider</th>
+                    <th className="py-2 text-right">Calls</th>
+                    <th className="py-2 text-right">Input tok</th>
+                    <th className="py-2 text-right">Output tok</th>
+                    <th className="py-2 text-right">Cost (USD)</th>
+                    <th className="py-2 text-right">Avg latency</th>
+                    <th className="py-2 text-right">Avg TTFT</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(byModel?.models || []).map((m, i) => (
+                    <tr key={`${m.model}-${i}`} className="border-b border-line/60 hover:bg-surface-2/40 transition-colors">
+                      <td className="py-2 font-mono text-[11px] text-ink max-w-[180px] truncate">{m.model}</td>
+                      <td className="py-2 text-ink-mute capitalize">{m.provider}</td>
+                      <td className="py-2 text-right font-mono text-ink">{m.calls.toLocaleString()}</td>
+                      <td className="py-2 text-right font-mono text-ink-mute">{fmtK(m.input_tokens)}</td>
+                      <td className="py-2 text-right font-mono text-ink-mute">{fmtK(m.output_tokens)}</td>
+                      <td className="py-2 text-right font-mono font-semibold text-hilite">
+                        {m.cost_usd > 0 ? `$${m.cost_usd.toFixed(4)}` : <span className="text-ink-faint">—</span>}
+                      </td>
+                      <td className="py-2 text-right font-mono text-ink-mute">
+                        {m.avg_latency_ms > 0 ? fmtMs(m.avg_latency_ms) : '—'}
+                      </td>
+                      <td className="py-2 text-right font-mono text-ink-mute">
+                        {m.avg_ttft_ms > 0 ? fmtMs(m.avg_ttft_ms) : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                {byModel?.models?.length > 0 && (
+                  <tfoot>
+                    <tr className="text-[11px] text-ink-faint pt-1">
+                      <td colSpan={2} className="pt-3">Total ({byModel.window_days}d)</td>
+                      <td className="pt-3 text-right font-mono text-ink">
+                        {byModel.models.reduce((s, m) => s + m.calls, 0).toLocaleString()}
+                      </td>
+                      <td className="pt-3 text-right font-mono text-ink">
+                        {fmtK(byModel.models.reduce((s, m) => s + m.input_tokens, 0))}
+                      </td>
+                      <td className="pt-3 text-right font-mono text-ink">
+                        {fmtK(byModel.models.reduce((s, m) => s + m.output_tokens, 0))}
+                      </td>
+                      <td className="pt-3 text-right font-mono font-semibold text-ink">
+                        ${byModel.models.reduce((s, m) => s + m.cost_usd, 0).toFixed(4)}
+                      </td>
+                      <td colSpan={2} />
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          </ChartState>
+        </ChartCard>
+      </div>
+
+      {/* ── Row 4: Pipeline health + Cost source audit ───────────────────────── */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
         <ChartCard title="Pipeline health">
           <ChartState isLoading={loading} error={error} empty={!analytics?.pipeline_health?.length}>
             <ResponsiveContainer width="100%" height={260}>
@@ -149,7 +250,42 @@ export default function Analytics() {
           </ChartState>
         </ChartCard>
 
-        {/* Provider pricing (read-only) */}
+        {/* Cost source audit — shows how often LiteLLM pricing is available */}
+        <ChartCard title="LLM cost source audit">
+          <ChartState isLoading={loading} empty={!costAudit?.by_source?.length}>
+            {costAudit && (
+              <p className="text-[11px] text-ink-faint mb-3">
+                {costAudit.total_calls.toLocaleString()} calls in last {costAudit.window_days} days
+              </p>
+            )}
+            <div className="space-y-3 mt-1">
+              {(costAudit?.by_source || []).map((row) => (
+                <div key={row.source}>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="text-ink font-mono">{row.source || 'unknown'}</span>
+                    <span className="text-ink-mute">{row.calls.toLocaleString()} calls · {row.pct}% · ${row.total_cost_usd.toFixed(4)}</span>
+                  </div>
+                  <div className="h-1.5 bg-surface-2 rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${row.pct}%`,
+                        backgroundColor: row.source === 'litellm' ? CHART.green : row.source === 'manual' ? CHART.amber : CHART.red,
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+            {costAudit?.by_source?.length === 0 && (
+              <div className="h-[220px] flex items-center justify-center text-ink-faint text-sm">No LLM calls logged yet</div>
+            )}
+          </ChartState>
+        </ChartCard>
+      </div>
+
+      {/* ── Row 5: Provider pricing + Job match sources ──────────────────────── */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <div className="bg-card border border-line rounded-card p-5">
           <h3 className="text-sm font-semibold text-ink mb-4">LLM provider pricing</h3>
           {providers.length === 0 ? (
@@ -181,6 +317,20 @@ export default function Analytics() {
             </table>
           )}
         </div>
+
+        <ChartCard title="Job match sources">
+          <ChartState isLoading={loading} error={error} empty={!sourceData.length}>
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={sourceData}>
+                <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} />
+                <XAxis dataKey="source" tick={CHART.tick} />
+                <YAxis tick={CHART.tick} allowDecimals={false} />
+                <Tooltip contentStyle={CHART.tooltip} />
+                <Bar dataKey="count" fill={CHART.green} radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartState>
+        </ChartCard>
       </div>
     </div>
   );
