@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import signal
 import sys
 import tempfile
@@ -584,6 +585,48 @@ async def scrape_jobs_endpoint(
 
 # ── Auto-profile helper ───────────────────────────────────────────────────────
 
+# Words that signal a string is a requirement phrase, not a role title.
+_BAD_LABEL_RE = re.compile(
+    r"\b(years?|experience|must|required|responsib|nice to have|proficien|knowledge of)\b",
+    re.I,
+)
+# Single generic terms that are too vague to be a profile name on their own.
+_GENERIC_LABELS = {
+    "tech", "technology", "it", "software", "engineering", "engineer",
+    "general", "developer", "development", "professional", "role", "job",
+}
+
+
+def _clean_role_label(raw: str) -> str:
+    """Sanitize a candidate role string into a clean profile label, or "" if unusable.
+
+    Rejects requirement sentences / overly long phrases (e.g. "5+ Years Of Experience
+    In Software Development") and vague single words (e.g. "tech") so auto-profiles get
+    accurate names like "Senior Data Engineer".
+    """
+    s = " ".join((raw or "").split()).strip(" .,:;-—")
+    if not s:
+        return ""
+    if len(s) > 48 or len(s.split()) > 6 or _BAD_LABEL_RE.search(s):
+        return ""
+    if s.lower() in _GENERIC_LABELS:
+        return ""
+    if s.islower() or s.isupper():
+        s = s.title()
+    return s
+
+
+def _derive_auto_label(job_title: str, industry: str, jd_keywords: list[str]) -> str:
+    """Build a human auto-profile label, preferring the JD's role title."""
+    base = (
+        _clean_role_label(job_title)
+        or _clean_role_label(industry)
+        or (_clean_role_label(jd_keywords[0]) if jd_keywords else "")
+        or "Optimized Resume"
+    )
+    return f"{base} (auto)"
+
+
 async def _resolve_or_create_profile(
     *,
     job_uuid,
@@ -592,6 +635,7 @@ async def _resolve_or_create_profile(
     jd_text: str,
     jd_keywords: list[str],
     industry: str,
+    job_title: str = "",
 ) -> "uuid.UUID | None":
     """Determine which profile this Resume should link to, creating a new one
     when the JD represents a domain not yet covered by existing profiles.
@@ -635,9 +679,8 @@ async def _resolve_or_create_profile(
             # Same domain — link to the best-matching existing profile.
             return uuid.UUID(top["id"])
 
-        # New domain — derive a label from the JD and auto-create a profile.
-        role_hint = industry or (jd_keywords[0].title() if jd_keywords else "")
-        auto_label = f"{role_hint} (auto)".strip() if role_hint else "Optimized Profile (auto)"
+        # New domain — derive a label from the JD's role title and auto-create a profile.
+        auto_label = _derive_auto_label(job_title, industry, jd_keywords)
 
         # Dedup guard: skip if an (auto) profile with this label already exists.
         existing_auto = next(
@@ -728,6 +771,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
         required_hard_skills: list = jd_result.get("required_hard_skills", [])
         seniority_level: str       = jd_result.get("seniority_level", "mid")
         industry: str              = jd_result.get("industry", "")
+        job_title: str             = jd_result.get("job_title", "")
         total_input_tokens  += jd_tokens["input_tokens"]
         total_output_tokens += jd_tokens["output_tokens"]
         total_cost_usd      += jd_result_dict.get("cost_usd", 0.0)
@@ -904,6 +948,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                     jd_text=jd_text,
                     jd_keywords=jd_keywords,
                     industry=industry,
+                    job_title=job_title,
                 )
             except Exception:
                 _logger.exception("job=%s: auto-profile resolution failed — skipping", job_id)
@@ -1004,7 +1049,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                                            for k in ("ats", "impact", "skills_gap", "readability")},
                         "iterations":     max(_iter, 1),
                         "download_url":   download_url,
-                        "label_hint":     industry or "",
+                        "label_hint":     (_clean_role_label(job_title) or industry or ""),
                     }
                     sess_row.context = ctx
                     sess_row.updated_at = datetime.now(timezone.utc)

@@ -39,6 +39,10 @@ async def analyze_jd(jd_text: str) -> dict:
 
     system = """You are an expert technical recruiter. Extract structured data from job descriptions.
 
+job_title: the concise ROLE TITLE only (e.g. "Senior Data Engineer", "Backend Software Engineer").
+2-5 words. NOT a requirement sentence, NOT "5+ years of experience", NOT the company name.
+If no explicit title, infer the most likely role from the responsibilities.
+
 Seniority levels: entry (0-2 yrs), mid (3-6 yrs), senior (7+ yrs), lead (10+ yrs, manages teams).
 Industry examples: fintech, healthtech, e-commerce, saas, gaming, enterprise-software, consulting.
 
@@ -58,6 +62,7 @@ Return JSON with all fields. For seniority_level use: entry | mid | senior | lea
     schema = {
         "type": "object",
         "properties": {
+            "job_title":               {"type": "string"},
             "required_hard_skills":    {"type": "array", "items": {"type": "string"}},
             "preferred_soft_skills":   {"type": "array", "items": {"type": "string"}},
             "critical_keywords":       {"type": "array", "items": {"type": "string"}},
@@ -70,6 +75,7 @@ Return JSON with all fields. For seniority_level use: entry | mid | senior | lea
             "skills":                  {"type": "array", "items": {"type": "string"}},
         },
         "required": [
+            "job_title",
             "required_hard_skills", "preferred_soft_skills", "critical_keywords",
             "tech_stack", "seniority_level", "industry", "required_certifications",
             "keywords", "requirements", "skills",
@@ -78,6 +84,7 @@ Return JSON with all fields. For seniority_level use: entry | mid | senior | lea
 
     result, cost_usd, input_tokens, output_tokens = await _llm_complete(prompt, system=system, schema=schema)
 
+    result.setdefault("job_title", "")
     result.setdefault("required_hard_skills", [])
     result.setdefault("preferred_soft_skills", [])
     result.setdefault("critical_keywords", [])
