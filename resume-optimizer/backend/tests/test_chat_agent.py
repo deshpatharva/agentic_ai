@@ -70,6 +70,10 @@ class TestRenderSystemPrompt:
         prompt = render_system_prompt({"jd_text": "some jd", "profiles": []})
         assert "A job description has already been captured" in prompt
 
+    def test_jd_fetch_error_state(self):
+        prompt = render_system_prompt({"jd_fetch_error": True, "profiles": []})
+        assert "FAILED to fetch" in prompt or "could not be fetched" in prompt or "FAILED" in prompt
+
     def test_no_profiles_message(self):
         prompt = render_system_prompt({})
         assert "no saved profiles" in prompt

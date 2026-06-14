@@ -135,12 +135,20 @@ async def _get_owned_session(session_id: str, user_id, db: AsyncSession) -> Chat
     return sess
 
 
-async def _resolve_jd(message: str, db: AsyncSession) -> str | None:
-    """If message looks like a URL, scrape it; if it's a long paste, return as-is.
-    Returns the JD text or None if the message doesn't look like a JD/URL.
+_URL_RE = re.compile(r"^https?://", re.I)
+
+
+async def _resolve_jd(message: str, db: AsyncSession) -> tuple[str | None, bool]:
+    """Attempt to resolve a job description from the message.
+
+    Returns (jd_text, url_was_attempted):
+      - (text, False) — long paste treated as JD
+      - (text, True)  — URL successfully fetched
+      - (None, True)  — URL was provided but fetch/parse failed
+      - (None, False) — message is neither a URL nor a long paste
     """
     text = message.strip()
-    if re.match(r"^https?://", text, re.I):
+    if _URL_RE.match(text):
         from jd.router import _fetch_jd_from_url, _CACHE_TTL_HOURS
         from db.models import JdScrapeCache
         from datetime import timedelta
@@ -154,24 +162,27 @@ async def _resolve_jd(message: str, db: AsyncSession) -> str | None:
             )
         )
         if cached:
-            return cached.jd_text
+            return cached.jd_text, True
         try:
             jd_text = await _fetch_jd_from_url(text)
         except Exception:
-            return None  # let the LLM surface the error conversationally
-        old = await db.scalar(select(JdScrapeCache).where(JdScrapeCache.url_hash == url_hash))
-        if old:
-            old.jd_text = jd_text
-            old.scraped_at = datetime.now(timezone.utc)
-        else:
-            db.add(_JdCache(url_hash=url_hash, jd_text=jd_text))
-        await db.commit()
-        return jd_text
+            return None, True  # URL attempted but fetch failed
+        try:
+            old = await db.scalar(select(JdScrapeCache).where(JdScrapeCache.url_hash == url_hash))
+            if old:
+                old.jd_text = jd_text
+                old.scraped_at = datetime.now(timezone.utc)
+            else:
+                db.add(JdScrapeCache(url_hash=url_hash, jd_text=jd_text))
+            await db.commit()
+        except Exception:
+            _logger.warning("JD cache write failed (url_hash=%s), continuing without cache", url_hash)
+        return jd_text, True
 
     if len(text) > 200:
-        return text
+        return text, False
 
-    return None
+    return None, False
 
 
 async def _match_profiles(user: User, jd_text: str, db: AsyncSession) -> list[dict]:
@@ -252,11 +263,19 @@ async def optimize_chat(
     # 1. Pre-resolve JD from the message before touching the LLM.
     ctx = dict(session.context or {})
     if not ctx.get("jd_text"):
-        resolved_jd = await _resolve_jd(body.message, db)
+        resolved_jd, url_attempted = await _resolve_jd(body.message, db)
+        ctx_changed = False
         if resolved_jd:
             ctx["jd_text"] = resolved_jd
+            ctx.pop("jd_fetch_error", None)
             matches = await _match_profiles(current_user, resolved_jd, db)
-            ctx["profiles"] = [{"id": m["id"], "label": m["label"]} for m in matches]
+            ctx["_jd_matched_profiles"] = [{"id": m["id"], "label": m["label"]} for m in matches]
+            ctx_changed = True
+        elif url_attempted:
+            # URL was provided but fetch failed — tell the AI so it doesn't hallucinate success.
+            ctx["jd_fetch_error"] = True
+            ctx_changed = True
+        if ctx_changed:
             session.context = ctx
             session.updated_at = datetime.now(timezone.utc)
             await db.commit()
@@ -279,7 +298,16 @@ async def optimize_chat(
         )
     ).scalars().all()
 
-    system_prompt = render_system_prompt(ctx)
+    # Always inject fresh profiles from DB — ctx["_jd_matched_profiles"] may be stale or
+    # absent (never set when JD hasn't been captured yet), causing the AI to say "no profiles".
+    from db.models import Profile as _Profile
+    all_profs = (await db.execute(
+        select(_Profile).where(_Profile.user_id == current_user.id)
+    )).scalars().all()
+    prompt_ctx = dict(ctx)
+    prompt_ctx["profiles"] = [{"id": str(p.id), "label": p.label or ""} for p in all_profs]
+
+    system_prompt = render_system_prompt(prompt_ctx)
     window = build_window(system_prompt, history_rows, n=CHAT_WINDOW_TURNS)
 
     session_id_str = str(session.id)
