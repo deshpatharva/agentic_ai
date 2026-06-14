@@ -20,7 +20,10 @@ export default function ChatMessage({ role, content, isError = false, action = n
 
   return (
     <div className="flex items-start gap-2 mb-3">
-      <div className="flex-shrink-0 w-7 h-7 rounded-full bg-surface-2 flex items-center justify-center mt-0.5">
+      <div className={clsx(
+        'flex-shrink-0 w-7 h-7 rounded-full bg-surface-2 flex items-center justify-center mt-0.5 transition-all duration-300',
+        loading && 'ring-2 ring-primary/40 ring-offset-1 ring-offset-surface stage-pulse'
+      )}>
         <span className="text-[10px] font-semibold text-ink-faint select-none">AI</span>
       </div>
       <div

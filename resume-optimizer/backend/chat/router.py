@@ -82,12 +82,19 @@ async def get_session(
         .order_by(ChatMessage.id)
     )).scalars().all()
     ctx = sess.context or {}
+    from db.models import Profile as _Profile
+    all_profs = (await db.execute(
+        select(_Profile).where(_Profile.user_id == current_user.id)
+    )).scalars().all()
     return {
         "id": str(sess.id),
         "title": sess.title or "New chat",
         "updated_at": sess.updated_at.isoformat(),
         "job_id": str(sess.job_id) if sess.job_id else None,
         "last_result": ctx.get("last_result"),
+        "has_jd": bool(ctx.get("jd_text")),
+        "optimizer_launched": bool(ctx.get("_optimizer_launched")),
+        "profiles": [{"id": str(p.id), "label": p.label or ""} for p in all_profs],
         "messages": [
             {
                 "id": m.id,
@@ -319,7 +326,12 @@ async def optimize_chat(
     session_id_str = str(session.id)
 
     async def event_generator():
-        yield {"event": "session", "data": json.dumps({"session_id": session_id_str})}
+        yield {"event": "session", "data": json.dumps({
+            "session_id": session_id_str,
+            "has_jd": bool(ctx.get("jd_text")),
+            "optimizer_launched": bool(ctx.get("_optimizer_launched")),
+            "profiles": prompt_ctx.get("profiles", []),
+        })}
 
         assembled: list[str] = []
         usage = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
@@ -361,12 +373,18 @@ async def optimize_chat(
             ))
             await wdb.commit()
 
-        # 4b. Emit `final` event so the frontend can replace the live (potentially
-        #     partially-leaked) streaming bubble with the guaranteed-clean persisted text.
-        yield {"event": "final", "data": json.dumps({"content": clean_text})}
+        # 4b. Emit `final` event — replace live bubble with clean server-persisted text.
+        #     Use a fallback so the bubble is never empty.
+        yield {"event": "final", "data": json.dumps({"content": clean_text or ""})}
 
         # 5a. If agent signalled launch, check quota then fire.
         if handoff_payload:
+            # Guard: never fire a second time in the same session.
+            if ctx.get("_optimizer_launched"):
+                yield {"event": "error", "data": json.dumps({"message": "The optimizer was already launched in this session. Start a new chat to optimize again."})}
+                yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
+                return
+
             try:
                 await _check_quota(current_user, db)
             except HTTPException as exc:
@@ -379,6 +397,15 @@ async def optimize_chat(
 
             try:
                 job_id, sse_token = await fire_optimizer(current_user, session, handoff_payload)
+                # Mark session so agent and frontend both know optimizer has fired.
+                async with AsyncSessionLocal() as wdb:
+                    from sqlalchemy import select as _sel
+                    launched_sess = await wdb.scalar(_sel(ChatSession).where(ChatSession.id == session.id))
+                    if launched_sess:
+                        _ctx = dict(launched_sess.context or {})
+                        _ctx["_optimizer_launched"] = True
+                        launched_sess.context = _ctx
+                        await wdb.commit()
                 yield {"event": "handoff", "data": json.dumps({"job_id": job_id, "sse_token": sse_token})}
             except HTTPException as exc:
                 yield {"event": "error", "data": json.dumps({"message": str(exc.detail)})}

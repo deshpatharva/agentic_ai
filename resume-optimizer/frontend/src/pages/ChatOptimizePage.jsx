@@ -8,6 +8,7 @@ import ChatMessage from '../components/ChatMessage';
 import PipelineProgress from '../components/PipelineProgress';
 import ScoreReveal from '../components/ScoreReveal';
 import SessionRail from '../components/chat/SessionRail';
+import ProfilePicker from '../components/chat/ProfilePicker';
 import useChatSessionStore from '../store/chatSessionStore';
 
 const SESSION_KEY = 'chat_session_id';
@@ -45,18 +46,19 @@ export default function ChatOptimizePage() {
   const [result, setResult]             = useState(null);
   const [downloadUrl, setDownloadUrl]   = useState(null);
   const [railOpen, setRailOpen]         = useState(true);
-  // id of the in-flight assistant message (to track loading state)
   const [streamingMsgId, setStreamingMsgId] = useState(null);
+  // Profile picker: show chips when JD is captured but optimizer not yet launched
+  const [profileSuggestions, setProfileSuggestions] = useState([]);
+  const [optimizerLaunched, setOptimizerLaunched]   = useState(false);
 
   const esRef       = useRef(null);
   const bottomRef   = useRef(null);
   const textareaRef = useRef(null);
 
-  const { fetchSessions, addOrUpdateSession } = useChatSessionStore();
+  const { fetchSessions } = useChatSessionStore();
 
   useEffect(() => { fetchSessions(); }, [fetchSessions]);
 
-  // On mount, restore last active session from sessionStorage.
   useEffect(() => {
     const stored = sessionStorage.getItem(SESSION_KEY);
     if (stored) loadSession(stored);
@@ -90,7 +92,16 @@ export default function ChatOptimizePage() {
       );
       setStreamingMsgId(null);
 
-      // Restore completed result if the session has one (bug d).
+      const launched = Boolean(data.optimizer_launched);
+      setOptimizerLaunched(launched);
+
+      // Show profile picker if JD captured but optimizer not yet launched.
+      if (data.has_jd && !launched && data.profiles?.length) {
+        setProfileSuggestions(data.profiles);
+      } else {
+        setProfileSuggestions([]);
+      }
+
       const lr = data.last_result;
       if (lr) {
         setPhase('done');
@@ -123,6 +134,8 @@ export default function ChatOptimizePage() {
     setResult(null);
     setDownloadUrl(null);
     setStreamingMsgId(null);
+    setProfileSuggestions([]);
+    setOptimizerLaunched(false);
     sessionStorage.removeItem(SESSION_KEY);
   }
 
@@ -135,11 +148,16 @@ export default function ChatOptimizePage() {
     setLiveScores(null);
     setResult(null);
     setDownloadUrl(null);
+    setProfileSuggestions([]);
+    setOptimizerLaunched(true);
 
     const es = new EventSource(
       `${client.defaults.baseURL}/status/${jobId}?token=${encodeURIComponent(sseToken)}`
     );
     esRef.current = es;
+
+    // Guard: only emit the connection-lost message once even if EventSource retries.
+    let connectionErrShown = false;
 
     es.onmessage = (e) => {
       try {
@@ -161,23 +179,24 @@ export default function ChatOptimizePage() {
       } catch {}
     };
     es.onerror = () => {
+      es.close(); // always close first to stop retries
+      if (connectionErrShown) return;
+      connectionErrShown = true;
       setPhase('error');
-      addMsg('assistant', 'Connection to optimizer lost.', true);
-      es.close();
+      addMsg('assistant', 'Connection to the optimizer was lost. The job may still be running — check back in a moment or start a new chat.', true);
     };
   }
 
-  // ── Send a message ───────────────────────────────────────────────────────────
-  async function sendToAgent() {
-    const text = input.trim();
-    if (!text || phase === 'running' || phase === 'chatting') return;
+  // ── Core send logic (shared by textarea and profile picker) ──────────────────
+  async function sendMessage(text) {
+    if (!text?.trim() || phase === 'running' || phase === 'chatting') return;
 
     setInput('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
     addMsg('user', text);
     setPhase('chatting');
+    setProfileSuggestions([]); // hide picker while AI responds
 
-    // Create the assistant bubble immediately in loading state (shows typing dots).
     const assistantId = addMsg('assistant', '');
     setStreamingMsgId(assistantId);
     const isFirstTurn = !sessionId;
@@ -228,22 +247,27 @@ export default function ChatOptimizePage() {
             sessionStorage.setItem(SESSION_KEY, data.session_id);
             if (isFirstTurn) setTimeout(() => fetchSessions(), 500);
 
+            // Update profile picker state from session event.
+            const launched = Boolean(data.optimizer_launched);
+            setOptimizerLaunched(launched);
+            if (data.has_jd && !launched && data.profiles?.length) {
+              setProfileSuggestions(data.profiles);
+            }
+
           } else if (event === 'token' && data.text) {
             assistantText += data.text;
             updateMsg(assistantId, { content: assistantText });
 
           } else if (event === 'final' && data.content !== undefined) {
-            // Belt-and-suspenders: replace bubble with the clean server-persisted text
-            // (guaranteed free of any control tokens even if stream was partially leaked).
             assistantText = data.content;
-            updateMsg(assistantId, { content: assistantText });
+            // Ensure bubble is never empty — use a zero-width space so min-height holds.
+            updateMsg(assistantId, { content: assistantText || '​' });
 
           } else if (event === 'handoff') {
             updateMsg(assistantId, { content: assistantText || 'Launching the optimizer now…' });
             startStatusStream(data.job_id, data.sse_token);
 
           } else if (event === 'saved_profile' && data.label) {
-            // Profile was saved — show brief confirmation toast-style in chat.
             addMsg('assistant', `✅ Profile "${data.label}" saved to your profiles.`);
             fetchSessions();
 
@@ -260,8 +284,22 @@ export default function ChatOptimizePage() {
     if (phase !== 'running') setPhase('idle');
   }
 
+  // ── Send from textarea ────────────────────────────────────────────────────────
+  function sendToAgent() {
+    const text = input.trim();
+    if (text) sendMessage(text);
+  }
+
+  // ── Profile picker selection ──────────────────────────────────────────────────
+  function handleProfileSelect(profile) {
+    sendMessage(`Use my "${profile.label}" profile`);
+  }
+
   const isWaiting    = phase === 'chatting' || phase === 'running';
   const sendDisabled = !input.trim() || isWaiting;
+
+  // Show profile picker when JD is captured, profiles available, and optimizer not yet launched.
+  const showProfilePicker = profileSuggestions.length > 0 && !optimizerLaunched && phase === 'idle';
 
   const placeholder = phase === 'running'
     ? 'Pipeline running…'
@@ -272,7 +310,6 @@ export default function ChatOptimizePage() {
   return (
     <AppShell scroll={false}>
       <div className="flex flex-1 min-h-0">
-        {/* Session rail */}
         {railOpen && (
           <SessionRail
             activeSessionId={sessionId}
@@ -281,7 +318,6 @@ export default function ChatOptimizePage() {
           />
         )}
 
-        {/* Main chat pane */}
         <div className="flex flex-col flex-1 min-h-0 min-w-0">
           <header className="border-b border-line px-4 py-3 shrink-0 bg-surface flex items-center gap-3">
             <button
@@ -317,9 +353,18 @@ export default function ChatOptimizePage() {
                 content={msg.content}
                 isError={msg.isError}
                 action={msg.action}
-                loading={msg.id === streamingMsgId && !msg.content}
+                loading={msg.id === streamingMsgId}
               />
             ))}
+
+            {/* Profile picker — appears after JD capture, before optimizer launch */}
+            {showProfilePicker && (
+              <ProfilePicker
+                profiles={profileSuggestions}
+                onSelect={handleProfileSelect}
+                disabled={isWaiting}
+              />
+            )}
 
             {phase === 'running' && (
               <PipelineProgress
