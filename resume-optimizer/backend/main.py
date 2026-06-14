@@ -341,6 +341,8 @@ async def run_pipeline(
             prof = prof_result.scalar_one_or_none()
             if prof and prof.sections:
                 job.resume_text = _sections_to_text(prof.sections)
+            if prof:
+                job.profile_id = prof.id
         except ValueError:
             pass
 
@@ -580,6 +582,91 @@ async def scrape_jobs_endpoint(
     }
 
 
+# ── Auto-profile helper ───────────────────────────────────────────────────────
+
+async def _resolve_or_create_profile(
+    *,
+    job_uuid,
+    user_id: str,
+    optimized_text: str,
+    jd_text: str,
+    jd_keywords: list[str],
+    industry: str,
+) -> "uuid.UUID | None":
+    """Determine which profile this Resume should link to, creating a new one
+    when the JD represents a domain not yet covered by existing profiles.
+
+    Returns the profile UUID to store on Resume.profile_id, or None on failure.
+    """
+    from jd.router import _score_profiles
+    from profiles.router import _parse_sections
+    from config import DOMAIN_MATCH_THRESHOLD
+
+    async with AsyncSessionLocal() as db:
+        # Load source profile from the job.
+        job_row = await db.scalar(select(PipelineJob).where(PipelineJob.id == job_uuid))
+        source_profile_id = job_row.profile_id if job_row else None
+
+        # Load all existing profiles for this user.
+        profiles = (await db.execute(
+            select(Profile).where(Profile.user_id == user_id)
+        )).scalars().all()
+
+        if not profiles:
+            # No profiles yet — nothing to match against; skip auto-create too
+            # (user needs to create their first profile manually).
+            return source_profile_id
+
+        profile_dicts = [
+            {
+                "id": str(p.id),
+                "label": p.label or "",
+                "skills": (p.sections or {}).get("skills", []),
+                "summary": (p.sections or {}).get("summary", ""),
+            }
+            for p in profiles
+        ]
+
+        scored = await _score_profiles(profile_dicts, jd_text)
+        top = max(scored, key=lambda x: x.get("match_pct", 0)) if scored else None
+        top_pct = top.get("match_pct", 0) if top else 0
+
+        if top_pct >= DOMAIN_MATCH_THRESHOLD:
+            # Same domain — link to the best-matching existing profile.
+            return uuid.UUID(top["id"])
+
+        # New domain — derive a label from the JD and auto-create a profile.
+        role_hint = industry or (jd_keywords[0].title() if jd_keywords else "")
+        auto_label = f"{role_hint} (auto)".strip() if role_hint else "Optimized Profile (auto)"
+
+        # Dedup guard: skip if an (auto) profile with this label already exists.
+        existing_auto = next(
+            (p for p in profiles if p.label == auto_label), None
+        )
+        if existing_auto:
+            return existing_auto.id
+
+        # Parse the optimized text into structured sections.
+        try:
+            sections = await _parse_sections(optimized_text)
+        except Exception:
+            _logger.warning("job=%s: _parse_sections failed for auto-profile — linking source profile", job_uuid)
+            return source_profile_id
+
+        new_profile = Profile(
+            user_id=user_id,
+            label=auto_label,
+            label_confirmed=False,
+            raw_text=optimized_text,
+            sections=sections,
+        )
+        db.add(new_profile)
+        await db.commit()
+        await db.refresh(new_profile)
+        _logger.info("job=%s: auto-created profile %s (%s)", job_uuid, new_profile.id, auto_label)
+        return new_profile.id
+
+
 # ── Background pipeline task ─────────────────────────────────────────────────
 
 async def _run_pipeline_task(job_id: str, user_id: str = ""):
@@ -787,6 +874,22 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             if tmp_docx is not None:
                 os.unlink(tmp_docx)
 
+        # ── Resolve profile link + auto-create profile for new domains ──
+        # Best-effort: wrapped in try/except so it never fails the pipeline.
+        resolved_profile_id = None
+        if user_id:
+            try:
+                resolved_profile_id = await _resolve_or_create_profile(
+                    job_uuid=job_uuid,
+                    user_id=user_id,
+                    optimized_text=current_resume,
+                    jd_text=jd_text,
+                    jd_keywords=jd_keywords,
+                    industry=industry,
+                )
+            except Exception:
+                _logger.exception("job=%s: auto-profile resolution failed — skipping", job_id)
+
         # ── Persist Resume record (short-lived session) ────────────────
         resume_record = None
         if user_id:
@@ -799,6 +902,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                     next_version = ver_q.scalar() or 1
                     resume_record = Resume(
                         user_id=user_id,
+                        profile_id=resolved_profile_id,
                         original_filename=original_filename,
                         file_path=blob_name,
                         jd_text=jd_text,

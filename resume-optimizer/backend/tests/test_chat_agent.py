@@ -116,3 +116,43 @@ class TestBuildWindow:
         window = build_window("only system", [])
         assert len(window) == 1
         assert window[0]["role"] == "system"
+
+
+# ── session auto-title logic (mirrors chat/router.py — no DB import) ──────────
+
+def _derive_title(message: str, existing: str | None = None) -> str:
+    """Local copy of the auto-title logic so we can unit-test it without importing main."""
+    if existing:
+        return existing
+    first_line = message.split("\n")[0].strip()
+    return first_line[:80] or "New chat"
+
+
+class TestAutoTitle:
+    def test_single_line(self):
+        assert _derive_title("Hello world") == "Hello world"
+
+    def test_multiline_uses_first_line(self):
+        assert _derive_title("Line one\nLine two") == "Line one"
+
+    def test_truncates_at_80(self):
+        assert len(_derive_title("A" * 100)) == 80
+
+    def test_empty_falls_back(self):
+        assert _derive_title("   \n  ") == "New chat"
+
+    def test_existing_title_preserved(self):
+        assert _derive_title("New msg", existing="Old title") == "Old title"
+
+
+# ── domain threshold constant is set and is numeric ───────────────────────────
+
+class TestDomainThreshold:
+    def test_threshold_in_config(self):
+        import os
+        os.environ.setdefault("GOOGLE_AI_STUDIO_API_KEY", "test")
+        os.environ.setdefault("ANTHROPIC_API_KEY",         "test")
+        os.environ.setdefault("GROQ_API_KEY",              "test")
+        from config import DOMAIN_MATCH_THRESHOLD
+        assert isinstance(DOMAIN_MATCH_THRESHOLD, int)
+        assert 0 < DOMAIN_MATCH_THRESHOLD <= 100

@@ -54,6 +54,7 @@ async def fire_optimizer(
         now = datetime.now(timezone.utc)
         job = PipelineJob(
             user_id=user.id,
+            profile_id=prof.id,
             original_filename=f"{prof.label or 'profile'}.txt",
             resume_text=resume_text,
             jd_text=jd_text,

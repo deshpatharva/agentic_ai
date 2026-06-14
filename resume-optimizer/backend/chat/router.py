@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
@@ -31,6 +31,108 @@ router = APIRouter(prefix="/optimize", tags=["optimize-agent"])
 class ChatTurnRequest(BaseModel):
     session_id: str | None = None
     message: str
+
+
+class SessionRenameRequest(BaseModel):
+    title: str
+
+
+# ── Session management endpoints ──────────────────────────────────────────────
+
+@router.get("/sessions")
+async def list_sessions(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Return the user's chat sessions newest-first with message counts."""
+    rows = (await db.execute(
+        select(ChatSession, func.count(ChatMessage.id).label("message_count"))
+        .outerjoin(ChatMessage, ChatMessage.session_id == ChatSession.id)
+        .where(ChatSession.user_id == current_user.id)
+        .group_by(ChatSession.id)
+        .order_by(ChatSession.updated_at.desc())
+    )).all()
+    return [
+        {
+            "id": str(sess.id),
+            "title": sess.title or "New chat",
+            "updated_at": sess.updated_at.isoformat(),
+            "message_count": count,
+            "job_id": str(sess.job_id) if sess.job_id else None,
+        }
+        for sess, count in rows
+    ]
+
+
+@router.get("/sessions/{session_id}")
+async def get_session(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return a session with its full ordered transcript."""
+    sess = await _get_owned_session(session_id, current_user.id, db)
+    msgs = (await db.execute(
+        select(ChatMessage)
+        .where(ChatMessage.session_id == sess.id)
+        .order_by(ChatMessage.id)
+    )).scalars().all()
+    return {
+        "id": str(sess.id),
+        "title": sess.title or "New chat",
+        "updated_at": sess.updated_at.isoformat(),
+        "job_id": str(sess.job_id) if sess.job_id else None,
+        "messages": [
+            {
+                "id": m.id,
+                "role": m.role,
+                "content": m.content,
+                "created_at": m.created_at.isoformat(),
+            }
+            for m in msgs
+        ],
+    }
+
+
+@router.patch("/sessions/{session_id}")
+async def rename_session(
+    session_id: str,
+    body: SessionRenameRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Rename a session."""
+    title = body.title.strip()[:120]
+    if not title:
+        raise HTTPException(status_code=422, detail="title cannot be blank.")
+    sess = await _get_owned_session(session_id, current_user.id, db)
+    sess.title = title
+    sess.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"id": str(sess.id), "title": sess.title}
+
+
+@router.delete("/sessions/{session_id}", status_code=204)
+async def delete_session(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Delete a session and all its messages (cascade)."""
+    sess = await _get_owned_session(session_id, current_user.id, db)
+    await db.delete(sess)
+    await db.commit()
+
+
+async def _get_owned_session(session_id: str, user_id, db: AsyncSession) -> ChatSession:
+    try:
+        sid = uuid.UUID(session_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    sess = await db.scalar(select(ChatSession).where(ChatSession.id == sid))
+    if not sess or str(sess.user_id) != str(user_id):
+        raise HTTPException(status_code=404, detail="Session not found.")
+    return sess
 
 
 async def _resolve_jd(message: str, db: AsyncSession) -> str | None:
@@ -159,9 +261,13 @@ async def optimize_chat(
             session.updated_at = datetime.now(timezone.utc)
             await db.commit()
 
-    # 2. Persist the user turn.
+    # 2. Persist the user turn; auto-title the session from the first message.
     now = datetime.now(timezone.utc)
     db.add(ChatMessage(session_id=session.id, role="user", content=body.message, created_at=now))
+    if not session.title:
+        first_line = body.message.split("\n")[0].strip()
+        session.title = first_line[:80] or "New chat"
+        session.updated_at = now
     await db.commit()
 
     # 3. Load history and build window.
