@@ -53,6 +53,7 @@ export default function ChatOptimizePage() {
   const [optimizerLaunched, setOptimizerLaunched]   = useState(false);
 
   const esRef       = useRef(null);
+  const pollRef     = useRef(null);   // result-polling interval (SSE fallback)
   const bottomRef   = useRef(null);
   const textareaRef = useRef(null);
 
@@ -66,7 +67,21 @@ export default function ChatOptimizePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => () => esRef.current?.close(), []);
+  // Cleanup on unmount: close stream and stop any polling.
+  useEffect(() => () => {
+    esRef.current?.close();
+    if (pollRef.current) clearInterval(pollRef.current);
+  }, []);
+
+  // Apply a persisted last_result to the result UI (shared by load + poll + SSE).
+  const applyLastResult = useCallback((lr) => {
+    if (!lr) return;
+    setPhase('done');
+    setResult({ finalScore: lr.final_score ?? 0, iterations: lr.iterations ?? 0 });
+    setLiveScores(lr.scores ? { scores: lr.scores, score: lr.final_score } : null);
+    setDownloadUrl(lr.download_url || null);
+    setStage(null);
+  }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -103,19 +118,15 @@ export default function ChatOptimizePage() {
         setProfileSuggestions([]);
       }
 
-      const lr = data.last_result;
-      if (lr) {
-        setPhase('done');
-        setResult({ finalScore: lr.final_score ?? 0, iterations: lr.iterations ?? 0 });
-        setLiveScores(lr.scores ? { scores: lr.scores, score: lr.final_score } : null);
-        setDownloadUrl(lr.download_url || null);
+      if (data.last_result) {
+        applyLastResult(data.last_result);
       } else {
         setPhase('idle');
         setResult(null);
         setDownloadUrl(null);
         setLiveScores(null);
+        setStage(null);
       }
-      setStage(null);
     } catch {
       sessionStorage.removeItem(SESSION_KEY);
     }
@@ -124,6 +135,7 @@ export default function ChatOptimizePage() {
   // ── New chat ─────────────────────────────────────────────────────────────────
   function newChat() {
     esRef.current?.close();
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
     setMessages([]);
     setInput('');
     setSessionId(null);
@@ -152,13 +164,41 @@ export default function ChatOptimizePage() {
     setProfileSuggestions([]);
     setOptimizerLaunched(true);
 
+    // `resolved` flips once we have a terminal outcome (via SSE or polling),
+    // so a late EventSource error/close can't overwrite a finished run.
+    let resolved = false;
+    const finish = () => { resolved = true; esRef.current?.close(); if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+
+    // Fallback: poll the session for the persisted result. SSE over some proxies
+    // (e.g. Azure) can drop before delivering `done`, yet the job finishes fine.
+    function startPolling() {
+      if (pollRef.current || resolved) return;
+      const sid = sessionId || sessionStorage.getItem(SESSION_KEY);
+      if (!sid) return;
+      let attempts = 0;
+      pollRef.current = setInterval(async () => {
+        attempts += 1;
+        try {
+          const { data } = await getSession(sid);
+          if (data.last_result) {
+            finish();
+            applyLastResult(data.last_result);
+            fetchSessions();
+            return;
+          }
+        } catch {}
+        if (attempts >= 60) { // ~3 min at 3s — give up, leave a soft note
+          finish();
+          setPhase((p) => (p === 'done' ? p : 'error'));
+          addMsg('assistant', 'The optimizer is taking longer than expected. Your job may still be running — refresh in a moment to see the result.', true);
+        }
+      }, 3000);
+    }
+
     const es = new EventSource(
       `${client.defaults.baseURL}/status/${jobId}?token=${encodeURIComponent(sseToken)}`
     );
     esRef.current = es;
-
-    // Guard: only emit the connection-lost message once even if EventSource retries.
-    let connectionErrShown = false;
 
     es.onmessage = (e) => {
       try {
@@ -166,25 +206,24 @@ export default function ChatOptimizePage() {
         if (ev.type === 'stage')   { setStage(ev.stage); setStageMessage(ev.message || ''); }
         if (ev.type === 'average') { setIteration(ev.iteration || 0); setLiveScores(ev); }
         if (ev.type === 'done') {
+          finish();
           setPhase('done');
           setDownloadUrl(ev.download_url);
           setResult({ finalScore: ev.final_score ?? 0, iterations: ev.iterations ?? 0 });
-          es.close();
           fetchSessions();
         }
         if (ev.type === 'error') {
+          finish();
           setPhase('error');
           addMsg('assistant', `❌ ${ev.message || 'Pipeline failed.'}`, true);
-          es.close();
         }
       } catch {}
     };
     es.onerror = () => {
-      es.close(); // always close first to stop retries
-      if (connectionErrShown) return;
-      connectionErrShown = true;
-      setPhase('error');
-      addMsg('assistant', 'Connection to the optimizer was lost. The job may still be running — check back in a moment or start a new chat.', true);
+      es.close(); // stop EventSource's own retries; we poll instead
+      if (resolved) return;
+      // Don't declare failure — fall back to polling for the persisted result.
+      startPolling();
     };
   }
 
