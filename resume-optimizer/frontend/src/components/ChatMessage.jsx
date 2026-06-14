@@ -1,7 +1,8 @@
 import { Link } from 'react-router-dom';
 import { clsx } from 'clsx';
+import TypingDots from './chat/TypingDots';
 
-export default function ChatMessage({ role, content, isError = false, action = null }) {
+export default function ChatMessage({ role, content, isError = false, action = null, loading = false }) {
   const isUser = role === 'user';
 
   if (isUser) {
@@ -24,14 +25,14 @@ export default function ChatMessage({ role, content, isError = false, action = n
       </div>
       <div
         className={clsx(
-          'rounded-card rounded-bl-sm px-4 py-2.5 text-sm max-w-[75%]',
+          'rounded-card rounded-bl-sm px-4 py-2.5 text-sm max-w-[75%] min-h-[38px]',
           isError
             ? 'bg-err-soft text-err border border-err/30'
             : 'bg-card border border-line text-ink shadow-card'
         )}
         style={{ whiteSpace: 'pre-wrap' }}
       >
-        {content}
+        {loading && !content ? <TypingDots /> : content}
         {action && (
           <div className="mt-2">
             <Link

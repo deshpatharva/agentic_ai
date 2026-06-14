@@ -45,6 +45,8 @@ export default function ChatOptimizePage() {
   const [result, setResult]             = useState(null);
   const [downloadUrl, setDownloadUrl]   = useState(null);
   const [railOpen, setRailOpen]         = useState(true);
+  // id of the in-flight assistant message (to track loading state)
+  const [streamingMsgId, setStreamingMsgId] = useState(null);
 
   const esRef       = useRef(null);
   const bottomRef   = useRef(null);
@@ -52,7 +54,6 @@ export default function ChatOptimizePage() {
 
   const { fetchSessions, addOrUpdateSession } = useChatSessionStore();
 
-  // Load session list on mount.
   useEffect(() => { fetchSessions(); }, [fetchSessions]);
 
   // On mount, restore last active session from sessionStorage.
@@ -87,11 +88,22 @@ export default function ChatOptimizePage() {
       setMessages(
         data.messages.map((m) => ({ id: m.id, role: m.role, content: m.content, isError: false }))
       );
-      setPhase('idle');
+      setStreamingMsgId(null);
+
+      // Restore completed result if the session has one (bug d).
+      const lr = data.last_result;
+      if (lr) {
+        setPhase('done');
+        setResult({ finalScore: lr.final_score ?? 0, iterations: lr.iterations ?? 0 });
+        setLiveScores(lr.scores ? { scores: lr.scores, score: lr.final_score } : null);
+        setDownloadUrl(lr.download_url || null);
+      } else {
+        setPhase('idle');
+        setResult(null);
+        setDownloadUrl(null);
+        setLiveScores(null);
+      }
       setStage(null);
-      setResult(null);
-      setDownloadUrl(null);
-      setLiveScores(null);
     } catch {
       sessionStorage.removeItem(SESSION_KEY);
     }
@@ -110,6 +122,7 @@ export default function ChatOptimizePage() {
     setLiveScores(null);
     setResult(null);
     setDownloadUrl(null);
+    setStreamingMsgId(null);
     sessionStorage.removeItem(SESSION_KEY);
   }
 
@@ -138,7 +151,6 @@ export default function ChatOptimizePage() {
           setDownloadUrl(ev.download_url);
           setResult({ finalScore: ev.final_score ?? 0, iterations: ev.iterations ?? 0 });
           es.close();
-          // New profile may have been created — refresh the list.
           fetchSessions();
         }
         if (ev.type === 'error') {
@@ -165,7 +177,9 @@ export default function ChatOptimizePage() {
     addMsg('user', text);
     setPhase('chatting');
 
+    // Create the assistant bubble immediately in loading state (shows typing dots).
     const assistantId = addMsg('assistant', '');
+    setStreamingMsgId(assistantId);
     const isFirstTurn = !sessionId;
 
     try {
@@ -183,11 +197,13 @@ export default function ChatOptimizePage() {
         if (res.status === 403 && err?.detail?.error === 'profile_incomplete') {
           updateMsg(assistantId, { content: `❌ ${err.detail.message}`, isError: true, action: err.detail.action });
           setPhase('idle');
+          setStreamingMsgId(null);
           return;
         }
         const msg = err?.detail?.upgrade_message || err?.detail?.message || err?.detail || 'Request failed.';
         updateMsg(assistantId, { content: `❌ ${msg}`, isError: true });
         setPhase('idle');
+        setStreamingMsgId(null);
         return;
       }
 
@@ -210,16 +226,27 @@ export default function ChatOptimizePage() {
           if (event === 'session' && data.session_id) {
             setSessionId(data.session_id);
             sessionStorage.setItem(SESSION_KEY, data.session_id);
-            // If this was the first turn, refresh the session rail to show the new thread.
-            if (isFirstTurn) {
-              setTimeout(() => fetchSessions(), 500);
-            }
+            if (isFirstTurn) setTimeout(() => fetchSessions(), 500);
+
           } else if (event === 'token' && data.text) {
             assistantText += data.text;
             updateMsg(assistantId, { content: assistantText });
+
+          } else if (event === 'final' && data.content !== undefined) {
+            // Belt-and-suspenders: replace bubble with the clean server-persisted text
+            // (guaranteed free of any control tokens even if stream was partially leaked).
+            assistantText = data.content;
+            updateMsg(assistantId, { content: assistantText });
+
           } else if (event === 'handoff') {
             updateMsg(assistantId, { content: assistantText || 'Launching the optimizer now…' });
             startStatusStream(data.job_id, data.sse_token);
+
+          } else if (event === 'saved_profile' && data.label) {
+            // Profile was saved — show brief confirmation toast-style in chat.
+            addMsg('assistant', `✅ Profile "${data.label}" saved to your profiles.`);
+            fetchSessions();
+
           } else if (event === 'error') {
             updateMsg(assistantId, { content: `❌ ${data.message || 'Something went wrong.'}`, isError: true });
           }
@@ -229,6 +256,7 @@ export default function ChatOptimizePage() {
       updateMsg(assistantId, { content: '❌ Network error — please try again.', isError: true });
     }
 
+    setStreamingMsgId(null);
     if (phase !== 'running') setPhase('idle');
   }
 
@@ -238,7 +266,7 @@ export default function ChatOptimizePage() {
   const placeholder = phase === 'running'
     ? 'Pipeline running…'
     : phase === 'chatting'
-    ? 'Waiting for response…'
+    ? 'AI is thinking…'
     : 'Paste a job URL or description, or chat with the co-pilot…';
 
   return (
@@ -289,6 +317,7 @@ export default function ChatOptimizePage() {
                 content={msg.content}
                 isError={msg.isError}
                 action={msg.action}
+                loading={msg.id === streamingMsgId && !msg.content}
               />
             ))}
 
@@ -298,6 +327,7 @@ export default function ChatOptimizePage() {
                 iteration={iteration}
                 score={liveScores?.score}
                 message={stageMessage}
+                running={true}
               />
             )}
 

@@ -12,8 +12,11 @@ Three jobs:
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Optional
+
+_logger = logging.getLogger(__name__)
 
 # Low-signal items to remove for senior/lead resumes (mid/entry keep them).
 _FILLER_SKILLS = frozenset({
@@ -146,3 +149,55 @@ def normalize_skills(
     if header_line:
         return f"{header_line}\n{skills_line}"
     return skills_line
+
+
+async def categorize_skills(
+    tokens: list[str],
+    role_hint: str = "",
+) -> dict[str, list[str]]:
+    """Group skill tokens into labeled categories using a single LLM call.
+
+    Returns an ordered dict of {category_label: [skill, ...]} suitable for
+    emitting as `Category: skill1, skill2` lines in the resume text.
+
+    On any failure (LLM error, parse error) returns {"": tokens} so the caller
+    can fall back to a flat comma-separated line — existing behaviour.
+    """
+    if not tokens:
+        return {"": tokens}
+
+    try:
+        from llm import complete  # noqa: PLC0415
+        from config import MODEL_PROFILE_PARSER  # noqa: PLC0415
+        from utils.llm_json import parse_llm_json  # noqa: PLC0415
+
+        skills_csv = ", ".join(tokens)
+        role_clause = f" for a {role_hint} role" if role_hint else ""
+        prompt = (
+            f"Group these resume skills{role_clause} into 4–7 meaningful categories.\n"
+            "Return ONLY a JSON object — no markdown, no explanation.\n"
+            "Format: {\"Category Label\": [\"skill1\", \"skill2\"], ...}\n"
+            "Rules:\n"
+            "- Use clear, recruiter-friendly category names (e.g. 'Languages', 'Cloud & Platforms', "
+            "'Data Engineering', 'Databases', 'DevOps & CI/CD', 'AI & ML', 'Visualization').\n"
+            "- Every skill must appear in exactly one category.\n"
+            "- Preserve the original skill name exactly as given.\n\n"
+            f"Skills: {skills_csv}"
+        )
+        result = await complete(prompt, MODEL_PROFILE_PARSER)
+        categorized: dict = parse_llm_json(result["text"], kind="object")
+
+        # Validate: all values must be non-empty lists of strings.
+        if not isinstance(categorized, dict):
+            raise ValueError("LLM returned non-object")
+        validated: dict[str, list[str]] = {}
+        for cat, skills in categorized.items():
+            if isinstance(skills, list) and skills:
+                validated[str(cat)] = [str(s) for s in skills if s]
+        if validated:
+            return validated
+        raise ValueError("LLM returned empty categories")
+
+    except Exception:
+        _logger.warning("categorize_skills: LLM failed, using flat list", exc_info=True)
+        return {"": tokens}

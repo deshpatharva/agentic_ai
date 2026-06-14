@@ -847,6 +847,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
         # ── Normalize skills section ───────────────────────────────────────
         # Reconcile experience→skills, dedup, strip filler — pure CPU, no LLM.
         try:
+            from utils.skills_normalizer import categorize_skills as _categorize  # noqa: PLC0415
             _resume_sections = _detect_sections(current_resume)
             _skills_raw = _resume_sections.get("skills", "")
             _exp_raw    = _resume_sections.get("experience", "")
@@ -856,7 +857,24 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                     experience_text=_exp_raw,
                     seniority=seniority_level,
                 )
-                current_resume = current_resume.replace(_skills_raw, _normalized_skills, 1)
+                # LLM-group skills into labeled categories (e.g. Languages: ..., Cloud: ...).
+                # The docx generator already bolds "Label: values" lines, so this gives
+                # visually distinct skill groups in the output document with zero docx changes.
+                from utils.skills_normalizer import _parse_skills as _ps  # noqa: PLC0415
+                _skill_tokens = _ps(_normalized_skills)
+                _categories = await _categorize(_skill_tokens, role_hint=industry or "")
+                if len(_categories) > 1 or (len(_categories) == 1 and "" not in _categories):
+                    # Build grouped skills text: "Category: a, b, c\nCategory2: d, e"
+                    _grouped_lines = []
+                    for _cat, _cat_skills in _categories.items():
+                        if _cat:
+                            _grouped_lines.append(f"{_cat}: {', '.join(_cat_skills)}")
+                        else:
+                            _grouped_lines.append(", ".join(_cat_skills))
+                    _new_skills_text = "\n".join(_grouped_lines)
+                    current_resume = current_resume.replace(_skills_raw, _new_skills_text, 1)
+                else:
+                    current_resume = current_resume.replace(_skills_raw, _normalized_skills, 1)
         except Exception:
             _logger.exception("job=%s: skills normalization failed — skipping", job_id)
 
@@ -965,6 +983,35 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
         download_url = (
             f"/download/{resume_record.id}" if resume_record else f"/download/{job_id}"
         )
+
+        # ── Store optimized result in chat session context (enables save-as-profile) ──
+        try:
+            from profiles.router import _parse_sections as _ps  # noqa: PLC0415
+            from db.models import ChatSession as _ChatSession  # noqa: PLC0415
+            optimized_sections = await _ps(current_resume)
+            async with AsyncSessionLocal() as db:
+                sess_row = await db.scalar(
+                    select(_ChatSession).where(_ChatSession.job_id == job_uuid)
+                )
+                if sess_row:
+                    ctx = dict(sess_row.context or {})
+                    ctx["last_result"] = {
+                        "sections":       optimized_sections or {},
+                        "optimized_text": current_resume,
+                        "final_score":    float(scores.get("average", baseline_avg)),
+                        "scores":         {k: scores[k]["score"] if isinstance(scores.get(k), dict)
+                                           else scores.get(k, 0)
+                                           for k in ("ats", "impact", "skills_gap", "readability")},
+                        "iterations":     max(_iter, 1),
+                        "download_url":   download_url,
+                        "label_hint":     industry or "",
+                    }
+                    sess_row.context = ctx
+                    sess_row.updated_at = datetime.now(timezone.utc)
+                    await db.commit()
+        except Exception:
+            _logger.exception("job=%s: failed to store last_result in session context", job_id)
+
         await emit({
             "type":         "done",
             "message":      "Resume optimization complete! Your optimized resume is ready.",
