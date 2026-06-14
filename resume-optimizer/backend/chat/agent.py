@@ -41,11 +41,16 @@ def render_system_prompt(context: dict) -> str:
         listing = "\n".join(f'- id={p["id"]}  label="{p["label"]}"' for p in profiles)
     else:
         listing = "(no saved profiles — tell the user to create one at /profiles/new first)"
-    jd_state = (
-        "A job description has already been captured from this conversation."
-        if context.get("jd_text")
-        else "No job description yet — ask the user for one."
-    )
+    if context.get("jd_text"):
+        jd_state = "A job description has already been captured from this conversation."
+    elif context.get("jd_fetch_error"):
+        jd_state = (
+            "The user provided a URL but the system FAILED to fetch it (the site likely blocks "
+            "automated access). You MUST immediately tell the user the URL could not be fetched "
+            "and ask them to paste the job description text directly into the chat."
+        )
+    else:
+        jd_state = "No job description yet — ask the user for one (they can paste the text or a URL)."
     return f"{_SYSTEM_PROMPT}\n\nUSER'S SAVED PROFILES:\n{listing}\n\nSTATE: {jd_state}"
 
 
