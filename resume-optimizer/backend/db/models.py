@@ -85,6 +85,7 @@ class PipelineJob(Base):
 
     id                = Column(Uuid(), primary_key=True, default=uuid.uuid4)
     user_id           = Column(Uuid(), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    profile_id        = Column(Uuid(), ForeignKey("profiles.id", ondelete="SET NULL"), nullable=True, index=True)
     status            = Column(Enum(JobStatus), default=JobStatus.pending, nullable=False, index=True)
     original_filename = Column(String(500), nullable=False, default="resume")
     resume_text       = Column(Text, nullable=False)
@@ -223,6 +224,7 @@ class ChatSession(Base):
 
     id         = Column(Uuid(), primary_key=True, default=uuid.uuid4)
     user_id    = Column(Uuid(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    title      = Column(String(120), nullable=True)
     context    = Column(JSON, nullable=True)  # {jd_text, profiles:[{id,label}], ...}
     job_id     = Column(Uuid(), ForeignKey("pipeline_jobs.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)

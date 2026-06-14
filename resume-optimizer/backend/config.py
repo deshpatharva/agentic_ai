@@ -86,6 +86,9 @@ FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")
 # ── Pipeline settings ─────────────────────────────────────────────────────────
 MAX_ITERATIONS      = 4
 SCORE_TARGET        = 90
+# Minimum profile-vs-JD match score (0-100) above which we consider the JD to be
+# the same domain as an existing profile and skip auto-creating a new one.
+DOMAIN_MATCH_THRESHOLD = int(os.environ.get("DOMAIN_MATCH_THRESHOLD", "70"))
 
 # ── Input guards ──────────────────────────────────────────────────────────────
 MAX_UPLOAD_BYTES    = int(os.environ.get("MAX_UPLOAD_BYTES",    5 * 1024 * 1024))  # 5 MB
