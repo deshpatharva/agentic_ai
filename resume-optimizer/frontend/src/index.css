@@ -119,6 +119,20 @@ body::before {
   30%           { transform: translateY(-4px); opacity: 1; }
 }
 
+/* "composing" cue — a soft breathing fade alongside the dots */
+.typing-label { animation: composeFade 1.6s ease-in-out infinite; }
+@keyframes composeFade {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 0.85; }
+}
+
+/* Chat message entrance — each new bubble rises in once on mount */
+.msg-in { animation: msgIn 320ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes msgIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .page-fade { animation: none; }
   *, *::before, *::after {

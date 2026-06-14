@@ -9,6 +9,7 @@ import PipelineProgress from '../components/PipelineProgress';
 import ScoreReveal from '../components/ScoreReveal';
 import SessionRail from '../components/chat/SessionRail';
 import ProfilePicker from '../components/chat/ProfilePicker';
+import WelcomeHero from '../components/chat/WelcomeHero';
 import useChatSessionStore from '../store/chatSessionStore';
 
 const SESSION_KEY = 'chat_session_id';
@@ -281,7 +282,9 @@ export default function ChatOptimizePage() {
     }
 
     setStreamingMsgId(null);
-    if (phase !== 'running') setPhase('idle');
+    // Functional updater reads the latest phase — if a handoff set it to 'running',
+    // don't clobber it back to 'idle' (stale-closure trap).
+    setPhase((p) => (p === 'running' || p === 'done' || p === 'error' ? p : 'idle'));
   }
 
   // ── Send from textarea ────────────────────────────────────────────────────────
@@ -293,6 +296,15 @@ export default function ChatOptimizePage() {
   // ── Profile picker selection ──────────────────────────────────────────────────
   function handleProfileSelect(profile) {
     sendMessage(`Use my "${profile.label}" profile`);
+  }
+
+  // ── Welcome starter prompt — populate input and focus (let user edit/send) ─────
+  function handleStarterPick(text) {
+    setInput(text);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (el) { el.focus(); autoResize(el); }
+    });
   }
 
   const isWaiting    = phase === 'chatting' || phase === 'running';
@@ -339,11 +351,8 @@ export default function ChatOptimizePage() {
           </header>
 
           <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-8">
-            {messages.length === 0 && (
-              <ChatMessage
-                role="assistant"
-                content="Hi! Paste a job URL or job description and I'll help tailor your resume profile to it."
-              />
+            {messages.length === 0 && phase === 'idle' && (
+              <WelcomeHero onPick={handleStarterPick} />
             )}
 
             {messages.map((msg) => (

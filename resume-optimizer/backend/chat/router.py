@@ -94,7 +94,9 @@ async def get_session(
         "last_result": ctx.get("last_result"),
         "has_jd": bool(ctx.get("jd_text")),
         "optimizer_launched": bool(ctx.get("_optimizer_launched")),
-        "profiles": [{"id": str(p.id), "label": p.label or ""} for p in all_profs],
+        "profiles": _build_picker_profiles(
+            ctx, [{"id": str(p.id), "label": p.label or ""} for p in all_profs]
+        ),
         "messages": [
             {
                 "id": m.id,
@@ -135,6 +137,33 @@ async def delete_session(
     sess = await _get_owned_session(session_id, current_user.id, db)
     await db.delete(sess)
     await db.commit()
+
+
+def _build_picker_profiles(ctx: dict, all_profiles: list[dict]) -> list[dict]:
+    """Order profiles recommended-first with match scores for the UI profile picker.
+
+    `all_profiles` is [{id, label}]. Matched profiles (ranked by JD relevance) come
+    first; the top match is flagged `recommended`. match_pct is surfaced only when > 0.
+    """
+    matched = ctx.get("_jd_matched_profiles", [])
+    pct_by_id = {m["id"]: m.get("match_pct", 0) for m in matched}
+    rank = {m["id"]: i for i, m in enumerate(matched)}
+    top_id = matched[0]["id"] if matched else None
+
+    ordered = sorted(
+        all_profiles,
+        key=lambda p: (0, rank[p["id"]]) if p["id"] in rank else (1, 0),
+    )
+    out = []
+    for p in ordered:
+        pct = pct_by_id.get(p["id"])
+        out.append({
+            "id": p["id"],
+            "label": p["label"],
+            "match_pct": pct if pct and pct > 0 else None,
+            "recommended": p["id"] == top_id,
+        })
+    return out
 
 
 async def _get_owned_session(session_id: str, user_id, db: AsyncSession) -> ChatSession:
@@ -282,7 +311,10 @@ async def optimize_chat(
             ctx["jd_text"] = resolved_jd
             ctx.pop("jd_fetch_error", None)
             matches = await _match_profiles(current_user, resolved_jd, db)
-            ctx["_jd_matched_profiles"] = [{"id": m["id"], "label": m["label"]} for m in matches]
+            ctx["_jd_matched_profiles"] = [
+                {"id": m["id"], "label": m["label"], "match_pct": m.get("match_pct", 0)}
+                for m in matches
+            ]
             ctx_changed = True
         elif url_attempted:
             # URL was provided but fetch failed — tell the AI so it doesn't hallucinate success.
@@ -330,7 +362,7 @@ async def optimize_chat(
             "session_id": session_id_str,
             "has_jd": bool(ctx.get("jd_text")),
             "optimizer_launched": bool(ctx.get("_optimizer_launched")),
-            "profiles": prompt_ctx.get("profiles", []),
+            "profiles": _build_picker_profiles(ctx, prompt_ctx.get("profiles", [])),
         })}
 
         assembled: list[str] = []
