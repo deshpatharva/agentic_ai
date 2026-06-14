@@ -424,7 +424,7 @@ export default function ChatOptimizePage() {
               />
             )}
 
-            {phase === 'done' && result && (
+            {result && phase !== 'running' && (
               <ScoreReveal
                 finalScore={result.finalScore}
                 scores={liveScores?.scores}
