@@ -156,7 +156,10 @@ def normalize_skills(
 # A curated taxonomy maps known skills to a fixed, ordered set of recruiter-
 # friendly categories. This is DETERMINISTIC — the same skills always produce the
 # same grouping (no LLM nondeterminism, no miscategorization, no cost/latency).
-# Unknown skills fall through keyword heuristics, then into "Additional".
+# Unknown skills fall through keyword heuristics, then into "Tools & Technologies".
+
+# Catch-all bucket label for skills that match no category.
+_CATCH_ALL = "Tools & Technologies"
 
 # Canonical category order (only non-empty categories are emitted).
 _CATEGORY_ORDER = [
@@ -168,7 +171,7 @@ _CATEGORY_ORDER = [
     "AI & Machine Learning",
     "BI & Visualization",
     "Data Governance",
-    "Additional",
+    _CATCH_ALL,
 ]
 
 # Exact skill (lowercased) → category. Checked before any heuristic.
@@ -182,59 +185,84 @@ def _register(category: str, *skills: str) -> None:
 
 _register(
     "Languages",
-    "python", "sql", "t-sql", "pl/sql", "spark sql", "hiveql", "java", "scala",
-    "r", "c", "c++", "c#", "go", "golang", "rust", "javascript", "typescript",
-    "bash", "shell", "shell scripting", "powershell", "ruby", "php", "kotlin",
-    "swift", "matlab", "sas",
+    # mainstream
+    "python", "java", "scala", "r", "c", "c++", "c#", "go", "golang", "rust",
+    "javascript", "typescript", "ruby", "php", "kotlin", "swift", "objective-c",
+    "matlab", "sas", "perl", "dart", "elixir", "clojure", "haskell", "julia",
+    "groovy", "lua", "f#", "vb.net", "visual basic", "cobol", "fortran",
+    # query / shell / markup-ish languages
+    "sql", "t-sql", "pl/sql", "spark sql", "hiveql", "bash", "shell",
+    "shell scripting", "powershell", "vba", "dax",
 )
 _register(
     "Data Engineering",
     "pyspark", "spark", "apache spark", "spark structured streaming", "dbt",
     "kafka", "apache kafka", "flink", "apache flink", "airflow", "apache airflow",
     "beam", "apache beam", "hadoop", "hive", "presto", "trino", "delta lake",
-    "kinesis", "event hubs", "azure event hubs", "nifi", "sqoop", "luigi",
-    "dagster", "databricks asset bundles", "etl", "elt", "data pipelines",
+    "iceberg", "apache iceberg", "hudi", "apache hudi", "kinesis", "event hubs",
+    "azure event hubs", "nifi", "apache nifi", "sqoop", "luigi", "dagster",
+    "prefect", "fivetran", "stitch", "airbyte", "talend", "informatica",
+    "ssis", "databricks asset bundles", "etl", "elt", "data pipelines",
     "data modeling", "kimball", "star schema", "scd type 2", "semantic layer",
+    "data warehousing", "data lake", "lakehouse", "medallion architecture",
+    "pubsub", "pub/sub", "spark streaming", "storm", "samza", "debezium",
 )
 _register(
     "Cloud & Platforms",
-    "aws", "azure", "gcp", "google cloud", "google cloud platform", "databricks",
-    "snowflake", "redshift", "aws redshift", "bigquery", "synapse",
-    "azure synapse analytics", "azure synapse", "emr", "aws emr", "aws glue",
-    "glue", "lambda", "aws lambda", "s3", "ec2", "unity catalog",
-    "azure data factory", "adf", "data factory", "microsoft fabric", "fabric",
-    "dataproc", "dataflow", "cloud functions",
+    "aws", "azure", "gcp", "google cloud", "google cloud platform", "oci",
+    "oracle cloud", "ibm cloud", "databricks", "snowflake", "redshift",
+    "aws redshift", "bigquery", "synapse", "azure synapse analytics",
+    "azure synapse", "emr", "aws emr", "aws glue", "glue", "lambda",
+    "aws lambda", "azure functions", "s3", "ec2", "ecs", "eks", "aks", "gke",
+    "unity catalog", "azure data factory", "adf", "data factory",
+    "microsoft fabric", "fabric", "dataproc", "dataflow", "cloud functions",
+    "cloud run", "athena", "kinesis firehose", "step functions", "sns", "sqs",
+    "blob storage", "adls", "azure data lake", "cloudformation",
 )
 _register(
     "Databases",
-    "postgresql", "postgres", "mysql", "oracle", "sql server", "mongodb",
-    "cassandra", "redis", "dynamodb", "pinot", "apache pinot", "elasticsearch",
+    "postgresql", "postgres", "mysql", "oracle", "sql server", "mssql",
+    "mongodb", "cassandra", "redis", "dynamodb", "pinot", "apache pinot",
+    "druid", "apache druid", "clickhouse", "elasticsearch", "opensearch",
     "neo4j", "cosmos db", "mariadb", "sqlite", "hbase", "couchbase",
+    "memcached", "duckdb", "teradata", "db2", "vertica", "greenplum",
+    "timescaledb", "influxdb", "supabase", "firebase", "firestore",
 )
 _register(
     "DevOps & CI/CD",
     "docker", "kubernetes", "k8s", "terraform", "ansible", "jenkins",
-    "github actions", "gitlab ci", "gitops", "ci/cd", "infrastructure as code",
-    "iac", "helm", "puppet", "chef", "snyk", "azure devops", "circleci",
-    "argocd", "prometheus", "grafana",
+    "github actions", "gitlab ci", "gitlab", "gitops", "ci/cd",
+    "infrastructure as code", "iac", "helm", "puppet", "chef", "snyk",
+    "azure devops", "circleci", "travis ci", "argocd", "flux", "prometheus",
+    "grafana", "datadog", "splunk", "new relic", "pagerduty", "vault",
+    "pulumi", "packer", "nginx", "linux", "git", "jira", "confluence",
+    "bitbucket", "octopus deploy", "teamcity", "bamboo",
 )
 _register(
     "AI & Machine Learning",
     "llm", "rag", "machine learning", "ml", "deep learning", "tensorflow",
-    "pytorch", "scikit-learn", "sklearn", "keras", "hugging face", "transformers",
-    "nlp", "computer vision", "mlflow", "langchain", "openai", "generative ai",
-    "genai", "mcp", "mcp server", "sentiment analysis",
+    "pytorch", "scikit-learn", "sklearn", "keras", "xgboost", "lightgbm",
+    "hugging face", "transformers", "nlp", "computer vision", "mlflow",
+    "kubeflow", "sagemaker", "vertex ai", "azure ml", "langchain",
+    "llamaindex", "openai", "anthropic", "generative ai", "genai", "mcp",
+    "mcp server", "sentiment analysis", "feature engineering", "pandas",
+    "numpy", "spacy", "opencv", "vector database", "pinecone", "weaviate",
+    "chromadb", "fine-tuning", "prompt engineering",
 )
 _register(
     "BI & Visualization",
-    "tableau", "power bi", "powerbi", "looker", "qlik", "sap businessobjects",
-    "businessobjects", "web intelligence", "webi", "universes", "superset",
-    "metabase", "matplotlib", "seaborn", "plotly", "dashboards",
+    "tableau", "power bi", "powerbi", "looker", "looker studio", "qlik",
+    "qlikview", "qlik sense", "sap businessobjects", "businessobjects",
+    "web intelligence", "webi", "universes", "superset", "apache superset",
+    "metabase", "mode", "sigma", "matplotlib", "seaborn", "plotly", "d3.js",
+    "dashboards", "ssrs", "cognos", "microstrategy", "domo",
 )
 _register(
     "Data Governance",
-    "pii", "data governance", "data quality", "gdpr", "great expectations",
-    "data catalog", "data lineage", "lineage", "masking", "rbac", "compliance",
+    "pii", "data governance", "data quality", "gdpr", "hipaa", "ccpa", "soc 2",
+    "great expectations", "soda", "monte carlo", "data catalog", "collibra",
+    "alation", "data lineage", "lineage", "masking", "encryption", "rbac",
+    "compliance", "data privacy", "mdm", "master data management",
 )
 
 # Substring heuristics for unknown tokens (checked in order).
@@ -278,7 +306,7 @@ def _category_for(token: str) -> str:
     for kw, cat in _KEYWORD_RULES:
         if kw in padded or kw in norm:
             return cat
-    return "Additional"
+    return _CATCH_ALL
 
 
 async def categorize_skills(
@@ -306,12 +334,12 @@ async def categorize_skills(
         seen.add(tok.lower())
         buckets[_category_for(tok)].append(tok)
 
-    # Fold a lone "Additional" item count is fine; emit categories in order.
+    # Emit non-empty categories in canonical order.
     ordered = {cat: buckets[cat] for cat in _CATEGORY_ORDER if buckets[cat]}
 
-    # If only "Additional" survived (nothing matched), fall back to a flat list
-    # so we never emit a single oddly-labeled "Additional:" line.
-    if list(ordered.keys()) == ["Additional"]:
+    # If the only surviving category is the catch-all (nothing matched a real
+    # category), fall back to a flat list rather than a lone "Tools & Technologies:".
+    if list(ordered.keys()) == [_CATCH_ALL]:
         return {"": tokens}
 
     return ordered or {"": tokens}
