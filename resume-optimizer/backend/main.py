@@ -995,6 +995,14 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
         except Exception:
             _logger.exception("job=%s: skills normalization failed — skipping", job_id)
 
+        # Strip placeholder metrics ("[XX%]") and LaTeX "$" leakage so the cleaned
+        # text is what we render, store in last_result, and parse into sections.
+        try:
+            from utils.text_sanitizer import sanitize_resume_text as _sanitize_text  # noqa: PLC0415
+            current_resume = _sanitize_text(current_resume)
+        except Exception:
+            _logger.exception("job=%s: text sanitization failed — skipping", job_id)
+
         # ── Phase 3: Generate .docx (no DB held during file I/O) ───────────
         await emit({"type": "stage", "message": "Generating optimized .docx file...", "stage": "generate"})
         blob_name = f"{job_id}.docx"

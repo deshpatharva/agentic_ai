@@ -185,6 +185,11 @@ def generate_docx(resume_text: str, output_path: str) -> str:
     - Bullets: list style
     - Everything else: regular paragraph
     """
+    # Final defensive strip: placeholder metrics ("[XX%]") and LaTeX "$" leakage
+    # never reach the document, regardless of which model produced the text.
+    from utils.text_sanitizer import sanitize_resume_text
+    resume_text = sanitize_resume_text(resume_text)
+
     doc = Document()
 
     for section in doc.sections:

@@ -47,7 +47,10 @@ Improve the resume text on exactly THREE dimensions:
 2. Confident assertions — replace hedges ("helped with", "assisted in", "worked on") with direct ownership ("led", "built", "delivered", "owned")
 3. Industry tone — use vocabulary natural to the target industry; avoid generic filler phrases
 
-Preserve every metric, company name, job title, and date exactly as written.
+Preserve every metric, company name, job title, and date exactly as written — never invent,
+inflate, or alter a number, and never insert a placeholder like "[XX%]".
+Plain text ONLY: no markdown and NO LaTeX or "$" math wrappers. Write figures plainly
+("100M+ events/day", "$500K") — never "$(100M+events/day$".
 Return ONLY the improved resume text. No commentary."""
 
     # ── Step 1: Humanize ─────────────────────────────────────────────────────

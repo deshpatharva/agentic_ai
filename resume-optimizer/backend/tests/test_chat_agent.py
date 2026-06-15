@@ -13,6 +13,25 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from chat.agent import render_system_prompt
 from chat.tools import parse_tool_calls, message_text, TOOLS, LAUNCH_TOOL, SAVE_TOOL, DOWNLOAD_TOOL
 from chat.gaps import compute_gaps
+from utils.text_sanitizer import sanitize_resume_text
+
+
+class TestSanitizeResumeText:
+    def test_strips_placeholder_metric_clause(self):
+        assert sanitize_resume_text("improved agility by [XX%].") == "improved agility."
+
+    def test_strips_standalone_placeholder(self):
+        assert sanitize_resume_text("gain of [XX%] here") == "gain of here"
+
+    def test_preserves_currency(self):
+        s = "saved $500K and $200K, lost $335"
+        assert sanitize_resume_text(s) == s
+
+    def test_strips_latex_dollar_leak(self):
+        assert sanitize_resume_text("processed $(100M+events/day$ daily") == "processed (100M+events/day daily"
+
+    def test_empty(self):
+        assert sanitize_resume_text("") == ""
 
 
 class TestParseToolCalls:

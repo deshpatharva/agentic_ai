@@ -250,8 +250,10 @@ RULES — strictly follow all of them:
 - REJECT any keyword that describes a job function the candidate does not hold (e.g. recruiting,
   talent acquisition, HR, sales, legal, finance) — skip it entirely rather than injecting it.
 - Do NOT introduce any new responsibilities, collaborations, or role claims not already in the text.
-- Do NOT change any metrics, dates, company names, or facts.
-- Plain text only — no markdown bold (**), no asterisks.
+- Do NOT change any metrics, dates, company names, or facts. NEVER insert placeholder metrics ("[XX%]").
+- Do NOT copy job-description phrases verbatim, and do NOT repeat the same phrase across multiple
+  bullets — vary the wording so it reads naturally, not keyword-stuffed.
+- Plain text only — no markdown bold (**), no asterisks, no LaTeX or "$" math wrappers.
 
 Keywords to inject: {', '.join(keywords)}
 
@@ -324,7 +326,11 @@ Rules:
 - Only change the listed bullets — all other text stays IDENTICAL
 - Strong past-tense action verb at the start of each bullet
 - No fabricated companies, titles, dates, or metrics
-- Plain text only — no markdown
+- NEVER insert placeholder metrics like "[XX%]", "[N]", or "[number]". If a bullet has no
+  number in the source, strengthen the verb and impact WITHOUT adding one.
+- NEVER invent, inflate, or alter existing numbers. Keep every metric exactly as written.
+  Do NOT introduce absolute claims like "100% reliability" or "100% compliance".
+- Plain text only — no markdown, no LaTeX, no "$" math wrappers. Write currency as plain text ($500K).
 
 Experience section:
 \"\"\"
@@ -379,7 +385,11 @@ def skills_rewrite_tool(
     prompt = f"""Rewrite the Skills section below to include the missing skills.
 Integrate naturally — group with related existing skills if grouped.
 Do NOT invent certifications or proficiency claims.
-Plain text only.
+Only add a skill if it is plausible the candidate has it (a real tool/technology) —
+skip skills that don't fit the candidate's background.
+STRIP any parenthetical examples — add "Data migration tools", NOT "Data migration tools (e.g., SnowConvert)".
+Do NOT copy job-description phrasing verbatim.
+Plain text only — no LaTeX or "$" math.
 
 Missing skills to add: {', '.join(missing)}
 
@@ -449,7 +459,9 @@ Rules:
 - Remove robotic phrases ('responsible for', 'assisted in', 'helped with', 'worked on')
 - Strong action verbs, varied sentence structure
 - Preserve ALL facts — no changes to names, dates, companies, or metrics
-- Plain text only — no markdown
+- NEVER insert placeholder metrics ("[XX%]") or invent/inflate numbers
+- Plain text ONLY — no markdown, and NO LaTeX or "$" math wrappers (write "100M+ events/day"
+  and "$500K" as plain text, never "$(100M+events/day$")
 
 {section_name.title()} section:
 \"\"\"
