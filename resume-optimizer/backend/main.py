@@ -525,6 +525,65 @@ async def download_resume(
     )
 
 
+@app.get("/download-profile/{profile_id}")
+async def download_profile_docx(
+    profile_id: str,
+    request: Request,
+    token: str = Query(None),
+):
+    """Generate and download a .docx of a saved profile AS-IS (no JD optimization).
+
+    Auth via Authorization header OR ?token= so a plain <a href> download works.
+    The docx is generated on the fly from the profile's sections — no storage round-trip.
+    """
+    raw_token = token
+    if not raw_token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            raw_token = auth_header[7:]
+    if not raw_token:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+
+    user_id = decode_token(raw_token)
+
+    try:
+        pid = uuid.UUID(profile_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Profile not found.")
+
+    from db.models import Profile as _Profile
+    from utils.profile_utils import sections_to_text as _sections_to_text
+    async with AsyncSessionLocal() as db:
+        prof = await db.scalar(
+            select(_Profile).where(_Profile.id == pid, _Profile.user_id == uuid.UUID(user_id))
+        )
+        if not prof:
+            raise HTTPException(status_code=404, detail="Profile not found.")
+        label = prof.label or "resume"
+        resume_text = _sections_to_text(prof.sections or {}) or (prof.raw_text or "Resume text not available.")
+
+    tmp_docx = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as _f:
+            tmp_docx = _f.name
+        await asyncio.to_thread(generate_docx, resume_text, tmp_docx)
+        docx_bytes = await asyncio.to_thread(Path(tmp_docx).read_bytes)
+    finally:
+        if tmp_docx is not None:
+            try:
+                os.unlink(tmp_docx)
+            except OSError:
+                pass
+
+    safe = re.sub(r"[^A-Za-z0-9._ -]", "", label).strip() or "resume"
+    from fastapi.responses import Response as _Response
+    return _Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{safe}.docx"'},
+    )
+
+
 # ── Job scraper endpoint ──────────────────────────────────────────────────────
 
 @app.post("/scrape-jobs")

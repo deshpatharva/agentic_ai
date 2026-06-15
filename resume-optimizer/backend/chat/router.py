@@ -15,9 +15,9 @@ from sse_starlette.sse import EventSourceResponse
 
 from auth.dependencies import get_current_user
 from chat.agent import render_system_prompt
-from chat.tools import TOOLS, LAUNCH_TOOL, SAVE_TOOL, parse_tool_calls, message_text
+from chat.tools import TOOLS, LAUNCH_TOOL, SAVE_TOOL, DOWNLOAD_TOOL, parse_tool_calls, message_text
 from chat.dependencies import get_or_create_session, require_complete_profile
-from chat.handoff import fire_optimizer, save_profile_from_session
+from chat.handoff import fire_optimizer, save_profile_from_session, resolve_profile_download
 from chat.window import build_window
 from config import MODEL_CHAT_AGENT, CHAT_WINDOW_TURNS
 from db.models import ChatMessage, ChatSession, DailyUsageCounter, PlanLimit, User
@@ -414,6 +414,7 @@ async def optimize_chat(
 
         launch = next((c for c in tool_calls if c["name"] == LAUNCH_TOOL), None)
         save = next((c for c in tool_calls if c["name"] == SAVE_TOOL), None)
+        download = next((c for c in tool_calls if c["name"] == DOWNLOAD_TOOL), None)
 
         # Persist the assistant's visible text (may be empty if it only called a tool).
         async with AsyncSessionLocal() as wdb:
@@ -430,6 +431,7 @@ async def optimize_chat(
         # Display text — synthesize a line if the model only called a tool silently.
         display = text or (
             "Launching the optimizer now…" if launch
+            else "Generating your document…" if download
             else "Saving your profile…" if save
             else ""
         )
@@ -469,6 +471,14 @@ async def optimize_chat(
                         launched_sess.context = _ctx
                         await wdb.commit()
                 yield {"event": "handoff", "data": json.dumps({"job_id": job_id, "sse_token": sse_token})}
+            except HTTPException as exc:
+                yield {"event": "error", "data": json.dumps({"message": str(exc.detail)})}
+
+        # ── Download profile as docx (no JD optimization) ───────────────────
+        elif download:
+            try:
+                info = await resolve_profile_download(current_user, download["arguments"].get("profile_id", ""))
+                yield {"event": "profile_docx", "data": json.dumps(info)}
             except HTTPException as exc:
                 yield {"event": "error", "data": json.dumps({"message": str(exc.detail)})}
 

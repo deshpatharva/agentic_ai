@@ -13,6 +13,7 @@ import json
 
 LAUNCH_TOOL = "launch_optimizer"
 SAVE_TOOL = "save_profile"
+DOWNLOAD_TOOL = "download_profile"
 
 # OpenAI-style tool schemas. LiteLLM translates these to each provider's native
 # tool format (Anthropic, Groq, Gemini) under the hood.
@@ -42,6 +43,28 @@ TOOLS = [
                             "user actually stated — never placeholders, brackets, or invented details. "
                             "Empty string if none."
                         ),
+                    },
+                },
+                "required": ["profile_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": DOWNLOAD_TOOL,
+            "description": (
+                "Generate a downloadable .docx of one of the user's saved profiles AS-IS, with NO "
+                "job-description optimization. Call this when the user just wants their resume/profile "
+                "exported as a Word document and has not asked to tailor it to a specific job. No job "
+                "description is required."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "profile_id": {
+                        "type": "string",
+                        "description": "The exact id of the profile to export, copied from the provided profile list.",
                     },
                 },
                 "required": ["profile_id"],

@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # ── agent.py ─────────────────────────────────────────────────────────────────
 
 from chat.agent import render_system_prompt
-from chat.tools import parse_tool_calls, message_text, TOOLS, LAUNCH_TOOL, SAVE_TOOL
+from chat.tools import parse_tool_calls, message_text, TOOLS, LAUNCH_TOOL, SAVE_TOOL, DOWNLOAD_TOOL
 from chat.gaps import compute_gaps
 
 
@@ -39,7 +39,7 @@ class TestParseToolCalls:
 
     def test_tools_shape(self):
         names = {t["function"]["name"] for t in TOOLS}
-        assert names == {LAUNCH_TOOL, SAVE_TOOL}
+        assert names == {LAUNCH_TOOL, SAVE_TOOL, DOWNLOAD_TOOL}
 
 
 class TestComputeGaps:

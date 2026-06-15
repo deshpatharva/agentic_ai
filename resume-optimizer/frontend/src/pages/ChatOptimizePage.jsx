@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send } from 'lucide-react';
 import { clsx } from 'clsx';
-import client from '../api/client';
+import client, { buildDownloadUrl } from '../api/client';
 import { getSession } from '../api/sessions';
 import AppShell from '../components/layout/AppShell';
 import ChatMessage from '../components/ChatMessage';
@@ -311,6 +311,12 @@ export default function ChatOptimizePage() {
             addMsg('assistant', `✅ Profile "${data.label}" saved to your profiles.`);
             fetchSessions();
 
+          } else if (event === 'profile_docx' && data.download_url) {
+            // Plain profile export — attach a download button to a chat message.
+            const label = data.label || 'resume';
+            const id = addMsg('assistant', `Here's your ${label} resume as a Word document:`);
+            updateMsg(id, { download: { href: buildDownloadUrl(data.download_url), label: `Download ${label}.docx` } });
+
           } else if (event === 'error') {
             updateMsg(assistantId, { content: `❌ ${data.message || 'Something went wrong.'}`, isError: true });
           }
@@ -401,6 +407,7 @@ export default function ChatOptimizePage() {
                 content={msg.content}
                 isError={msg.isError}
                 action={msg.action}
+                download={msg.download}
                 loading={msg.id === streamingMsgId}
               />
             ))}

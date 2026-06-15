@@ -1,8 +1,9 @@
 import { Link } from 'react-router-dom';
+import { Download } from 'lucide-react';
 import { clsx } from 'clsx';
 import TypingDots from './chat/TypingDots';
 
-export default function ChatMessage({ role, content, isError = false, action = null, loading = false }) {
+export default function ChatMessage({ role, content, isError = false, action = null, loading = false, download = null }) {
   const isUser = role === 'user';
 
   if (isUser) {
@@ -44,6 +45,18 @@ export default function ChatMessage({ role, content, isError = false, action = n
             >
               {action.label} →
             </Link>
+          </div>
+        )}
+        {download && (
+          <div className="mt-2.5">
+            <a
+              href={download.href}
+              download
+              className="inline-flex items-center gap-1.5 bg-primary text-white dark:text-ink text-xs font-semibold px-3 py-1.5 rounded-lg shadow-primary hover:bg-primary-dark transition-colors active:scale-95"
+            >
+              <Download className="w-3.5 h-3.5" />
+              {download.label || 'Download .docx'}
+            </a>
           </div>
         )}
       </div>
