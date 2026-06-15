@@ -36,20 +36,50 @@ async def fire_optimizer(
     if not jd_text:
         raise HTTPException(status_code=400, detail="Cannot launch: no job description in session.")
 
+    # The agent emits the profile UUID, but sometimes emits the LABEL instead
+    # (e.g. 'Senior Data Engineer'). Accept either: try UUID, else match by label.
+    profile_uuid: uuid.UUID | None = None
     try:
         profile_uuid = uuid.UUID(profile_id_str)
     except (ValueError, TypeError):
-        raise HTTPException(status_code=400, detail="Invalid profile_id in agent handoff.")
+        profile_uuid = None
 
     async with AsyncSessionLocal() as db:
-        prof = await db.scalar(
-            select(Profile).where(
-                Profile.id == profile_uuid,
-                Profile.user_id == user.id,
+        prof = None
+        if profile_uuid is not None:
+            prof = await db.scalar(
+                select(Profile).where(
+                    Profile.id == profile_uuid,
+                    Profile.user_id == user.id,
+                )
             )
-        )
+
+        if prof is None:
+            # Fallback: resolve by label (handles agent emitting a label or
+            # a quoted label instead of the UUID).
+            candidate = profile_id_str.strip().strip('"').strip("'").lower()
+            if candidate:
+                user_profiles = (
+                    await db.execute(select(Profile).where(Profile.user_id == user.id))
+                ).scalars().all()
+                # Exact label match first, then a contains-match either direction.
+                prof = next(
+                    (p for p in user_profiles if (p.label or "").strip().lower() == candidate),
+                    None,
+                )
+                if prof is None:
+                    prof = next(
+                        (p for p in user_profiles
+                         if candidate in (p.label or "").lower()
+                         or ((p.label or "").strip().lower() and (p.label or "").strip().lower() in candidate)),
+                        None,
+                    )
+
         if not prof:
-            raise HTTPException(status_code=404, detail="Profile not found or not owned by user.")
+            raise HTTPException(
+                status_code=400,
+                detail="Couldn't match that profile. Please pick a profile from the list.",
+            )
 
         resume_text = sections_to_text(prof.sections or {}) or "Resume text not available."
 
