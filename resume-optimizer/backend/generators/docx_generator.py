@@ -41,6 +41,16 @@ NUMERIC_DATE_PATTERN = re.compile(r"\b(\d{1,2})/\s?(\d{4})\b")
 # Split text on markdown bold markers (**...**) into alternating plain/bold segments
 _BOLD_SPLIT = re.compile(r"\*\*(.+?)\*\*")
 
+
+def _strip_markdown(text: str) -> str:
+    """Convert **bold** → bold and remove any stray asterisks/backticks.
+
+    Used for runs that are force-styled (company/date), where markdown markers
+    would otherwise leak into the document as literal characters.
+    """
+    text = _BOLD_SPLIT.sub(r"\1", text)
+    return text.replace("*", "").replace("`", "").strip()
+
 # Parenthetical annotations added by AI that should be stripped
 AI_ANNOTATIONS = re.compile(
     r"\s*\((Established Company|Fortune 500|Startup|MNC|Listed Company|Public Company|Private Company)\)",
@@ -207,7 +217,7 @@ def generate_docx(resume_text: str, output_path: str) -> str:
         if _is_name_line(stripped, seq_idx):
             p = doc.add_paragraph()
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            run = p.add_run(stripped)
+            run = p.add_run(_strip_markdown(stripped))
             run.bold = True
             run.font.size = Pt(18)
             run.font.color.rgb = RGBColor(0x1F, 0x49, 0x7D)
@@ -234,7 +244,7 @@ def generate_docx(resume_text: str, output_path: str) -> str:
             p.paragraph_format.space_before = Pt(10)
             p.paragraph_format.space_after = Pt(2)
             _add_horizontal_rule(p)
-            run = p.add_run(stripped.upper())
+            run = p.add_run(_strip_markdown(stripped).upper())
             run.bold = True
             run.font.size = Pt(11)
             run.font.color.rgb = RGBColor(0x1F, 0x49, 0x7D)
@@ -254,6 +264,8 @@ def generate_docx(resume_text: str, output_path: str) -> str:
         # ── Company + date line (e.g. "Hubot Inc, South Bend   Dec 2023 – Current") ──
         if _has_date(stripped):
             company_part, date_part = _split_company_date(stripped)
+            company_part = _strip_markdown(company_part)
+            date_part = _strip_markdown(date_part)
             p = doc.add_paragraph()
             p.paragraph_format.space_before = Pt(8)
             p.paragraph_format.space_after = Pt(1)

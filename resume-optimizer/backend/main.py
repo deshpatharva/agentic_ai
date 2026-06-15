@@ -901,8 +901,9 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                     experience_text=_exp_raw,
                     seniority=seniority_level,
                 )
-                # LLM-group skills into labeled categories (e.g. Languages: ..., Cloud: ...).
-                # The docx generator already bolds "Label: values" lines, so this gives
+                # Deterministically group skills into labeled categories (Languages: ...,
+                # Cloud & Platforms: ...) via a curated taxonomy — same input always yields
+                # the same grouping. The docx generator bolds "Label: values" lines, giving
                 # visually distinct skill groups in the output document with zero docx changes.
                 from utils.skills_normalizer import _parse_skills as _ps  # noqa: PLC0415
                 _skill_tokens = _ps(_normalized_skills)
