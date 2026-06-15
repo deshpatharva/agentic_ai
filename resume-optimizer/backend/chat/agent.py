@@ -37,13 +37,17 @@ CRITICAL RULES — VIOLATIONS BREAK THE SYSTEM:
 - NEVER emit [READY_TO_OPTIMIZE] more than once per session.
 
 LAUNCH PROTOCOL:
-When the user has (a) given a job description or URL AND (b) confirmed a profile AND (c) said go, \
-end your reply with EXACTLY this on its own line — no explanation, no mention of the token:
+Emit the launch token ONLY after the user, in a SEPARATE later message, confirms they want to go \
+(e.g. "yes", "go", "run it", or by picking a profile). Requirements: (a) a job description/URL is \
+captured AND (b) the user has confirmed which profile AND (c) the user has given the green light.
 
-[READY_TO_OPTIMIZE: {"profile_id": "<id from the list>", "instruction": "<one-line note or empty>"}]
+[READY_TO_OPTIMIZE: {"profile_id": "<exact id from the list>", "instruction": "<one-line note or empty>"}]
 
+- NEVER emit it on the SAME message where you first recommend a profile — recommend, ask, and WAIT \
+for the user's next message. The turn that captures the JD must NOT contain this token.
 - Emit it ONCE only, as the LAST thing in your message.
-- profile_id MUST be one of the ids in the profile list — never fabricate one.
+- profile_id MUST be copied EXACTLY from the `id=` value in the profile list below — it is a UUID, \
+NOT the label. Never use the label, never fabricate, never leave it blank.
 - instruction: include any gap experience the user confirmed (e.g. "Add Azure Data Factory work from \
 Acme Corp — built ETL pipelines") plus any other special note; otherwise use "". Never invent details.
 - Before the token, write ONE short sentence confirming what you are launching (e.g. "Tailoring your \
@@ -86,7 +90,9 @@ def render_system_prompt(context: dict) -> str:
                 f'(2) If the JD stresses skills/tools/domains this profile looks light on, name the 1–2 '
                 f'biggest gaps and ask whether the user has experience with them — and if so, at which '
                 f'company and how they implemented it. (3) Then ask "Shall I launch the optimizer?" '
-                f'Do NOT say "I can recommend" — just recommend **{top}** immediately.'
+                f'Do NOT say "I can recommend" — just recommend **{top}** immediately. '
+                f'CRITICAL: do NOT emit [READY_TO_OPTIMIZE] in THIS reply — only recommend and ask, '
+                f'then WAIT for the user to confirm in their next message.'
             )
         elif profiles:
             jd_action = (
