@@ -120,6 +120,27 @@ async def fire_optimizer(
     return job_id, sse_token
 
 
+async def resolve_profile_download(user: User, profile_id: str) -> dict:
+    """Validate the profile is owned by the user and return its docx download URL.
+
+    The actual .docx is generated on the fly by GET /download-profile/{id}; this
+    just confirms ownership and hands back the relative URL + label.
+    Raises HTTPException on bad/foreign profile.
+    """
+    try:
+        pid = uuid.UUID(str(profile_id))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Couldn't find that profile. Please pick one from the list.")
+
+    async with AsyncSessionLocal() as db:
+        prof = await db.scalar(
+            select(Profile).where(Profile.id == pid, Profile.user_id == user.id)
+        )
+        if not prof:
+            raise HTTPException(status_code=404, detail="Profile not found or not owned by user.")
+        return {"download_url": f"/download-profile/{pid}", "label": prof.label or "resume"}
+
+
 async def save_profile_from_session(
     user: User,
     session: ChatSession,
