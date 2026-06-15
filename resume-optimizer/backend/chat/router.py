@@ -396,18 +396,22 @@ async def optimize_chat(
 
         # Single tool-calling completion. The model returns either a text reply
         # (normal chat) or validated tool calls (launch/save) — never control
-        # tokens to parse, so nothing can leak into the chat.
+        # tokens to parse, so nothing can leak into the chat. Parsing is inside the
+        # try so a provider-specific response shape can never crash the stream.
         try:
             result = await complete_with_tools(window, MODEL_CHAT_AGENT, TOOLS)
+            message = result["message"]
+            text = message_text(message).strip()
+            tool_calls = parse_tool_calls(message)
+            usage = {"input_tokens": result.get("input_tokens", 0),
+                     "output_tokens": result.get("output_tokens", 0)}
         except Exception:
             _logger.exception("chat completion failed for session %s", session_id_str)
+            yield {"event": "final", "data": json.dumps({"content": "❌ Sorry — I hit an error. Please try again."})}
             yield {"event": "error", "data": json.dumps({"message": "Agent failed — please try again."})}
             yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
             return
 
-        message = result["message"]
-        text = message_text(message).strip()
-        tool_calls = parse_tool_calls(message)
         launch = next((c for c in tool_calls if c["name"] == LAUNCH_TOOL), None)
         save = next((c for c in tool_calls if c["name"] == SAVE_TOOL), None)
 
@@ -417,8 +421,8 @@ async def optimize_chat(
                 session_id=session.id,
                 role="assistant",
                 content=text,
-                input_tokens=result.get("input_tokens", 0),
-                output_tokens=result.get("output_tokens", 0),
+                input_tokens=usage["input_tokens"],
+                output_tokens=usage["output_tokens"],
                 created_at=datetime.now(timezone.utc),
             ))
             await wdb.commit()

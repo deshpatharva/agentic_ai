@@ -191,6 +191,17 @@ async def complete_with_tools(
             tool_choice="auto",
             timeout=_CALL_TIMEOUT_S,
         )
+    except Exception as exc:
+        # Some providers/models reject or mishandle the tools/tool_choice params.
+        # Degrade gracefully to a plain completion so the user still gets a reply
+        # (the action just won't fire on this turn).
+        _logger.warning("tool-calling chat to %s failed (%s) — retrying WITHOUT tools",
+                        model, type(exc).__name__)
+        response = await litellm.acompletion(
+            model=model,
+            messages=messages,
+            timeout=_CALL_TIMEOUT_S,
+        )
 
     latency_ms = int((time.perf_counter() - t0) * 1000)
     usage = getattr(response, "usage", None)

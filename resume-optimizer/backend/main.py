@@ -585,6 +585,12 @@ async def scrape_jobs_endpoint(
 
 # ── Auto-profile helper ───────────────────────────────────────────────────────
 
+# Matches a standalone skills-section header line (so we can preserve it).
+_SKILLS_HEADER_RE = re.compile(
+    r"^(skills|technical\s+skills|core\s+competencies|competencies|technologies|tools)\s*:?\s*$",
+    re.IGNORECASE,
+)
+
 # Words that signal a string is a requirement phrase, not a role title.
 _BAD_LABEL_RE = re.compile(
     r"\b(years?|experience|must|required|responsib|nice to have|proficien|knowledge of)\b",
@@ -896,6 +902,11 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             _skills_raw = _resume_sections.get("skills", "")
             _exp_raw    = _resume_sections.get("experience", "")
             if _skills_raw:
+                # detect_sections INCLUDES the section header line (e.g. "Skills") as the
+                # first line of the block. Preserve it so the docx keeps its SKILLS header.
+                _skills_lines = _skills_raw.splitlines()
+                _skills_header = _skills_lines[0] if _skills_lines and _SKILLS_HEADER_RE.match(_skills_lines[0].strip()) else ""
+
                 _normalized_skills = normalize_skills(
                     _skills_raw,
                     experience_text=_exp_raw,
@@ -916,7 +927,9 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                             _grouped_lines.append(f"{_cat}: {', '.join(_cat_skills)}")
                         else:
                             _grouped_lines.append(", ".join(_cat_skills))
-                    _new_skills_text = "\n".join(_grouped_lines)
+                    # Re-attach the section header so the docx renders a SKILLS heading.
+                    _body = "\n".join(_grouped_lines)
+                    _new_skills_text = f"{_skills_header}\n{_body}" if _skills_header else f"Skills\n{_body}"
                     current_resume = current_resume.replace(_skills_raw, _new_skills_text, 1)
                 else:
                     current_resume = current_resume.replace(_skills_raw, _normalized_skills, 1)
