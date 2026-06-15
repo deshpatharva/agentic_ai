@@ -79,7 +79,7 @@ AGENT_TOKEN_BUDGET = 20_000   # cumulative input+output tokens across all Phase 
 # at $1/$5 per 1M, strong tool-calling + instruction-following). Uses native
 # tool-calling for launch/save actions, so it must be a model with reliable tool
 # use — an 8B model is not adequate here.
-MODEL_CHAT_AGENT  = "anthropic/claude-haiku-4-5"
+MODEL_CHAT_AGENT  = "groq/openai/gpt-oss-120b"
 CHAT_WINDOW_TURNS = 10   # last N turns sent to the chat model per call
 
 # ── API URLs ──────────────────────────────────────────────────────────────────
