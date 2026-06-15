@@ -77,7 +77,7 @@ export default function ChatOptimizePage() {
   const applyLastResult = useCallback((lr) => {
     if (!lr) return;
     setPhase('done');
-    setResult({ finalScore: lr.final_score ?? 0, iterations: lr.iterations ?? 0 });
+    setResult({ finalScore: lr.final_score ?? 0, iterations: lr.iterations ?? 0, report: lr.report || null });
     setLiveScores(lr.scores ? { scores: lr.scores, score: lr.final_score } : null);
     setDownloadUrl(lr.download_url || null);
     setStage(null);
@@ -209,7 +209,7 @@ export default function ChatOptimizePage() {
           finish();
           setPhase('done');
           setDownloadUrl(ev.download_url);
-          setResult({ finalScore: ev.final_score ?? 0, iterations: ev.iterations ?? 0 });
+          setResult({ finalScore: ev.final_score ?? 0, iterations: ev.iterations ?? 0, report: ev.report || null });
           fetchSessions();
         }
         if (ev.type === 'error') {
@@ -437,6 +437,7 @@ export default function ChatOptimizePage() {
                 scores={liveScores?.scores}
                 iterations={result.iterations}
                 downloadUrl={downloadUrl}
+                report={result.report}
               />
             )}
 
