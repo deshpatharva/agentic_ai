@@ -76,11 +76,12 @@ AGENT_MAX_ITER     = 10       # max CrewAI agent iterations before forced stop
 AGENT_TOKEN_BUDGET = 20_000   # cumulative input+output tokens across all Phase 2 tool calls
 
 # Conversational optimize co-pilot. Uses native tool-calling (launch/save/download),
-# so it needs a model with decent tool-use — but cost matters most here since this
-# runs every chat turn. gpt-oss-120b via Groq is ~15-30x cheaper than Claude Haiku
-# and supports tools. Cheapest in-stack alternative: "gemini/gemini-2.5-flash-lite".
-# complete_with_tools() degrades to a plain reply if a model fumbles the tools param.
-MODEL_CHAT_AGENT  = "groq/openai/gpt-oss-120b"
+# so it needs a model with reliable tool-use — and cost matters since this runs every
+# chat turn. Llama 3.3 70B via Groq has mature function-calling and is ~cents/conversation
+# (far cheaper than Anthropic). Cheaper alternatives if needed: "groq/openai/gpt-oss-120b"
+# or "gemini/gemini-2.5-flash-lite". complete_with_tools() degrades to a plain reply if a
+# model fumbles the tools param.
+MODEL_CHAT_AGENT  = "groq/llama-3.3-70b-versatile"
 CHAT_WINDOW_TURNS = 10   # last N turns sent to the chat model per call
 
 # ── API URLs ──────────────────────────────────────────────────────────────────
