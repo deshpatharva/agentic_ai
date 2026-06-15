@@ -10,127 +10,88 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # ── agent.py ─────────────────────────────────────────────────────────────────
 
-from chat.agent import (
-    extract_handoff, extract_save_profile,
-    in_sentinel, in_save_sentinel,
-    render_system_prompt,
-)
+from chat.agent import render_system_prompt
+from chat.tools import parse_tool_calls, message_text, TOOLS, LAUNCH_TOOL, SAVE_TOOL
+from chat.gaps import compute_gaps
 
 
-class TestExtractHandoff:
-    def test_valid_payload(self):
-        text = 'Launching now.\n[READY_TO_OPTIMIZE: {"profile_id": "abc", "instruction": ""}]'
-        clean, payload = extract_handoff(text)
-        assert payload == {"profile_id": "abc", "instruction": ""}
-        assert "READY_TO_OPTIMIZE" not in clean
-        assert "Launching now" in clean
+class TestParseToolCalls:
+    def test_launch_call_with_json_string_args(self):
+        msg = {"content": "Tailoring now.", "tool_calls": [
+            {"function": {"name": "launch_optimizer",
+                          "arguments": '{"profile_id": "abc-123", "added_context": "Azure ML at Contoso"}'}}
+        ]}
+        calls = parse_tool_calls(msg)
+        assert calls == [{"name": "launch_optimizer",
+                          "arguments": {"profile_id": "abc-123", "added_context": "Azure ML at Contoso"}}]
+        assert message_text(msg) == "Tailoring now."
 
-    def test_malformed_json_returns_none(self):
-        text = "text [READY_TO_OPTIMIZE: {not valid json}]"
-        clean, payload = extract_handoff(text)
-        assert payload is None
-        assert clean  # visible text still returned
+    def test_malformed_args_yield_empty_dict(self):
+        msg = {"content": "", "tool_calls": [{"function": {"name": "save_profile", "arguments": "{not json"}}]}
+        assert parse_tool_calls(msg) == [{"name": "save_profile", "arguments": {}}]
 
-    def test_no_sentinel_returns_none(self):
-        _, payload = extract_handoff("just a regular reply")
-        assert payload is None
+    def test_no_tool_calls(self):
+        assert parse_tool_calls({"content": "just chatting"}) == []
 
-    def test_sentinel_mid_text(self):
-        text = "Before.\n[READY_TO_OPTIMIZE: {\"profile_id\": \"x\", \"instruction\": \"\"}]\nAfter."
-        clean, payload = extract_handoff(text)
-        assert payload is not None
-        assert "Before" in clean
-        assert "After" in clean  # text after token is also kept
+    def test_dict_args_passthrough(self):
+        msg = {"tool_calls": [{"function": {"name": "save_profile", "arguments": {"label": "DE"}}}]}
+        assert parse_tool_calls(msg) == [{"name": "save_profile", "arguments": {"label": "DE"}}]
 
-    def test_instruction_with_content(self):
-        text = '[READY_TO_OPTIMIZE: {"profile_id": "123", "instruction": "emphasize leadership"}]'
-        _, payload = extract_handoff(text)
-        assert payload["instruction"] == "emphasize leadership"
+    def test_tools_shape(self):
+        names = {t["function"]["name"] for t in TOOLS}
+        assert names == {LAUNCH_TOOL, SAVE_TOOL}
 
 
-class TestInSentinel:
-    def test_true_when_prefix_present(self):
-        assert in_sentinel("partial [READY_TO_OPTIMIZE: {") is True
+class TestComputeGaps:
+    def test_missing_skill_surfaces(self):
+        jd = {"required_hard_skills": ["Azure Data Factory", "PySpark", "Snowflake"],
+              "critical_keywords": ["dbt"], "tech_stack": ["Kafka"]}
+        gaps = compute_gaps(jd, ["PySpark", "Kafka"], "Built Snowflake warehouse and dbt models")
+        assert gaps == ["Azure Data Factory"]
 
-    def test_true_without_colon(self):
-        # Generalized sentinel — no colon required.
-        assert in_sentinel("partial [READY_TO_OPTIMIZE {") is True
+    def test_empty_inputs(self):
+        assert compute_gaps({}, [], "") == []
 
-    def test_false_when_no_prefix(self):
-        assert in_sentinel("just a normal reply") is False
+    def test_priority_and_limit(self):
+        jd = {"required_hard_skills": ["A", "B"], "critical_keywords": ["C"], "tech_stack": ["D"]}
+        assert compute_gaps(jd, [], "", limit=2) == ["A", "B"]
 
-    def test_false_on_empty(self):
-        assert in_sentinel("") is False
-
-
-class TestExtractHandoffHardened:
-    """Token must be fully stripped even in pathological cases."""
-
-    def test_strips_malformed_json(self):
-        text = "Hi there.\n[READY_TO_OPTIMIZE: {not valid json}]"
-        clean, payload = extract_handoff(text)
-        assert "READY_TO_OPTIMIZE" not in clean
-        assert payload is None
-
-    def test_strips_missing_closing_bracket(self):
-        text = "Launching.\n[READY_TO_OPTIMIZE: {\"profile_id\": \"x\", \"instruction\": \"\""
-        clean, _ = extract_handoff(text)
-        assert "READY_TO_OPTIMIZE" not in clean
-
-    def test_strips_all_occurrences(self):
-        text = ('[READY_TO_OPTIMIZE: {"profile_id":"a","instruction":""}] '
-                'extra [READY_TO_OPTIMIZE: {"profile_id":"b","instruction":""}]')
-        clean, _ = extract_handoff(text)
-        assert "READY_TO_OPTIMIZE" not in clean
-
-    def test_clean_text_has_no_token(self):
-        text = 'Ready to go!\n[READY_TO_OPTIMIZE: {"profile_id": "abc", "instruction": ""}]'
-        clean, payload = extract_handoff(text)
-        assert "READY_TO_OPTIMIZE" not in clean
-        assert payload is not None
-        assert payload["profile_id"] == "abc"
+    def test_case_insensitive_match(self):
+        jd = {"required_hard_skills": ["python"]}
+        assert compute_gaps(jd, ["Python"], "") == []
 
 
-class TestExtractSaveProfile:
-    def test_valid_payload(self):
-        text = 'Sure, I\'ll save it.\n[SAVE_PROFILE: {"label": "Data Engineer"}]'
-        clean, payload = extract_save_profile(text)
-        assert payload == {"label": "Data Engineer"}
-        assert "SAVE_PROFILE" not in clean
-        assert "Sure" in clean
-
-    def test_malformed_returns_none(self):
-        text = "Done.\n[SAVE_PROFILE: {bad json}]"
-        clean, payload = extract_save_profile(text)
-        assert payload is None
-        assert "SAVE_PROFILE" not in clean
-
-    def test_absent_returns_none(self):
-        _, payload = extract_save_profile("regular message")
-        assert payload is None
-
-    def test_sentinel_prefix_detected(self):
-        assert in_save_sentinel("partial [SAVE_PROFILE {") is True
-        assert in_save_sentinel("no token here") is False
-
-
-class TestPromptHardening:
+class TestPromptToolGuidance:
     def test_no_id_leak_instruction_present(self):
         prompt = render_system_prompt({"profiles": [{"id": "abc", "label": "SWE"}]})
-        assert "NEVER print or mention any profile id" in prompt
+        assert "NEVER print a profile id" in prompt
 
-    def test_save_protocol_in_prompt(self):
+    def test_tools_described(self):
         prompt = render_system_prompt({})
-        assert "SAVE_PROFILE" in prompt
-        assert "SAVE PROFILE PROTOCOL" in prompt
+        assert "launch_optimizer" in prompt and "save_profile" in prompt
+
+    def test_gaps_injected(self):
+        prompt = render_system_prompt({
+            "jd_text": "x",
+            "profiles": [{"id": "a", "label": "DE"}],
+            "_jd_matched_profiles": [{"id": "a", "label": "DE", "match_pct": 80}],
+            "gaps": ["Azure Data Factory"],
+        })
+        assert "Azure Data Factory" in prompt
 
     def test_last_result_state_shown(self):
         prompt = render_system_prompt({"last_result": {"sections": {}, "final_score": 80}})
         assert "optimized resume was produced" in prompt
+        assert "call save_profile" in prompt
 
     def test_no_last_result_no_result_state(self):
         prompt = render_system_prompt({})
         assert "optimized resume was produced" not in prompt
+
+    def test_launched_state_blocks_relaunch(self):
+        prompt = render_system_prompt({"_optimizer_launched": True, "profiles": []})
+        assert "already been launched" in prompt
+        assert "Do NOT call launch_optimizer again" in prompt
 
 
 class TestRenderSystemPrompt:

@@ -14,18 +14,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from auth.dependencies import get_current_user
-from chat.agent import (
-    extract_handoff, extract_save_profile,
-    in_sentinel, in_save_sentinel,
-    render_system_prompt,
-)
+from chat.agent import render_system_prompt
+from chat.tools import TOOLS, LAUNCH_TOOL, SAVE_TOOL, parse_tool_calls, message_text
 from chat.dependencies import get_or_create_session, require_complete_profile
 from chat.handoff import fire_optimizer, save_profile_from_session
 from chat.window import build_window
 from config import MODEL_CHAT_AGENT, CHAT_WINDOW_TURNS
 from db.models import ChatMessage, ChatSession, DailyUsageCounter, PlanLimit, User
 from db.session import get_db, AsyncSessionLocal
-from llm import stream_chat
+from llm import complete_with_tools
 
 _logger = logging.getLogger(__name__)
 
@@ -250,6 +247,35 @@ async def _match_profiles(user: User, jd_text: str, db: AsyncSession) -> list[di
         return [{"id": p["id"], "label": p["label"], "match_pct": 0} for p in profile_dicts[:3]]
 
 
+async def _compute_jd_gaps(jd_text: str, matches: list[dict], user: User, db: AsyncSession) -> list[str]:
+    """Compute deterministic gaps for the top-matched profile vs the JD.
+
+    Runs the JD analyzer (cached, reused later by the pipeline) and diffs its
+    required skills against the recommended profile. Best-effort: returns [] on
+    any failure so chat never breaks.
+    """
+    if not matches:
+        return []
+    try:
+        from agents.jd_analyzer import analyze_jd
+        from chat.gaps import compute_gaps
+        from db.models import Profile as _Profile
+
+        top_id = matches[0].get("id")
+        prof = await db.scalar(
+            select(_Profile).where(_Profile.id == uuid.UUID(str(top_id)), _Profile.user_id == user.id)
+        )
+        if not prof:
+            return []
+        jd_dict = await analyze_jd(jd_text)
+        jd_result = jd_dict.get("text", jd_dict)
+        skills = (prof.sections or {}).get("skills", []) or []
+        return compute_gaps(jd_result, skills, prof.raw_text or "", limit=3)
+    except Exception:
+        _logger.warning("gap computation failed — continuing without gaps", exc_info=True)
+        return []
+
+
 async def _check_quota(user: User, db: AsyncSession) -> None:
     """Raise HTTP 429 if user has hit their daily pipeline limit (same guard as /run-pipeline)."""
     from auth.dependencies import _effective_plan
@@ -315,6 +341,9 @@ async def optimize_chat(
                 {"id": m["id"], "label": m["label"], "match_pct": m.get("match_pct", 0)}
                 for m in matches
             ]
+            # Deterministically compute gaps for the top-matched profile so the
+            # agent asks grounded questions (no hallucinated gaps/companies).
+            ctx["gaps"] = await _compute_jd_gaps(resolved_jd, matches, current_user, db)
             ctx_changed = True
         elif url_attempted:
             # URL was provided but fetch failed — tell the AI so it doesn't hallucinate success.
@@ -365,53 +394,45 @@ async def optimize_chat(
             "profiles": _build_picker_profiles(ctx, prompt_ctx.get("profiles", [])),
         })}
 
-        assembled: list[str] = []
-        usage = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
-        sentinel_started = False
-
+        # Single tool-calling completion. The model returns either a text reply
+        # (normal chat) or validated tool calls (launch/save) — never control
+        # tokens to parse, so nothing can leak into the chat.
         try:
-            async for ev in stream_chat(window, MODEL_CHAT_AGENT):
-                if ev["type"] == "token":
-                    assembled.append(ev["text"])
-                    accumulated = "".join(assembled)
-                    # Suppress output once any control-token prefix appears in the stream.
-                    if not sentinel_started:
-                        if in_sentinel(accumulated) or in_save_sentinel(accumulated):
-                            sentinel_started = True
-                        else:
-                            yield {"event": "token", "data": json.dumps({"text": ev["text"]})}
-                elif ev["type"] == "usage":
-                    usage = ev
+            result = await complete_with_tools(window, MODEL_CHAT_AGENT, TOOLS)
         except Exception:
-            _logger.exception("stream_chat failed for session %s", session_id_str)
-            yield {"event": "error", "data": json.dumps({"message": "Agent stream failed — please try again."})}
+            _logger.exception("chat completion failed for session %s", session_id_str)
+            yield {"event": "error", "data": json.dumps({"message": "Agent failed — please try again."})}
+            yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
             return
 
-        full_text = "".join(assembled)
-        # Strip READY_TO_OPTIMIZE token (all occurrences, tolerant of malformed).
-        clean_text, handoff_payload = extract_handoff(full_text)
-        # Strip SAVE_PROFILE token from whatever remains.
-        clean_text, save_payload = extract_save_profile(clean_text)
+        message = result["message"]
+        text = message_text(message).strip()
+        tool_calls = parse_tool_calls(message)
+        launch = next((c for c in tool_calls if c["name"] == LAUNCH_TOOL), None)
+        save = next((c for c in tool_calls if c["name"] == SAVE_TOOL), None)
 
-        # 4. Persist the assistant turn.
+        # Persist the assistant's visible text (may be empty if it only called a tool).
         async with AsyncSessionLocal() as wdb:
             wdb.add(ChatMessage(
                 session_id=session.id,
                 role="assistant",
-                content=clean_text,
-                input_tokens=usage.get("input_tokens", 0),
-                output_tokens=usage.get("output_tokens", 0),
+                content=text,
+                input_tokens=result.get("input_tokens", 0),
+                output_tokens=result.get("output_tokens", 0),
                 created_at=datetime.now(timezone.utc),
             ))
             await wdb.commit()
 
-        # 4b. Emit `final` event — replace live bubble with clean server-persisted text.
-        #     Use a fallback so the bubble is never empty.
-        yield {"event": "final", "data": json.dumps({"content": clean_text or ""})}
+        # Display text — synthesize a line if the model only called a tool silently.
+        display = text or (
+            "Launching the optimizer now…" if launch
+            else "Saving your profile…" if save
+            else ""
+        )
+        yield {"event": "final", "data": json.dumps({"content": display})}
 
-        # 5a. If agent signalled launch, check quota then fire.
-        if handoff_payload:
-            # Guard: never fire a second time in the same session.
+        # ── Launch ──────────────────────────────────────────────────────────
+        if launch:
             if ctx.get("_optimizer_launched"):
                 yield {"event": "error", "data": json.dumps({"message": "The optimizer was already launched in this session. Start a new chat to optimize again."})}
                 yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
@@ -427,6 +448,11 @@ async def optimize_chat(
                 yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
                 return
 
+            args = launch["arguments"]
+            handoff_payload = {
+                "profile_id": str(args.get("profile_id", "") or ""),
+                "instruction": str(args.get("added_context", "") or ""),
+            }
             try:
                 job_id, sse_token = await fire_optimizer(current_user, session, handoff_payload)
                 # Mark session so agent and frontend both know optimizer has fired.
@@ -442,10 +468,11 @@ async def optimize_chat(
             except HTTPException as exc:
                 yield {"event": "error", "data": json.dumps({"message": str(exc.detail)})}
 
-        # 5b. If agent requested profile save, create the profile now.
-        if save_payload:
+        # ── Save profile (only when not also launching) ─────────────────────
+        elif save:
+            payload = {"label": str(save["arguments"].get("label", "") or "")}
             try:
-                saved = await save_profile_from_session(current_user, session, save_payload)
+                saved = await save_profile_from_session(current_user, session, payload)
                 yield {"event": "saved_profile", "data": json.dumps(saved)}
             except HTTPException as exc:
                 yield {"event": "error", "data": json.dumps({"message": str(exc.detail)})}

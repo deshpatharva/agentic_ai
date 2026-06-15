@@ -156,6 +156,73 @@ async def complete(
     }
 
 
+async def complete_with_tools(
+    messages: list[dict],
+    model: str,
+    tools: list[dict],
+) -> dict:
+    """Multi-turn completion with native tool-calling (non-streaming).
+
+    Returns:
+        dict with:
+          - message:       the raw assistant message (has .content and .tool_calls)
+          - input_tokens / output_tokens / cost_usd
+
+    Tool calls come back as structured, validated arguments — never parsed from
+    free text — eliminating control-token leakage. Records an LlmCallLog row via
+    the same fire-and-forget path as complete()/stream_chat().
+    """
+    t0 = time.perf_counter()
+    try:
+        response = await litellm.acompletion(
+            model=model,
+            messages=messages,
+            tools=tools,
+            tool_choice="auto",
+            timeout=_CALL_TIMEOUT_S,
+        )
+    except _TRANSIENT as exc:
+        _logger.warning("tool-calling chat to %s failed transiently (%s) — retrying once",
+                        model, type(exc).__name__)
+        response = await litellm.acompletion(
+            model=model,
+            messages=messages,
+            tools=tools,
+            tool_choice="auto",
+            timeout=_CALL_TIMEOUT_S,
+        )
+
+    latency_ms = int((time.perf_counter() - t0) * 1000)
+    usage = getattr(response, "usage", None)
+    in_tok = getattr(usage, "prompt_tokens", 0) or 0
+    out_tok = getattr(usage, "completion_tokens", 0) or 0
+
+    from utils.cost import resolve_cost
+    rates = await _provider_rates()
+    cost_usd, cost_source = resolve_cost(response, model, in_tok, out_tok, rates)
+
+    from observability.trace import current_trace, current_call_kind
+    asyncio.create_task(_record_call({
+        "trace_id":      current_trace() or None,
+        "model":         model,
+        "provider":      _provider(model),
+        "call_kind":     current_call_kind() or None,
+        "input_tokens":  in_tok,
+        "output_tokens": out_tok,
+        "cost_usd":      cost_usd,
+        "cost_source":   cost_source,
+        "latency_ms":    latency_ms,
+        "created_at":    datetime.now(timezone.utc),
+    }))
+
+    return {
+        "message":       response.choices[0].message,
+        "input_tokens":  in_tok,
+        "output_tokens": out_tok,
+        "cost_usd":      float(cost_usd),
+    }
+
+
 async def stream_chat(messages: list[dict], model: str) -> AsyncIterator[dict]:
     """Stream a multi-turn chat completion token-by-token via LiteLLM.
 
