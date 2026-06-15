@@ -301,7 +301,9 @@ Current prices (mid-2026, per 1M tokens, from sources at end): Gemini 2.5 Flash-
 
 ## 5. Architecture Improvements
 
-### 5a. Phase 2 Redesign — replace CrewAI with a deterministic loop
+### 5a. Phase 2 Redesign — keep an agentic loop, but build it in-house
+
+> **Note (updated 2026-06-15):** the original recommendation here was a *deterministic* loop. After a design discussion (see `design-dialogue-2026-06-15.md`), this evolved to a **native, in-house agentic loop (A+C)** — preserving genuine reasoning over unknowns while removing CrewAI's overhead and observability gaps. The target design is in **`target-architecture.md`**; the deterministic sketch below remains only as the lower bound the redesign must beat.
 
 - **File(s):** `orchestration/optimizer.py`, `agents/optimizer_agent.py`
 - **Problem:** The agent's only decision is "which of 4 tools to call for which below-threshold dimension" — and that decision is *already computed* deterministically in `_build_task_description` (which flags each dimension NEEDS WORK). The LLM strategist re-derives, in expensive natural language, a mapping the code already knows. Tellingly, there are **three** fallbacks to `_deterministic_fallback` (no sections, exception, no-change), suggesting the agent frequently produces nothing.
