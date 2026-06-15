@@ -4,6 +4,13 @@
 **Goal:** execute the target design in `target-architecture.md` and the P0/P1 fixes in `architecture-review.md`, in dependency order, keeping the test suite green at every step.
 **Context decisions:** see `design-dialogue-2026-06-15.md`.
 
+**Execution via Superpowers:** this file is the master index. The work is split into Superpowers plans under `docs/superpowers/plans/` to be run with `superpowers:subagent-driven-development` (RED-first, checkbox-tracked):
+- `2026-06-15-agentic-phase0-1-foundations.md` — **PR-1** (archive + schema enforcement + P0 fixes). Fully detailed, ready to run.
+- `2026-06-15-agentic-phase2-native-agent.md` — **PR-2** (native A+C agent, remove CrewAI). Fully detailed.
+- `2026-06-15-agentic-phase3-6-followups.md` — **PR-3..5** (memory, caching, Pro tier, scalability, guard). Task+acceptance level; **expand to RED-first after PR-2** (their tests depend on the native driver's final API).
+
+`target-architecture.md` is the spec those plans reference. Execute in PR order; each PR leaves the suite green and `main` releasable.
+
 ---
 
 ## 0. Why we ARCHIVE dead code instead of deleting it (read first)
