@@ -151,53 +151,167 @@ def normalize_skills(
     return skills_line
 
 
+# ── Deterministic skill categorization ───────────────────────────────────────
+#
+# A curated taxonomy maps known skills to a fixed, ordered set of recruiter-
+# friendly categories. This is DETERMINISTIC — the same skills always produce the
+# same grouping (no LLM nondeterminism, no miscategorization, no cost/latency).
+# Unknown skills fall through keyword heuristics, then into "Additional".
+
+# Canonical category order (only non-empty categories are emitted).
+_CATEGORY_ORDER = [
+    "Languages",
+    "Data Engineering",
+    "Cloud & Platforms",
+    "Databases",
+    "DevOps & CI/CD",
+    "AI & Machine Learning",
+    "BI & Visualization",
+    "Data Governance",
+    "Additional",
+]
+
+# Exact skill (lowercased) → category. Checked before any heuristic.
+_SKILL_CATEGORY: dict[str, str] = {}
+
+
+def _register(category: str, *skills: str) -> None:
+    for s in skills:
+        _SKILL_CATEGORY[s.lower()] = category
+
+
+_register(
+    "Languages",
+    "python", "sql", "t-sql", "pl/sql", "spark sql", "hiveql", "java", "scala",
+    "r", "c", "c++", "c#", "go", "golang", "rust", "javascript", "typescript",
+    "bash", "shell", "shell scripting", "powershell", "ruby", "php", "kotlin",
+    "swift", "matlab", "sas",
+)
+_register(
+    "Data Engineering",
+    "pyspark", "spark", "apache spark", "spark structured streaming", "dbt",
+    "kafka", "apache kafka", "flink", "apache flink", "airflow", "apache airflow",
+    "beam", "apache beam", "hadoop", "hive", "presto", "trino", "delta lake",
+    "kinesis", "event hubs", "azure event hubs", "nifi", "sqoop", "luigi",
+    "dagster", "databricks asset bundles", "etl", "elt", "data pipelines",
+    "data modeling", "kimball", "star schema", "scd type 2", "semantic layer",
+)
+_register(
+    "Cloud & Platforms",
+    "aws", "azure", "gcp", "google cloud", "google cloud platform", "databricks",
+    "snowflake", "redshift", "aws redshift", "bigquery", "synapse",
+    "azure synapse analytics", "azure synapse", "emr", "aws emr", "aws glue",
+    "glue", "lambda", "aws lambda", "s3", "ec2", "unity catalog",
+    "azure data factory", "adf", "data factory", "microsoft fabric", "fabric",
+    "dataproc", "dataflow", "cloud functions",
+)
+_register(
+    "Databases",
+    "postgresql", "postgres", "mysql", "oracle", "sql server", "mongodb",
+    "cassandra", "redis", "dynamodb", "pinot", "apache pinot", "elasticsearch",
+    "neo4j", "cosmos db", "mariadb", "sqlite", "hbase", "couchbase",
+)
+_register(
+    "DevOps & CI/CD",
+    "docker", "kubernetes", "k8s", "terraform", "ansible", "jenkins",
+    "github actions", "gitlab ci", "gitops", "ci/cd", "infrastructure as code",
+    "iac", "helm", "puppet", "chef", "snyk", "azure devops", "circleci",
+    "argocd", "prometheus", "grafana",
+)
+_register(
+    "AI & Machine Learning",
+    "llm", "rag", "machine learning", "ml", "deep learning", "tensorflow",
+    "pytorch", "scikit-learn", "sklearn", "keras", "hugging face", "transformers",
+    "nlp", "computer vision", "mlflow", "langchain", "openai", "generative ai",
+    "genai", "mcp", "mcp server", "sentiment analysis",
+)
+_register(
+    "BI & Visualization",
+    "tableau", "power bi", "powerbi", "looker", "qlik", "sap businessobjects",
+    "businessobjects", "web intelligence", "webi", "universes", "superset",
+    "metabase", "matplotlib", "seaborn", "plotly", "dashboards",
+)
+_register(
+    "Data Governance",
+    "pii", "data governance", "data quality", "gdpr", "great expectations",
+    "data catalog", "data lineage", "lineage", "masking", "rbac", "compliance",
+)
+
+# Substring heuristics for unknown tokens (checked in order).
+_KEYWORD_RULES: list[tuple[str, str]] = [
+    ("aws ", "Cloud & Platforms"),
+    ("azure ", "Cloud & Platforms"),
+    ("gcp ", "Cloud & Platforms"),
+    ("google cloud", "Cloud & Platforms"),
+    ("databricks", "Cloud & Platforms"),
+    ("sql", "Languages"),
+    ("spark", "Data Engineering"),
+    ("kafka", "Data Engineering"),
+    ("airflow", "Data Engineering"),
+    ("etl", "Data Engineering"),
+    ("pipeline", "Data Engineering"),
+    ("ci/cd", "DevOps & CI/CD"),
+    ("devops", "DevOps & CI/CD"),
+    ("docker", "DevOps & CI/CD"),
+    ("kubernetes", "DevOps & CI/CD"),
+    ("terraform", "DevOps & CI/CD"),
+    ("machine learning", "AI & Machine Learning"),
+    (" ml", "AI & Machine Learning"),
+    ("llm", "AI & Machine Learning"),
+    ("governance", "Data Governance"),
+    ("tableau", "BI & Visualization"),
+    ("power bi", "BI & Visualization"),
+]
+
+
+def _category_for(token: str) -> str:
+    """Return the canonical category for a single skill token."""
+    norm = token.lower().strip()
+    # Exact match (full token, then without any parenthetical/qualifier).
+    if norm in _SKILL_CATEGORY:
+        return _SKILL_CATEGORY[norm]
+    base = re.sub(r"\s*\(.*?\)", "", norm).strip()
+    if base in _SKILL_CATEGORY:
+        return _SKILL_CATEGORY[base]
+    # Keyword heuristics.
+    padded = f" {norm} "
+    for kw, cat in _KEYWORD_RULES:
+        if kw in padded or kw in norm:
+            return cat
+    return "Additional"
+
+
 async def categorize_skills(
     tokens: list[str],
     role_hint: str = "",
 ) -> dict[str, list[str]]:
-    """Group skill tokens into labeled categories using a single LLM call.
+    """Group skill tokens into labeled categories deterministically.
 
-    Returns an ordered dict of {category_label: [skill, ...]} suitable for
-    emitting as `Category: skill1, skill2` lines in the resume text.
+    Returns an ordered dict {category_label: [skill, ...]} in canonical order,
+    suitable for emitting as `Category: skill1, skill2` lines in the resume.
 
-    On any failure (LLM error, parse error) returns {"": tokens} so the caller
-    can fall back to a flat comma-separated line — existing behaviour.
+    Deterministic: a curated taxonomy + keyword heuristics — no LLM, so identical
+    inputs always yield identical groupings. Empty input returns {"": tokens}.
     """
     if not tokens:
         return {"": tokens}
 
-    try:
-        from llm import complete  # noqa: PLC0415
-        from config import MODEL_PROFILE_PARSER  # noqa: PLC0415
-        from utils.llm_json import parse_llm_json  # noqa: PLC0415
+    # Assign each token to a category, preserving original casing and order.
+    buckets: dict[str, list[str]] = {cat: [] for cat in _CATEGORY_ORDER}
+    seen: set[str] = set()
+    for tok in tokens:
+        tok = tok.strip()
+        if not tok or tok.lower() in seen:
+            continue
+        seen.add(tok.lower())
+        buckets[_category_for(tok)].append(tok)
 
-        skills_csv = ", ".join(tokens)
-        role_clause = f" for a {role_hint} role" if role_hint else ""
-        prompt = (
-            f"Group these resume skills{role_clause} into 4–7 meaningful categories.\n"
-            "Return ONLY a JSON object — no markdown, no explanation.\n"
-            "Format: {\"Category Label\": [\"skill1\", \"skill2\"], ...}\n"
-            "Rules:\n"
-            "- Use clear, recruiter-friendly category names (e.g. 'Languages', 'Cloud & Platforms', "
-            "'Data Engineering', 'Databases', 'DevOps & CI/CD', 'AI & ML', 'Visualization').\n"
-            "- Every skill must appear in exactly one category.\n"
-            "- Preserve the original skill name exactly as given.\n\n"
-            f"Skills: {skills_csv}"
-        )
-        result = await complete(prompt, MODEL_PROFILE_PARSER)
-        categorized: dict = parse_llm_json(result["text"], kind="object")
+    # Fold a lone "Additional" item count is fine; emit categories in order.
+    ordered = {cat: buckets[cat] for cat in _CATEGORY_ORDER if buckets[cat]}
 
-        # Validate: all values must be non-empty lists of strings.
-        if not isinstance(categorized, dict):
-            raise ValueError("LLM returned non-object")
-        validated: dict[str, list[str]] = {}
-        for cat, skills in categorized.items():
-            if isinstance(skills, list) and skills:
-                validated[str(cat)] = [str(s) for s in skills if s]
-        if validated:
-            return validated
-        raise ValueError("LLM returned empty categories")
-
-    except Exception:
-        _logger.warning("categorize_skills: LLM failed, using flat list", exc_info=True)
+    # If only "Additional" survived (nothing matched), fall back to a flat list
+    # so we never emit a single oddly-labeled "Additional:" line.
+    if list(ordered.keys()) == ["Additional"]:
         return {"": tokens}
+
+    return ordered or {"": tokens}
