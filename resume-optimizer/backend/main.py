@@ -1120,6 +1120,22 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                     select(_ChatSession).where(_ChatSession.job_id == job_uuid)
                 )
                 if sess_row:
+                    # Grounded report of what changed / which gaps were filled, so the
+                    # co-pilot can answer follow-up questions from facts.
+                    try:
+                        from utils.optimization_report import build_report as _build_report  # noqa: PLC0415
+                        _report = _build_report(
+                            jd_result=jd_result,
+                            original_text=resume_text,
+                            optimized_text=current_resume,
+                            baseline_score=baseline_avg,
+                            final_scores=scores,
+                            iterations=max(_iter, 1),
+                        )
+                    except Exception:
+                        _logger.exception("job=%s: optimization report build failed", job_id)
+                        _report = None
+
                     ctx = dict(sess_row.context or {})
                     ctx["last_result"] = {
                         "sections":       optimized_sections or {},
@@ -1131,6 +1147,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                         "iterations":     max(_iter, 1),
                         "download_url":   download_url,
                         "label_hint":     (_clean_role_label(job_title) or industry or ""),
+                        "report":         _report,
                     }
                     sess_row.context = ctx
                     sess_row.updated_at = datetime.now(timezone.utc)

@@ -95,12 +95,39 @@ def render_system_prompt(context: dict) -> str:
     else:
         jd_state = "No job description yet — ask the user for one (they can paste the text or a URL)."
 
-    has_result = bool(context.get("last_result"))
-    result_state = (
-        "An optimized resume was produced in this session. If the user asks to save it as a profile, "
-        "call save_profile."
-        if has_result
-        else ""
-    )
+    last_result = context.get("last_result") or {}
+    has_result = bool(last_result)
+    if has_result:
+        result_lines = [
+            "An optimized resume was produced in this session. If the user asks to save it as a "
+            "profile, call save_profile."
+        ]
+        report = last_result.get("report") or {}
+        if report:
+            sc = report.get("scores", {})
+            result_lines.append(
+                "Use ONLY these FACTS to answer questions about what changed or which gaps were "
+                "addressed — do NOT invent anything beyond them:"
+            )
+            result_lines.append(
+                f"- Score improved from {report.get('baseline_score')} to {report.get('final_score')} "
+                f"(ATS {sc.get('ats')}, Impact {sc.get('impact')}, Skills Gap {sc.get('skills_gap')}, "
+                f"Readability {sc.get('readability')}) over {report.get('iterations')} iteration(s)."
+            )
+            if report.get("gaps_addressed"):
+                result_lines.append(
+                    f"- JD skills the original profile was light on that were woven in: "
+                    f"{', '.join(report['gaps_addressed'])}."
+                )
+            if report.get("gaps_remaining"):
+                result_lines.append(
+                    f"- JD skills still NOT evidenced (be honest if asked): "
+                    f"{', '.join(report['gaps_remaining'])}."
+                )
+            if not report.get("gaps_identified"):
+                result_lines.append("- The profile already covered the JD's key skills; no major gaps.")
+        result_state = "\n".join(result_lines)
+    else:
+        result_state = ""
     extra = f"\n\nRESULT STATE: {result_state}" if result_state else ""
     return f"{_SYSTEM_PROMPT}\n\nUSER'S SAVED PROFILES:\n{listing}\n\nSTATE: {jd_state}{extra}"

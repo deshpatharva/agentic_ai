@@ -14,6 +14,26 @@ from chat.agent import render_system_prompt
 from chat.tools import parse_tool_calls, message_text, TOOLS, LAUNCH_TOOL, SAVE_TOOL, DOWNLOAD_TOOL
 from chat.gaps import compute_gaps
 from utils.text_sanitizer import sanitize_resume_text
+from utils.optimization_report import build_report
+
+
+class TestOptimizationReport:
+    def test_addressed_vs_remaining(self):
+        jd = {"required_hard_skills": ["Snowflake", "Azure Data Factory", "PySpark"]}
+        r = build_report(jd, "PySpark work", "PySpark and Snowflake migration", 70,
+                         {"average": 90, "ats": 88, "impact": 92, "skills_gap": 95, "readability": 90}, 2)
+        assert r["baseline_score"] == 70 and r["final_score"] == 90
+        assert "Snowflake" in r["gaps_addressed"]
+        assert "Azure Data Factory" in r["gaps_remaining"]
+        assert r["iterations"] == 2
+
+    def test_report_surfaced_in_prompt(self):
+        jd = {"required_hard_skills": ["Snowflake"]}
+        r = build_report(jd, "no match", "now has Snowflake", 70,
+                         {"average": 90, "ats": 88, "impact": 92, "skills_gap": 95, "readability": 90}, 1)
+        prompt = render_system_prompt({"last_result": {"report": r}})
+        assert "Score improved from 70 to 90" in prompt
+        assert "Snowflake" in prompt
 
 
 class TestSanitizeResumeText:
