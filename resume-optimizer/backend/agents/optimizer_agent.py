@@ -246,9 +246,8 @@ def keyword_inject_tool(
 
 RULES — strictly follow all of them:
 - Weave keywords into EXISTING sentences/bullets only. Do NOT add new sentences, clauses, or bullets.
-- Keywords must describe the candidate's actual technical work (tools, languages, frameworks, platforms).
-- REJECT any keyword that describes a job function the candidate does not hold (e.g. recruiting,
-  talent acquisition, HR, sales, legal, finance) — skip it entirely rather than injecting it.
+- Inject only keywords that match the candidate's actual profession and the target role's domain.
+- Skip any keyword implying a job function the candidate has never performed, regardless of field.
 - Do NOT introduce any new responsibilities, collaborations, or role claims not already in the text.
 - Do NOT change any metrics, dates, company names, or facts. NEVER insert placeholder metrics ("[XX%]").
 - Do NOT copy job-description phrases verbatim, and do NOT repeat the same phrase across multiple
