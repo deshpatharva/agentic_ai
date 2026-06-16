@@ -7,18 +7,30 @@ All 4 scores returned from a single LLM call via MODEL_SCORER.
   4. Readability   — structure, tone, formatting
 """
 
+import hashlib
 import logging
 from typing import List, Optional
 from llm import complete
 from config import MODEL_SCORER
 from utils.llm_json import parse_llm_json
+from utils import cache as result_cache
 
 _logger = logging.getLogger(__name__)
 
 
-async def _llm_complete(prompt: str, system: str = None, response_format: dict = None) -> tuple:
-    full_prompt = f"{system}\n\n{prompt}" if system else prompt
-    response = await complete(full_prompt, MODEL_SCORER, response_format=response_format)
+async def _llm_complete(
+    prompt: str,
+    system: str = None,
+    response_format: dict = None,
+    cached_prefix: str = None,
+) -> tuple:
+    # If cached_prefix is set, the rubric is sent as a cached prefix block —
+    # do NOT concatenate it into the main prompt to avoid duplication.
+    if cached_prefix:
+        full_prompt = prompt
+    else:
+        full_prompt = f"{system}\n\n{prompt}" if system else prompt
+    response = await complete(full_prompt, MODEL_SCORER, response_format=response_format, cached_prefix=cached_prefix)
     cost_usd = response.get("cost_usd", 0.0)
     input_tokens = response.get("input_tokens", 0)
     output_tokens = response.get("output_tokens", 0)
@@ -27,7 +39,7 @@ async def _llm_complete(prompt: str, system: str = None, response_format: dict =
         return parse_llm_json(raw), cost_usd, input_tokens, output_tokens
     except ValueError:
         _logger.error("scorer JSON parse failed — retrying once. raw (first 500): %s", raw[:500])
-        response2 = await complete(full_prompt, MODEL_SCORER, response_format=response_format)
+        response2 = await complete(full_prompt, MODEL_SCORER, response_format=response_format, cached_prefix=cached_prefix)
         parsed2 = parse_llm_json(response2["text"])  # raises if still bad
         return parsed2, response2.get("cost_usd", 0.0), response2.get("input_tokens", 0), response2.get("output_tokens", 0)
 
@@ -42,6 +54,12 @@ async def score_combined(
     required_hard_skills: Optional[List[str]] = None,
 ) -> dict:
     """Return structured scoring across 4 dimensions with calibration rubric."""
+    # Result cache: key over stable inputs — same resume+JD+seniority always yields the same score
+    cache_key = hashlib.sha256(f"{resume_text}||{jd_text}||{seniority_level}".encode()).hexdigest()
+    cached = result_cache.get("score_combined", cache_key)
+    if cached is not None:
+        return {"text": cached, "tokens": {"input_tokens": 0, "output_tokens": 0}, "cost_usd": 0.0}
+
     required_block = ""
     if required_hard_skills:
         required_block = (
@@ -165,7 +183,7 @@ Return the JSON object with ALL fields populated using the exact keys specified.
     }
 
     result, cost_usd, input_tokens, output_tokens = await _llm_complete(
-        prompt, system=system, response_format=response_format
+        prompt, system=None, response_format=response_format, cached_prefix=system
     )
 
     # Clamp scores to [0, 100]
@@ -180,7 +198,7 @@ Return the JSON object with ALL fields populated using the exact keys specified.
            for s in ("ats", "impact", "skills_gap", "readability")):
         _logger.warning("scorer returned all-zero scores — retrying once")
         result, cost_usd, input_tokens, output_tokens = await _llm_complete(
-            prompt, system=system, response_format=response_format
+            prompt, system=None, response_format=response_format, cached_prefix=system
         )
         for section in ("ats", "impact", "skills_gap", "readability"):
             if isinstance(result.get(section), dict) and "score" in result[section]:
@@ -188,6 +206,7 @@ Return the JSON object with ALL fields populated using the exact keys specified.
         if "overall" in result:
             result["overall"] = max(0, min(100, result["overall"]))
 
+    result_cache.set("score_combined", cache_key, value=result)
     return {
         "text": result,
         "tokens": {"input_tokens": input_tokens, "output_tokens": output_tokens},

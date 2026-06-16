@@ -7,9 +7,9 @@ os.environ.setdefault("BOOTSTRAP_SECRET", "x" * 32)
 
 
 def test_keyword_prompt_is_field_agnostic():
-    """optimizer_agent keyword-inject prompt must not contain tech-specific vocabulary."""
-    import agents.optimizer_agent as oa, inspect
-    src = inspect.getsource(oa)
+    """agents.tools keyword-inject prompt must not contain tech-specific vocabulary."""
+    import agents.tools as at, inspect
+    src = inspect.getsource(at)
     assert "tools, languages, frameworks, platforms" not in src, \
         "Remove tech-specific 'tools, languages, frameworks, platforms' from keyword-inject prompt"
     assert "recruiting, talent acquisition" not in src, \
