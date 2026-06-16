@@ -132,7 +132,7 @@ class ResumeState:
 
 _sessions: Dict[str, ResumeState] = {}
 _sessions_lock = threading.Lock()
-_session_created_at: Dict[str, "datetime"] = {}
+_session_created_at: dict = {}
 _SESSION_TTL_SECONDS = 4 * 3600  # 4 hours
 
 
@@ -212,6 +212,8 @@ async def keyword_inject(
         return msg
 
     keywords = [k.strip() for k in missing_keywords_csv.split(",") if k.strip()]
+    if not keywords:
+        return "No keywords provided — nothing to inject."
     target_sections = [s.strip() for s in target_sections_csv.split(",") if s.strip()]
     updated: list = []
 
@@ -222,7 +224,9 @@ async def keyword_inject(
 
         ok, msg = _budget_ok(state)
         if not ok:
-            return msg + f" Partially updated: {updated}."
+            if updated:
+                return msg + f" Partially updated: {', '.join(updated)}."
+            return msg
 
         prompt = f"""Inject these missing keywords into the resume section below.
 
@@ -245,7 +249,10 @@ Section:
 
 Return ONLY the updated section text."""
 
-        result = await complete(prompt, MODEL_KEYWORD_INJECT)
+        try:
+            result = await complete(prompt, MODEL_KEYWORD_INJECT)
+        except Exception as exc:
+            return f"LLM call failed: {exc}"
         state.add_tokens(
             result.get("input_tokens", 0),
             result.get("output_tokens", 0),
@@ -291,6 +298,8 @@ async def bullet_strengthen(
         )
 
     weak = [b.strip() for b in weak_bullets_csv.split(",") if b.strip()]
+    if not weak:
+        return "No weak bullets provided — nothing to strengthen."
     metrics_note = (
         f"You MAY use these verified metrics: {state.available_metrics}"
         if state.available_metrics
@@ -322,7 +331,10 @@ Experience section:
 
 Return ONLY the complete updated experience section text."""
 
-    result = await complete(prompt, MODEL_BULLET_STRENGTHEN)
+    try:
+        result = await complete(prompt, MODEL_BULLET_STRENGTHEN)
+    except Exception as exc:
+        return f"LLM call failed: {exc}"
     state.add_tokens(
         result.get("input_tokens", 0),
         result.get("output_tokens", 0),
@@ -363,6 +375,8 @@ async def skills_rewrite(
         )
 
     missing = [s.strip() for s in missing_skills_csv.split(",") if s.strip()]
+    if not missing:
+        return "No missing skills provided — nothing to add."
 
     prompt = f"""Rewrite the Skills section below to include the missing skills.
 Integrate naturally — group with related existing skills if grouped.
@@ -382,7 +396,10 @@ Skills section:
 
 Return ONLY the complete updated skills section text."""
 
-    result = await complete(prompt, MODEL_SKILLS_REWRITE)
+    try:
+        result = await complete(prompt, MODEL_SKILLS_REWRITE)
+    except Exception as exc:
+        return f"LLM call failed: {exc}"
     state.add_tokens(
         result.get("input_tokens", 0),
         result.get("output_tokens", 0),
@@ -451,7 +468,10 @@ Rules:
 
 Return ONLY the complete updated {section_name} section text."""
 
-    result = await complete(prompt, MODEL_SECTION_HUMANIZE)
+    try:
+        result = await complete(prompt, MODEL_SECTION_HUMANIZE)
+    except Exception as exc:
+        return f"LLM call failed: {exc}"
     state.add_tokens(
         result.get("input_tokens", 0),
         result.get("output_tokens", 0),

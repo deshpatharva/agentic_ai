@@ -494,3 +494,91 @@ async def test_section_humanize_prompt_forbids_responsible_for():
     assert captured_prompts
     prompt_text = captured_prompts[0]
     assert "responsible for" in prompt_text.lower()
+
+
+# ---------------------------------------------------------------------------
+# Empty CSV early-return guard tests
+# ---------------------------------------------------------------------------
+
+
+async def test_keyword_inject_empty_csv_returns_early():
+    """Empty missing_keywords_csv must return early without calling the LLM."""
+    from agents import tools
+
+    st = tools.ResumeState(sections={"summary": "Built software.", "experience": "Did work."})
+
+    call_count = 0
+
+    async def fake(prompt, model, **kw):
+        nonlocal call_count
+        call_count += 1
+        return FAKE_RESULT
+
+    with patch.object(tools, "complete", new=fake):
+        msg = await tools.keyword_inject(st, missing_keywords_csv="", target_sections_csv="summary")
+
+    assert call_count == 0, "complete() must NOT be called when keywords CSV is empty"
+    assert "no keywords" in msg.lower()
+    assert st.total_tokens() == 0
+
+
+async def test_bullet_strengthen_empty_csv_returns_early():
+    """Empty weak_bullets_csv must return early without calling the LLM."""
+    from agents import tools
+
+    st = tools.ResumeState(sections={"experience": "- Did stuff."})
+
+    call_count = 0
+
+    async def fake(prompt, model, **kw):
+        nonlocal call_count
+        call_count += 1
+        return FAKE_RESULT
+
+    with patch.object(tools, "complete", new=fake):
+        msg = await tools.bullet_strengthen(st, weak_bullets_csv="")
+
+    assert call_count == 0, "complete() must NOT be called when bullets CSV is empty"
+    assert "no weak bullets" in msg.lower()
+    assert st.total_tokens() == 0
+
+
+async def test_skills_rewrite_empty_csv_returns_early():
+    """Empty missing_skills_csv must return early without calling the LLM."""
+    from agents import tools
+
+    st = tools.ResumeState(sections={"skills": "Python, SQL"})
+
+    call_count = 0
+
+    async def fake(prompt, model, **kw):
+        nonlocal call_count
+        call_count += 1
+        return FAKE_RESULT
+
+    with patch.object(tools, "complete", new=fake):
+        msg = await tools.skills_rewrite(st, missing_skills_csv="")
+
+    assert call_count == 0, "complete() must NOT be called when skills CSV is empty"
+    assert "no missing skills" in msg.lower()
+    assert st.total_tokens() == 0
+
+
+async def test_keyword_inject_complete_failure_returns_error_string():
+    """When complete() raises, keyword_inject should return an error string, not propagate."""
+    from agents import tools
+
+    original_summary = "Built software."
+    st = tools.ResumeState(sections={"summary": original_summary})
+
+    async def failing_complete(prompt, model, **kw):
+        raise Exception("timeout")
+
+    with patch.object(tools, "complete", new=failing_complete):
+        msg = await tools.keyword_inject(st, missing_keywords_csv="scalable", target_sections_csv="summary")
+
+    assert "llm call failed" in msg.lower()
+    assert "timeout" in msg.lower()
+    # Section must be unchanged since the call failed
+    assert st.get_section("summary") == original_summary
+    assert st.total_tokens() == 0
