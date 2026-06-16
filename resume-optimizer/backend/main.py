@@ -995,6 +995,14 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
         except Exception:
             _logger.exception("job=%s: skills normalization failed — skipping", job_id)
 
+        # Strip placeholder metrics ("[XX%]") and LaTeX "$" leakage so the cleaned
+        # text is what we render, store in last_result, and parse into sections.
+        try:
+            from utils.text_sanitizer import sanitize_resume_text as _sanitize_text  # noqa: PLC0415
+            current_resume = _sanitize_text(current_resume)
+        except Exception:
+            _logger.exception("job=%s: text sanitization failed — skipping", job_id)
+
         # ── Phase 3: Generate .docx (no DB held during file I/O) ───────────
         await emit({"type": "stage", "message": "Generating optimized .docx file...", "stage": "generate"})
         blob_name = f"{job_id}.docx"
@@ -1102,6 +1110,22 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             f"/download/{resume_record.id}" if resume_record else f"/download/{job_id}"
         )
 
+        # Grounded report of what changed / which gaps were filled, so the co-pilot
+        # (and the score card) can present facts. Built once, reused below.
+        optimization_report = None
+        try:
+            from utils.optimization_report import build_report as _build_report  # noqa: PLC0415
+            optimization_report = _build_report(
+                jd_result=jd_result,
+                original_text=resume_text,
+                optimized_text=current_resume,
+                baseline_score=baseline_avg,
+                final_scores=scores,
+                iterations=max(_iter, 1),
+            )
+        except Exception:
+            _logger.exception("job=%s: optimization report build failed", job_id)
+
         # ── Store optimized result in chat session context (enables save-as-profile) ──
         try:
             from profiles.router import _parse_sections as _ps  # noqa: PLC0415
@@ -1123,6 +1147,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                         "iterations":     max(_iter, 1),
                         "download_url":   download_url,
                         "label_hint":     (_clean_role_label(job_title) or industry or ""),
+                        "report":         optimization_report,
                     }
                     sess_row.context = ctx
                     sess_row.updated_at = datetime.now(timezone.utc)
@@ -1136,6 +1161,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             "download_url": download_url,
             "final_score":  scores.get("average", baseline_avg),
             "iterations":   max(_iter, 1),
+            "report":       optimization_report,
             "cost_usd":     round(total_cost_usd, 6),
             "tokens":       {"input": total_input_tokens, "output": total_output_tokens},
         })

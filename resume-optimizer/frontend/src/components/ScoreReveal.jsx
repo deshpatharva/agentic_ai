@@ -1,4 +1,4 @@
-import { Download } from 'lucide-react';
+import { Download, Check, AlertCircle } from 'lucide-react';
 import { useCountUp } from '../motion';
 import { buildDownloadUrl } from '../api/client';
 
@@ -31,8 +31,13 @@ function SubScore({ label, value, delay }) {
  * sub-score cards, then the download CTA. Count-up and stagger collapse
  * to instant under prefers-reduced-motion.
  */
-export default function ScoreReveal({ finalScore = 0, scores = null, iterations = 0, downloadUrl }) {
+export default function ScoreReveal({ finalScore = 0, scores = null, iterations = 0, downloadUrl, report = null }) {
   const displayed = useCountUp(Math.round(finalScore));
+
+  const baseline = report?.baseline_score;
+  const improved = typeof baseline === 'number' && Math.round(finalScore) > baseline;
+  const gapsAddressed = report?.gaps_addressed || [];
+  const gapsRemaining = report?.gaps_remaining || [];
 
   return (
     <div className="my-5 max-w-md bg-card border border-line rounded-card shadow-lifted px-6 py-6">
@@ -42,9 +47,10 @@ export default function ScoreReveal({ finalScore = 0, scores = null, iterations 
         <span className="font-display text-6xl font-semibold text-primary leading-none">{displayed}</span>
         <div className="mb-1">
           <span className="block text-sm text-ink-mute font-medium">/ 100 final score</span>
-          {iterations > 0 && (
-            <span className="block text-xs text-ink-faint">{iterations} iteration{iterations !== 1 ? 's' : ''}</span>
-          )}
+          <span className="block text-xs text-ink-faint">
+            {improved && <span className="text-primary font-semibold">↑ from {baseline} · </span>}
+            {iterations > 0 && `${iterations} iteration${iterations !== 1 ? 's' : ''}`}
+          </span>
         </div>
       </div>
 
@@ -53,6 +59,24 @@ export default function ScoreReveal({ finalScore = 0, scores = null, iterations 
           {SUBSCORES.map((s, i) => (
             <SubScore key={s.key} label={s.label} value={Math.round(scores[s.key] ?? 0)} delay={250 + i * 120} />
           ))}
+        </div>
+      )}
+
+      {(gapsAddressed.length > 0 || gapsRemaining.length > 0) && (
+        <div className="reveal reveal-3 mb-5 rounded-lg bg-surface-2/50 border border-line px-3.5 py-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-faint mb-2">What changed</p>
+          {gapsAddressed.length > 0 && (
+            <p className="flex items-start gap-1.5 text-xs text-ink mb-1">
+              <Check className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" strokeWidth={2.5} />
+              <span><span className="text-ink-mute">Gaps woven in:</span> {gapsAddressed.join(', ')}</span>
+            </p>
+          )}
+          {gapsRemaining.length > 0 && (
+            <p className="flex items-start gap-1.5 text-xs text-ink-faint">
+              <AlertCircle className="w-3.5 h-3.5 text-hilite shrink-0 mt-0.5" strokeWidth={2} />
+              <span><span className="text-ink-mute">Not yet evidenced:</span> {gapsRemaining.join(', ')}</span>
+            </p>
+          )}
         </div>
       )}
 

@@ -322,69 +322,81 @@ async def optimize_chat(
       error    — {"message": "..."}               (on failure)
       done     — {"session_id": "..."}            (last, always)
     """
-    # Resolve session from body.session_id (can't use Depends here — body params are unavailable
-    # inside FastAPI dependency functions).
-    session = await get_or_create_session(
-        session_id=body.session_id, current_user=current_user, db=db
-    )
-
-    # 1. Pre-resolve JD from the message before touching the LLM.
-    ctx = dict(session.context or {})
-    if not ctx.get("jd_text"):
-        resolved_jd, url_attempted = await _resolve_jd(body.message, db)
-        ctx_changed = False
-        if resolved_jd:
-            ctx["jd_text"] = resolved_jd
-            ctx.pop("jd_fetch_error", None)
-            matches = await _match_profiles(current_user, resolved_jd, db)
-            ctx["_jd_matched_profiles"] = [
-                {"id": m["id"], "label": m["label"], "match_pct": m.get("match_pct", 0)}
-                for m in matches
-            ]
-            # Deterministically compute gaps for the top-matched profile so the
-            # agent asks grounded questions (no hallucinated gaps/companies).
-            ctx["gaps"] = await _compute_jd_gaps(resolved_jd, matches, current_user, db)
-            ctx_changed = True
-        elif url_attempted:
-            # URL was provided but fetch failed — tell the AI so it doesn't hallucinate success.
-            ctx["jd_fetch_error"] = True
-            ctx_changed = True
-        if ctx_changed:
-            session.context = ctx
-            session.updated_at = datetime.now(timezone.utc)
-            await db.commit()
-
-    # 2. Persist the user turn; auto-title the session from the first message.
-    now = datetime.now(timezone.utc)
-    db.add(ChatMessage(session_id=session.id, role="user", content=body.message, created_at=now))
-    if not session.title:
-        first_line = body.message.split("\n")[0].strip()
-        session.title = first_line[:80] or "New chat"
-        session.updated_at = now
-    await db.commit()
-
-    # 3. Load history and build window.
-    history_rows = (
-        await db.execute(
-            select(ChatMessage)
-            .where(ChatMessage.session_id == session.id)
-            .order_by(ChatMessage.id)
+    # All setup is wrapped so ANY failure becomes a graceful, logged SSE error
+    # instead of an opaque HTTP 500 ("Request failed" in the UI with no detail).
+    try:
+        # Resolve session from body.session_id (can't use Depends here — body params are
+        # unavailable inside FastAPI dependency functions).
+        session = await get_or_create_session(
+            session_id=body.session_id, current_user=current_user, db=db
         )
-    ).scalars().all()
 
-    # Always inject fresh profiles from DB — ctx["_jd_matched_profiles"] may be stale or
-    # absent (never set when JD hasn't been captured yet), causing the AI to say "no profiles".
-    from db.models import Profile as _Profile
-    all_profs = (await db.execute(
-        select(_Profile).where(_Profile.user_id == current_user.id)
-    )).scalars().all()
-    prompt_ctx = dict(ctx)
-    prompt_ctx["profiles"] = [{"id": str(p.id), "label": p.label or ""} for p in all_profs]
+        # 1. Pre-resolve JD from the message before touching the LLM.
+        ctx = dict(session.context or {})
+        if not ctx.get("jd_text"):
+            resolved_jd, url_attempted = await _resolve_jd(body.message, db)
+            ctx_changed = False
+            if resolved_jd:
+                ctx["jd_text"] = resolved_jd
+                ctx.pop("jd_fetch_error", None)
+                matches = await _match_profiles(current_user, resolved_jd, db)
+                ctx["_jd_matched_profiles"] = [
+                    {"id": m["id"], "label": m["label"], "match_pct": m.get("match_pct", 0)}
+                    for m in matches
+                ]
+                # Deterministically compute gaps for the top-matched profile so the
+                # agent asks grounded questions (no hallucinated gaps/companies).
+                ctx["gaps"] = await _compute_jd_gaps(resolved_jd, matches, current_user, db)
+                ctx_changed = True
+            elif url_attempted:
+                # URL provided but fetch failed — tell the AI so it doesn't hallucinate success.
+                ctx["jd_fetch_error"] = True
+                ctx_changed = True
+            if ctx_changed:
+                session.context = ctx
+                session.updated_at = datetime.now(timezone.utc)
+                await db.commit()
 
-    system_prompt = render_system_prompt(prompt_ctx)
-    window = build_window(system_prompt, history_rows, n=CHAT_WINDOW_TURNS)
+        # 2. Persist the user turn; auto-title the session from the first message.
+        now = datetime.now(timezone.utc)
+        db.add(ChatMessage(session_id=session.id, role="user", content=body.message, created_at=now))
+        if not session.title:
+            first_line = body.message.split("\n")[0].strip()
+            session.title = first_line[:80] or "New chat"
+            session.updated_at = now
+        await db.commit()
 
-    session_id_str = str(session.id)
+        # 3. Load history and build window.
+        history_rows = (
+            await db.execute(
+                select(ChatMessage)
+                .where(ChatMessage.session_id == session.id)
+                .order_by(ChatMessage.id)
+            )
+        ).scalars().all()
+
+        # Always inject fresh profiles from DB — ctx["_jd_matched_profiles"] may be stale or
+        # absent (never set when JD hasn't been captured yet), causing the AI to say "no profiles".
+        from db.models import Profile as _Profile
+        all_profs = (await db.execute(
+            select(_Profile).where(_Profile.user_id == current_user.id)
+        )).scalars().all()
+        prompt_ctx = dict(ctx)
+        prompt_ctx["profiles"] = [{"id": str(p.id), "label": p.label or ""} for p in all_profs]
+
+        system_prompt = render_system_prompt(prompt_ctx)
+        window = build_window(system_prompt, history_rows, n=CHAT_WINDOW_TURNS)
+        session_id_str = str(session.id)
+    except Exception:
+        _logger.exception("optimize_chat setup failed (session_id=%s)", body.session_id)
+
+        async def _setup_error_gen():
+            yield {"event": "session", "data": json.dumps({"session_id": body.session_id or ""})}
+            yield {"event": "final", "data": json.dumps({"content": "❌ Sorry — I couldn't start that turn. Please try again."})}
+            yield {"event": "error", "data": json.dumps({"message": "Chat setup failed — please try again."})}
+            yield {"event": "done", "data": json.dumps({"session_id": body.session_id or ""})}
+
+        return EventSourceResponse(_setup_error_gen(), sep="\n")
 
     async def event_generator():
         yield {"event": "session", "data": json.dumps({
