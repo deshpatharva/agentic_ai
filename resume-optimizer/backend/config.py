@@ -55,6 +55,9 @@ MODEL_HUMANIZER     = "gemini/gemini-2.5-flash-lite"
 # Humanizer critic — Llama 3.1 8B via Groq (structured feedback, near-free)
 MODEL_CRITIC        = "groq/llama-3.1-8b-instant"
 
+# LLM-based final draft verifier — cheap single-pass check against claims ledger
+MODEL_VERIFIER      = "groq/llama-3.1-8b-instant"
+
 # Scorers — Gemini 2.5 Flash-Lite (ultra-cheap, all 4 scores in 1 call)
 MODEL_SCORER        = "gemini/gemini-2.5-flash-lite"
 

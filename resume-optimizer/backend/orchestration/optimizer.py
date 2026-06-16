@@ -17,6 +17,7 @@ from typing import Callable, Optional
 from agents.fact_extractor import ClaimsLedger
 from agents.tools import ResumeState
 from agents.rewriter import rewrite_resume
+from agents.verifier import verify_final_draft
 from config import SCORE_TARGET
 from orchestration.agent_loop import run_agent
 from utils.section_parser import detect_sections
@@ -72,7 +73,8 @@ async def run_optimization_async(
                 "message": "Resume has no detectable named sections — using full rewrite.",
                 "stage":   "agent",
             })
-        return await _deterministic_fallback(resume_text, jd_keywords, claims_ledger, scores)
+        pipeline_result = await _deterministic_fallback(resume_text, jd_keywords, claims_ledger, scores)
+        return await _with_verifier(pipeline_result, claims_ledger)
 
     available_metrics = ", ".join(sorted(claims_ledger.metrics)[:15]) if claims_ledger.metrics else ""
     state = ResumeState(sections=sections, available_metrics=available_metrics)
@@ -101,7 +103,8 @@ async def run_optimization_async(
         _logger.warning("job=%s: agent failed (%s). Using deterministic fallback.", job_id, exc)
         if on_event:
             on_event({"type": "stage", "message": "Agent error — using deterministic rewrite.", "stage": "agent"})
-        return await _deterministic_fallback(resume_text, jd_keywords, claims_ledger, scores)
+        pipeline_result = await _deterministic_fallback(resume_text, jd_keywords, claims_ledger, scores)
+        return await _with_verifier(pipeline_result, claims_ledger)
 
     # ── Extract result ────────────────────────────────────────────────────────
     optimized  = result.get("text", resume_text)
@@ -118,9 +121,10 @@ async def run_optimization_async(
         )
         if on_event:
             on_event({"type": "stage", "message": "No changes from agent — using deterministic rewrite.", "stage": "agent"})
-        return await _deterministic_fallback(resume_text, jd_keywords, claims_ledger, scores)
+        pipeline_result = await _deterministic_fallback(resume_text, jd_keywords, claims_ledger, scores)
+        return await _with_verifier(pipeline_result, claims_ledger)
 
-    return {
+    pipeline_result = {
         "text":          optimized,
         "input_tokens":  input_tok,
         "output_tokens": output_tok,
@@ -128,6 +132,14 @@ async def run_optimization_async(
         "iterations":    iterations,
         "fallback":      False,
     }
+    return await _with_verifier(pipeline_result, claims_ledger)
+
+
+async def _with_verifier(pipeline_result: dict, ledger: ClaimsLedger) -> dict:
+    """Run the LLM verifier on the final draft and attach verifier_flagged to the result dict."""
+    draft = pipeline_result.get("text", "")
+    verifier_result = await verify_final_draft(draft, ledger)
+    return {**pipeline_result, "verifier_flagged": verifier_result.flagged}
 
 
 async def _deterministic_fallback(
