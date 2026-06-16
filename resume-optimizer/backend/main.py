@@ -799,6 +799,8 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             resume_text: str = job_row.resume_text[:MAX_RESUME_CHARS]
             jd_text: str     = job_row.jd_text[:MAX_JD_CHARS]
             original_filename = job_row.original_filename
+            # Capture profile_id before session closes (detached object may not lazy-load)
+            _initial_profile_id = job_row.profile_id
 
         total_input_tokens  = 0
         total_output_tokens = 0
@@ -806,6 +808,18 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
 
         # ── Phase 1: Deterministic setup (no DB held) ──────────────────
         ledger = await asyncio.to_thread(extract_claims, resume_text)
+
+        # Load stored ledger and merge with fresh extraction (T3.2 — long-term fact memory)
+        if _initial_profile_id:
+            try:
+                from agents.memory import load_claims_ledger, merge_ledgers, save_claims_ledger  # noqa: PLC0415
+                async with AsyncSessionLocal() as db:
+                    stored_ledger = await load_claims_ledger(db, _initial_profile_id)
+                if stored_ledger:
+                    ledger = merge_ledgers(stored_ledger, ledger)
+                    _logger.info("job=%s: merged stored claims ledger for profile %s", job_id, _initial_profile_id)
+            except Exception:
+                _logger.exception("job=%s: failed to load/merge stored claims ledger — using fresh ledger", job_id)
 
         await emit({"type": "stage", "message": "Analyzing Job Description...", "stage": "jd_analysis"})
         jd_result_dict = await analyze_jd(jd_text)
@@ -1015,6 +1029,19 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                 )
             except Exception:
                 _logger.exception("job=%s: auto-profile resolution failed — skipping", job_id)
+
+        # ── Save updated claims ledger to the resolved profile (T3.2) ─────
+        # Use resolved_profile_id (may be newly created) if available, else fall back
+        # to the profile linked when the job was submitted.
+        _ledger_target_profile = resolved_profile_id or _initial_profile_id
+        if _ledger_target_profile:
+            try:
+                from agents.memory import save_claims_ledger  # noqa: PLC0415
+                async with AsyncSessionLocal() as db:
+                    await save_claims_ledger(db, _ledger_target_profile, ledger)
+                _logger.info("job=%s: saved claims ledger for profile %s", job_id, _ledger_target_profile)
+            except Exception:
+                _logger.exception("job=%s: failed to save claims ledger — continuing", job_id)
 
         # ── Persist Resume record (short-lived session) ────────────────
         resume_record = None
