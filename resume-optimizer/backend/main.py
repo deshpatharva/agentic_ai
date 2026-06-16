@@ -761,7 +761,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
     3-phase optimization pipeline — each DB operation uses its own short-lived session.
     LLM calls happen entirely outside any DB context to avoid holding connections for minutes.
     Phase 1 (deterministic): claims extraction, JD analysis, baseline score.
-    Phase 2 (agentic):       CrewAI Optimization Strategist with 4 targeted tools.
+    Phase 2 (agentic):       Native A+C agent loop with 4 targeted tools (see orchestration/agent_loop.py).
     Phase 3 (deterministic): fabrication guard, docx generation, persistence.
     """
     job_uuid = uuid.UUID(job_id)
@@ -789,7 +789,9 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             await db.commit()
 
     def _on_agent_event(event: dict):
-        asyncio.run_coroutine_threadsafe(emit(event), _loop)
+        # run_agent is now fully async on the event loop, so create_task is correct.
+        # run_coroutine_threadsafe would also work but is the wrong idiom for same-loop callers.
+        asyncio.create_task(emit(event))
 
     try:
         # ── Load job (short-lived session, closed before any LLM call) ─────
