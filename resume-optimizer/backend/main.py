@@ -152,7 +152,7 @@ async def _reap_stuck_jobs():
                 )
                 await db.commit()
             try:
-                from agents.optimizer_agent import cleanup_stale_sessions
+                from agents.tools import cleanup_stale_sessions
                 stale = cleanup_stale_sessions()
                 if stale:
                     _logger.info("Cleaned up %d stale pipeline sessions", stale)
@@ -883,6 +883,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                 agent_result = await run_optimization_async(
                     job_id=job_id,
                     resume_text=current_resume,
+                    jd_text=jd_text,
                     jd_keywords=jd_keywords,
                     claims_ledger=ledger,
                     scores=current_scores,

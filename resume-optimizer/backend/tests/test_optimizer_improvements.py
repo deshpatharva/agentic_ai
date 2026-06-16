@@ -32,12 +32,17 @@ def test_optimizer_list_caps_increased():
 
 
 def test_section_name_uses_worst_section():
-    """section_name must come from readability.worst_section, not be hardcoded 'summary'."""
-    source = (_BACKEND / "orchestration" / "optimizer.py").read_text(encoding="utf-8")
-    assert 'section_name = "summary"' not in source, \
+    """section_name must come from readability.worst_section, not be hardcoded 'summary'.
+    With T2.3, the prompt-building logic moved to orchestration/agent_loop.py, so we
+    check the combined source of optimizer.py + agent_loop.py.
+    """
+    optimizer_src = (_BACKEND / "orchestration" / "optimizer.py").read_text(encoding="utf-8")
+    agent_loop_src = (_BACKEND / "orchestration" / "agent_loop.py").read_text(encoding="utf-8")
+    combined = optimizer_src + agent_loop_src
+    assert 'section_name = "summary"' not in combined, \
         "section_name is hardcoded to 'summary' — use worst_section from scorer"
-    assert "worst_section" in source, \
-        "worst_section not referenced in optimizer.py"
+    assert "worst_section" in combined, \
+        "worst_section not referenced in optimizer.py or agent_loop.py"
 
 
 def test_optimizer_agent_max_iter_is_six():
