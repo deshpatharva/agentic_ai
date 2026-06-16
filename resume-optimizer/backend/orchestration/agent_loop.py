@@ -203,7 +203,7 @@ async def run_agent(
     iterations = 0
     # Guard result is initialised so we always have something to reference
     # even if the loop exits early (e.g. budget exceeded before first reflection).
-    guard = type("_Guard", (), {"gaps": [], "output_text": state.reassemble()})()
+    guard = type("_Guard", (), {"gaps": [], "text": state.reassemble()})()
 
     for reflection_idx in range(AGENT_MAX_REFLECTIONS):
 
@@ -231,7 +231,7 @@ async def run_agent(
             messages.append({
                 "role": "assistant",
                 "content": msg.content or "",
-                "tool_calls": msg.tool_calls,
+                "tool_calls": msg.tool_calls or None,
             })
 
             if not msg.tool_calls:
@@ -272,16 +272,15 @@ async def run_agent(
         guard = fabrication_guard(draft, ledger, original_resume)
 
         # Re-score the current draft
-        score_result = await score_combined(draft, jd_text, jd_keywords)
-        current_scores = score_result.get("text", current_scores)
-
-        # Accumulate scorer token costs
-        score_tokens = score_result.get("tokens", {})
-        state.add_tokens(
-            score_tokens.get("input_tokens", 0),
-            score_tokens.get("output_tokens", 0),
-            score_result.get("cost_usd", 0.0),
-        )
+        try:
+            score_result = await score_combined(draft, jd_text, jd_keywords)
+            rescored = score_result.get("text", {})
+            if rescored:
+                current_scores = rescored
+            score_tokens = score_result.get("tokens", {})
+            state.add_tokens(score_tokens.get("input_tokens", 0), score_tokens.get("output_tokens", 0), score_result.get("cost_usd", 0.0))
+        except Exception as exc:
+            _logger.warning("Re-score failed (%s) — using prior scores for reflection", exc)
 
         overall = current_scores.get("overall", 0)
         all_above = all(
