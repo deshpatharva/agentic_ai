@@ -16,9 +16,9 @@ from utils.llm_json import parse_llm_json
 _logger = logging.getLogger(__name__)
 
 
-async def _llm_complete(prompt: str, system: str = None, schema: dict = None) -> tuple:
+async def _llm_complete(prompt: str, system: str = None, response_format: dict = None) -> tuple:
     full_prompt = f"{system}\n\n{prompt}" if system else prompt
-    response = await complete(full_prompt, MODEL_SCORER)
+    response = await complete(full_prompt, MODEL_SCORER, response_format=response_format)
     cost_usd = response.get("cost_usd", 0.0)
     input_tokens = response.get("input_tokens", 0)
     output_tokens = response.get("output_tokens", 0)
@@ -26,8 +26,10 @@ async def _llm_complete(prompt: str, system: str = None, schema: dict = None) ->
     try:
         return parse_llm_json(raw), cost_usd, input_tokens, output_tokens
     except ValueError:
-        _logger.error("scorer JSON parse failed. raw response (first 500 chars): %s", raw[:500])
-        return {}, cost_usd, input_tokens, output_tokens
+        _logger.error("scorer JSON parse failed — retrying once. raw (first 500): %s", raw[:500])
+        response2 = await complete(full_prompt, MODEL_SCORER, response_format=response_format)
+        parsed2 = parse_llm_json(response2["text"])  # raises if still bad
+        return parsed2, response2.get("cost_usd", 0.0), response2.get("input_tokens", 0), response2.get("output_tokens", 0)
 
 
 # ── All 4 scores in one LLM call ─────────────────────────────────────────────
@@ -157,36 +159,35 @@ Return the JSON object with ALL fields populated using the exact keys specified.
         "required": ["ats", "impact", "skills_gap", "readability", "overall"],
     }
 
-    result, cost_usd, input_tokens, output_tokens = await _llm_complete(prompt, system=system, schema=schema)
-
-    # Normalise common key aliases the LLM may use instead of the canonical names
-    _aliases = {
-        "ats": ("ats_score", "ats_match", "ats_keyword_score"),
-        "impact": ("impact_score", "impact_analysis"),
-        "skills_gap": ("skills", "skill_gap", "skills_gap_score", "skillsgap"),
-        "readability": ("readability_score", "read_score"),
+    response_format = {
+        "type": "json_schema",
+        "json_schema": {"name": "resume_scores", "schema": schema, "strict": True},
     }
-    for canonical, alts in _aliases.items():
-        if canonical not in result:
-            for alt in alts:
-                if alt in result:
-                    result[canonical] = result.pop(alt)
-                    break
 
-    defaults = {
-        "ats":         {"score": 0, "missing_keywords": [], "matched_keywords": [], "keyword_coverage_pct": 0.0},
-        "impact":      {"score": 0, "weak_bullets": [], "strong_bullets": [], "has_quantified_achievements": False},
-        "skills_gap":  {"score": 0, "missing_skills": [], "matched_skills": [], "critical_missing": []},
-        "readability": {"score": 0, "issues": [], "worst_section": "experience", "has_summary": False, "tense_consistent": False},
-    }
-    for section, defs in defaults.items():
-        # LLM sometimes returns flat integers instead of objects e.g. {"ats": 75, ...}
-        if isinstance(result.get(section), (int, float)):
-            result[section] = {"score": int(result[section])}
-        result.setdefault(section, {})
-        for key, val in defs.items():
-            result[section].setdefault(key, val)
-    result.setdefault("overall", 0)
+    result, cost_usd, input_tokens, output_tokens = await _llm_complete(
+        prompt, system=system, response_format=response_format
+    )
+
+    # Clamp scores to [0, 100]
+    for section in ("ats", "impact", "skills_gap", "readability"):
+        if isinstance(result.get(section), dict) and "score" in result[section]:
+            result[section]["score"] = max(0, min(100, result[section]["score"]))
+    if "overall" in result:
+        result["overall"] = max(0, min(100, result["overall"]))
+
+    # If schema-valid but all four sub-scores are 0 — retry once, then accept
+    if all(result.get(s, {}).get("score", 0) == 0
+           for s in ("ats", "impact", "skills_gap", "readability")):
+        _logger.warning("scorer returned all-zero scores — retrying once")
+        result, cost_usd, input_tokens, output_tokens = await _llm_complete(
+            prompt, system=system, response_format=response_format
+        )
+        for section in ("ats", "impact", "skills_gap", "readability"):
+            if isinstance(result.get(section), dict) and "score" in result[section]:
+                result[section]["score"] = max(0, min(100, result[section]["score"]))
+        if "overall" in result:
+            result["overall"] = max(0, min(100, result["overall"]))
+
     return {
         "text": result,
         "tokens": {"input_tokens": input_tokens, "output_tokens": output_tokens},

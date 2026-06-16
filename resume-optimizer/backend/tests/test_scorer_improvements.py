@@ -9,6 +9,7 @@ os.environ.setdefault("GOOGLE_AI_STUDIO_API_KEY", "test")
 os.environ.setdefault("GROQ_API_KEY", "test")
 
 import pytest
+from unittest.mock import patch
 
 
 @pytest.mark.asyncio
@@ -45,7 +46,7 @@ async def test_scorer_returns_extended_fields(monkeypatch):
         "overall": 79,
     }
 
-    async def mock_complete(prompt, system=None, schema=None):
+    async def mock_complete(prompt, system=None, **kwargs):
         # real _llm_complete returns (parsed_dict, cost_usd, input_tokens, output_tokens)
         return fake_response, 0.0, 100, 50
 
@@ -72,3 +73,25 @@ def test_scorer_no_max_3_in_prompt():
     from agents import scorer
     source = inspect.getsource(scorer)
     assert "Max 3" not in source, "Remove 'Max 3 items' cap from scorer prompt"
+
+
+@pytest.mark.asyncio
+async def test_scorer_passes_response_format():
+    """score_combined must pass response_format to complete()."""
+    from agents import scorer
+
+    payload = ('{"ats":{"score":80,"missing_keywords":[],"matched_keywords":[],"keyword_coverage_pct":0.0},'
+               '"impact":{"score":75,"weak_bullets":[],"strong_bullets":[],"has_quantified_achievements":true},'
+               '"skills_gap":{"score":70,"missing_skills":[],"matched_skills":[],"critical_missing":[]},'
+               '"readability":{"score":85,"issues":[],"worst_section":"experience","has_summary":true,"tense_consistent":true},'
+               '"overall":78}')
+
+    async def fake(prompt, model, **kw):
+        fake.kw = kw
+        return {"text": payload, "input_tokens": 1, "output_tokens": 1, "cost_usd": 0.0}
+
+    with patch.object(scorer, "complete", new=fake):
+        out = await scorer.score_combined("résumé", "jd")
+
+    assert "response_format" in fake.kw
+    assert out["text"]["ats"]["score"] == 80
