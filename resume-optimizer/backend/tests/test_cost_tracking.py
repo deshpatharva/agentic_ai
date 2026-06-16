@@ -218,3 +218,43 @@ def test_provider_seed_uses_lowercase():
         assert good in source, (
             f"session.py must contain {good} in init_db seed"
         )
+
+
+@pytest.mark.asyncio
+async def test_all_four_tools_accumulate_cost():
+    """All 4 optimizer tools must pass cost_usd to state.add_tokens()."""
+    os.environ.setdefault("JWT_SECRET", "test-secret-32-chars-long-enough-x")
+    os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./test.db")
+
+    from agents.tools import (
+        ResumeState, keyword_inject,
+        bullet_strengthen, skills_rewrite, section_humanize,
+    )
+
+    COST = 0.005
+
+    fake_llm_result = {"text": "updated text", "input_tokens": 10, "output_tokens": 5, "cost_usd": COST}
+
+    # keyword_inject
+    state = ResumeState(sections={"summary": "Led team."})
+    with patch("agents.tools.complete", new_callable=AsyncMock, return_value=fake_llm_result):
+        await keyword_inject(state, missing_keywords_csv="python", target_sections_csv="summary")
+    assert state.cost_usd == pytest.approx(COST), f"keyword_inject cost not tracked: {state.cost_usd}"
+
+    # bullet_strengthen
+    state = ResumeState(sections={"experience": "Responsible for things. Did work."})
+    with patch("agents.tools.complete", new_callable=AsyncMock, return_value=fake_llm_result):
+        await bullet_strengthen(state, weak_bullets_csv="Responsible for things")
+    assert state.cost_usd == pytest.approx(COST), f"bullet_strengthen cost not tracked: {state.cost_usd}"
+
+    # skills_rewrite
+    state = ResumeState(sections={"skills": "Python, SQL"})
+    with patch("agents.tools.complete", new_callable=AsyncMock, return_value=fake_llm_result):
+        await skills_rewrite(state, missing_skills_csv="kubernetes")
+    assert state.cost_usd == pytest.approx(COST), f"skills_rewrite cost not tracked: {state.cost_usd}"
+
+    # section_humanize
+    state = ResumeState(sections={"summary": "Responsible for things."})
+    with patch("agents.tools.complete", new_callable=AsyncMock, return_value=fake_llm_result):
+        await section_humanize(state, section_name="summary", issues_csv="passive voice")
+    assert state.cost_usd == pytest.approx(COST), f"section_humanize cost not tracked: {state.cost_usd}"

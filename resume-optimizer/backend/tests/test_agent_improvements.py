@@ -11,6 +11,26 @@ os.environ.setdefault("GROQ_API_KEY", "test")
 import pytest
 
 
+def test_no_live_crewai_imports():
+    """No module outside _archive/ and optimizer_agent.py should import the crewai package."""
+    import re
+    from pathlib import Path
+    backend = Path(__file__).parent.parent
+    # Match actual import statements, not docstrings or comments.
+    _crewai_import_re = re.compile(r"^\s*(from\s+crewai|import\s+crewai)", re.MULTILINE)
+    violations = []
+    for py_file in backend.rglob("*.py"):
+        # Skip archived and soon-to-be-archived files
+        if "_archive" in str(py_file) or py_file.name == "optimizer_agent.py":
+            continue
+        if "__pycache__" in str(py_file):
+            continue
+        source = py_file.read_text(encoding="utf-8")
+        if _crewai_import_re.search(source):
+            violations.append(str(py_file.relative_to(backend)))
+    assert not violations, f"Live crewai imports found: {violations}"
+
+
 def test_fabrication_guard_called_after_optimization():
     """fabrication_guard must be called after optimization and before generate_docx."""
     main_path = Path(__file__).parent.parent / "main.py"

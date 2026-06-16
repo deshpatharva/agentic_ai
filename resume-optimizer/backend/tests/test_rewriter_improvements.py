@@ -36,3 +36,14 @@ def test_rewriter_has_self_check_instruction():
     source = inspect.getsource(rw_module)
     assert "SELF-CHECK" in source or "self-check" in source.lower(), \
         "Rewriter must include a SELF-CHECK instruction before returning output"
+
+
+def test_rewriter_no_fabrication_placeholder():
+    """Rewriter must NOT instruct adding [XX%] or [N] placeholders."""
+    import inspect
+    from agents import rewriter as rw_module
+    source = inspect.getsource(rw_module)
+    assert "[XX%]" not in source, \
+        "Remove the [XX%] placeholder instruction from the rewriter prompt"
+    assert "realistic placeholder" not in source, \
+        "Remove the 'realistic placeholder' fabrication instruction from rewriter"

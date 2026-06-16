@@ -79,6 +79,7 @@ async def complete(
     prompt: str,
     model: str,
     cached_prefix: str = None,
+    response_format: dict | None = None,
 ) -> dict:
     """
     Send a prompt to the appropriate provider via LiteLLM.
@@ -111,20 +112,24 @@ async def complete(
 
     t0 = time.perf_counter()
 
+    call_kwargs: dict = {"model": model, "messages": messages, "timeout": _CALL_TIMEOUT_S}
+    if response_format is not None:
+        provider = _provider(model)
+        if provider in ("gemini", "vertex_ai"):
+            call_kwargs["response_format"] = response_format
+        elif provider == "groq":
+            if response_format.get("type") == "json_schema":
+                call_kwargs["response_format"] = {"type": "json_object"}
+            else:
+                call_kwargs["response_format"] = response_format
+        # else: omit entirely — response_format unsupported by this provider
+
     # One bounded retry on transient failures (timeout / connection / 5xx).
     try:
-        response = await litellm.acompletion(
-            model=model,
-            messages=messages,
-            timeout=_CALL_TIMEOUT_S,
-        )
+        response = await litellm.acompletion(**call_kwargs)
     except _TRANSIENT as exc:
         _logger.warning("LLM call to %s failed transiently (%s) — retrying once", model, type(exc).__name__)
-        response = await litellm.acompletion(
-            model=model,
-            messages=messages,
-            timeout=_CALL_TIMEOUT_S,
-        )
+        response = await litellm.acompletion(**call_kwargs)
 
     latency_ms = int((time.perf_counter() - t0) * 1000)
     in_tok  = response.usage.prompt_tokens

@@ -93,7 +93,7 @@ async def test_jd_analyzer_returns_dict_with_text_and_tokens():
         ' "seniority_level": "mid", "industry": "saas", "required_certifications": []}'
     )
 
-    async def mock_complete(prompt, model, cached_prefix=None):
+    async def mock_complete(prompt, model, **kwargs):
         return {
             "text": llm_payload,
             "input_tokens": 150,
@@ -137,7 +137,7 @@ async def test_scorer_returns_dict_with_text_and_tokens():
         "overall": 77,
     }
 
-    async def mock_llm_complete(prompt, system=None, schema=None):
+    async def mock_llm_complete(prompt, system=None, **kwargs):
         # real _llm_complete returns (parsed_json, cost_usd, input_tokens, output_tokens)
         return fake_scores, 0.0, 100, 50
 
@@ -270,3 +270,111 @@ def test_delta_write_includes_token_fields():
     assert record["input_tokens"] == 1_000_000
     assert record["output_tokens"] == 500_000
     assert record["tokens_used"] == record["input_tokens"] + record["output_tokens"]
+
+
+# ── Phase 2 async correctness tests ───────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_phase2_tool_calls_do_not_use_asyncio_run():
+    """
+    Verify that Phase 2 tools call complete() as an awaitable coroutine,
+    not via asyncio.run() which would prevent LlmCallLog from being written.
+
+    This is a structural test: it confirms complete() is called with 'await'
+    by checking that the tools module does not contain 'asyncio.run()' in executable code.
+
+    Context: The old bug used asyncio.run(complete(...)) which creates a new event loop,
+    runs the LLM call, then tears down the loop — cancelling the async fire-and-forget
+    _record_call before it could commit an LlmCallLog row. The fix: tools now call
+    'await complete(...)' on the live event loop, so _record_call fires and commits.
+    """
+    from pathlib import Path
+    import re
+
+    def check_code_for_pattern(source, pattern_name):
+        """Check source code for a pattern, ignoring comments and docstrings."""
+        import ast
+        lines = source.split("\n")
+
+        # Simple approach: look for the pattern in executable code only
+        # We'll look for lines that have actual code after removing comments and docstrings
+        in_docstring = False
+        docstring_char = None
+
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+
+            # Track docstring boundaries (triple quotes)
+            if '"""' in stripped or "'''" in stripped:
+                # Count triple quotes to detect entry/exit
+                if '"""' in stripped:
+                    count = stripped.count('"""')
+                    if count % 2 == 1:  # Odd number = toggle
+                        in_docstring = not in_docstring
+                        docstring_char = '"""'
+                elif "'''" in stripped:
+                    count = stripped.count("'''")
+                    if count % 2 == 1:
+                        in_docstring = not in_docstring
+                        docstring_char = "'''"
+
+            # Skip if in docstring
+            if in_docstring:
+                continue
+
+            # Skip if entire line is a comment
+            if stripped.startswith("#"):
+                continue
+
+            # Extract the part before any '#' comment marker
+            code_part = line.split("#")[0]
+
+            # Check for pattern in code part (not comment)
+            if pattern_name == "asyncio.run" and "asyncio.run(" in code_part:
+                return i, line
+            elif pattern_name == "asyncio.to_thread" and "asyncio.to_thread" in code_part:
+                return i, line
+        return None, None
+
+    # Check agents/tools.py does not use asyncio.run in code
+    tools_source = (Path(__file__).parent.parent / "agents" / "tools.py").read_text(encoding="utf-8")
+    line_no, line_text = check_code_for_pattern(tools_source, "asyncio.run")
+    assert line_no is None, \
+        f"agents/tools.py:{line_no} must not use asyncio.run() — tool calls must be awaited on the live event loop\n  {line_text}"
+
+    # Check orchestration/agent_loop.py
+    loop_source = (Path(__file__).parent.parent / "orchestration" / "agent_loop.py").read_text(encoding="utf-8")
+    line_no, line_text = check_code_for_pattern(loop_source, "asyncio.run")
+    assert line_no is None, \
+        f"orchestration/agent_loop.py:{line_no} must not use asyncio.run()\n  {line_text}"
+
+    # Check orchestration/optimizer.py does not use asyncio.to_thread (Phase 2 should be native async)
+    optimizer_source = (Path(__file__).parent.parent / "orchestration" / "optimizer.py").read_text(encoding="utf-8")
+    line_no, line_text = check_code_for_pattern(optimizer_source, "asyncio.to_thread")
+    assert line_no is None, \
+        f"orchestration/optimizer.py:{line_no} must not use asyncio.to_thread for Phase 2\n  {line_text}"
+
+
+@pytest.mark.asyncio
+async def test_phase2_tools_properly_await_complete():
+    """
+    Verify that Phase 2 tools use 'await complete()' syntax by checking
+    the source code contains the correct pattern.
+
+    This test ensures the structural requirement for _record_call fire-and-forget to work:
+    complete() must be awaited on the live event loop, not run in a separate loop.
+    """
+    from pathlib import Path
+
+    tools_source = (Path(__file__).parent.parent / "agents" / "tools.py").read_text()
+
+    # Check that await complete is used in the file
+    assert "await complete(" in tools_source, \
+        "agents/tools.py must contain 'await complete(' calls to ensure _record_call fires on the live loop"
+
+    # Verify we have at least the main tool implementations using await
+    # (keyword_inject, bullet_strengthen, skills_rewrite, section_humanize)
+    await_count = tools_source.count("await complete(")
+    assert await_count >= 4, \
+        f"agents/tools.py should have at least 4 'await complete(' calls (keyword_inject, bullet_strengthen, " \
+        f"skills_rewrite, section_humanize), found {await_count}"

@@ -19,20 +19,6 @@ from datetime import date as date_type
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-# Azure App Service (Debian Bullseye) ships sqlite3 3.34.x but ChromaDB (pulled
-# in by CrewAI) requires >= 3.35.0. pysqlite3-binary bundles a newer sqlite3 and
-# this swap must happen before any crewai import resolves chromadb.
-try:
-    __import__("pysqlite3")
-    sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
-except ImportError:
-    pass  # local dev / non-Bullseye environments have a recent enough sqlite3
-
-# Suppress huggingface_hub rate-limit warnings — CrewAI pulls it in but we
-# use Gemini/Groq exclusively; no HF model calls are made.
-os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
-os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-
 # Ensure backend/ is on the path regardless of where uvicorn is launched from
 sys.path.insert(0, str(Path(__file__).parent))
 from logging_config import setup_logging
@@ -65,12 +51,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── Agent & utility imports ──────────────────────────────────────────────────
 from agents.jd_analyzer import analyze_jd
-from config import MAX_ITERATIONS, SCORE_TARGET, BACKEND_URL, FRONTEND_URL, MODEL_SCORER, MAX_RESUME_CHARS, MAX_JD_CHARS, STUCK_JOB_TIMEOUT_MINUTES, DATABASE_URL
+from config import SCORE_TARGET, BACKEND_URL, FRONTEND_URL, MODEL_SCORER, MAX_RESUME_CHARS, MAX_JD_CHARS, STUCK_JOB_TIMEOUT_MINUTES, DATABASE_URL
 from agents.scorer import score_combined
 from agents.fact_extractor import extract_claims
 from agents.fabrication_guard import fabrication_guard
 from agents.humanizer import humanize_resume
-from orchestration.optimizer import run_optimization_async, _WORK_THRESHOLD
+from orchestration.optimizer import run_optimization_async
 from generators.docx_generator import generate_docx
 from utils.skills_normalizer import normalize_skills
 from utils.section_parser import detect_sections as _detect_sections
@@ -151,13 +137,6 @@ async def _reap_stuck_jobs():
                     )
                 )
                 await db.commit()
-            try:
-                from agents.optimizer_agent import cleanup_stale_sessions
-                stale = cleanup_stale_sessions()
-                if stale:
-                    _logger.info("Cleaned up %d stale pipeline sessions", stale)
-            except Exception:
-                pass
         except Exception:
             _logger.exception("Reaper cycle failed — will retry in 5 minutes")
 
@@ -820,6 +799,8 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             resume_text: str = job_row.resume_text[:MAX_RESUME_CHARS]
             jd_text: str     = job_row.jd_text[:MAX_JD_CHARS]
             original_filename = job_row.original_filename
+            # Capture profile_id before session closes (detached object may not lazy-load)
+            _initial_profile_id = job_row.profile_id
 
         total_input_tokens  = 0
         total_output_tokens = 0
@@ -827,6 +808,18 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
 
         # ── Phase 1: Deterministic setup (no DB held) ──────────────────
         ledger = await asyncio.to_thread(extract_claims, resume_text)
+
+        # Load stored ledger and merge with fresh extraction (T3.2 — long-term fact memory)
+        if _initial_profile_id:
+            try:
+                from agents.memory import load_claims_ledger, merge_ledgers, save_claims_ledger  # noqa: PLC0415
+                async with AsyncSessionLocal() as db:
+                    stored_ledger = await load_claims_ledger(db, _initial_profile_id)
+                if stored_ledger:
+                    ledger = merge_ledgers(stored_ledger, ledger)
+                    _logger.info("job=%s: merged stored claims ledger for profile %s", job_id, _initial_profile_id)
+            except Exception:
+                _logger.exception("job=%s: failed to load/merge stored claims ledger — using fresh ledger", job_id)
 
         await emit({"type": "stage", "message": "Analyzing Job Description...", "stage": "jd_analysis"})
         jd_result_dict = await analyze_jd(jd_text)
@@ -872,56 +865,59 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
         # ── Phase 2: Agentic optimization (no DB held) ─────────────────
         _iter = 0
         if baseline_avg < SCORE_TARGET:
-            current_resume  = resume_text
-            current_scores  = baseline_scores
-            current_avg     = baseline_avg
+            current_resume = resume_text
+            current_scores = baseline_scores
+            current_avg    = baseline_avg
 
-            for _iter in range(1, MAX_ITERATIONS + 1):
-                await emit({"type": "stage",
-                            "message": f"Starting agentic optimization (iteration {_iter}/{MAX_ITERATIONS})...",
-                            "stage": "agent"})
-                agent_result = await run_optimization_async(
-                    job_id=job_id,
-                    resume_text=current_resume,
-                    jd_keywords=jd_keywords,
-                    claims_ledger=ledger,
-                    scores=current_scores,
-                    on_event=_on_agent_event,
-                )
-                optimized_text = agent_result["text"]
-                total_input_tokens  += agent_result.get("input_tokens", 0)
-                total_output_tokens += agent_result.get("output_tokens", 0)
-                total_cost_usd      += agent_result.get("cost_usd", 0.0)
+            # The A+C agent loop owns its own reflection/re-score cycle internally
+            # (up to AGENT_MAX_REFLECTIONS), so Phase 2 is a single invocation —
+            # no outer iteration loop. This keeps AGENT_TOKEN_BUDGET a true cap on
+            # total Phase-2 spend instead of a per-iteration one.
+            await emit({"type": "stage",
+                        "message": "Starting agentic optimization...",
+                        "stage": "agent"})
+            agent_result = await run_optimization_async(
+                job_id=job_id,
+                resume_text=current_resume,
+                jd_text=jd_text,
+                jd_keywords=jd_keywords,
+                claims_ledger=ledger,
+                scores=current_scores,
+                seniority_level=seniority_level,
+                required_hard_skills=required_hard_skills,
+                on_event=_on_agent_event,
+            )
+            optimized_text = agent_result["text"]
+            total_input_tokens  += agent_result.get("input_tokens", 0)
+            total_output_tokens += agent_result.get("output_tokens", 0)
+            total_cost_usd      += agent_result.get("cost_usd", 0.0)
+            _iter = agent_result.get("iterations", 1)
 
-                if not optimized_text or optimized_text.strip() == current_resume.strip():
-                    break  # no improvement, stop early
-
+            if optimized_text and optimized_text.strip() != current_resume.strip():
                 current_resume = optimized_text
 
-                # Re-score to check if target reached
-                iter_score_dict   = await score_combined(
-                    current_resume,
-                    jd_text,
-                    jd_keywords=jd_keywords,
-                    seniority_level=seniority_level,
-                    required_hard_skills=required_hard_skills,
-                )
-                current_scores = iter_score_dict.get("text", iter_score_dict)
-                iter_tokens    = iter_score_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
-                total_input_tokens  += iter_tokens["input_tokens"]
-                total_output_tokens += iter_tokens["output_tokens"]
-                total_cost_usd      += iter_score_dict.get("cost_usd", 0.0)
-                current_avg = round(
-                    sum(current_scores[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")) / 4
-                )
-                await emit({"type": "average", "score": current_avg, "iteration": _iter,
-                            "scores": {k: current_scores[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")},
-                            "message": f"Score after iteration {_iter}: {current_avg}"})
+            # Final re-score for the UI score event + downstream report. Hits the
+            # PR-3 result cache (0 tokens) when the draft is unchanged from the
+            # agent's last internal re-score (same scoring params).
+            final_score_dict = await score_combined(
+                current_resume,
+                jd_text,
+                jd_keywords=jd_keywords,
+                seniority_level=seniority_level,
+                required_hard_skills=required_hard_skills,
+            )
+            current_scores = final_score_dict.get("text", current_scores)
+            final_tokens   = final_score_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
+            total_input_tokens  += final_tokens["input_tokens"]
+            total_output_tokens += final_tokens["output_tokens"]
+            total_cost_usd      += final_score_dict.get("cost_usd", 0.0)
+            current_avg = round(
+                sum(current_scores[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")) / 4
+            )
+            await emit({"type": "average", "score": current_avg, "iteration": _iter,
+                        "scores": {k: current_scores[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")},
+                        "message": f"Score after optimization: {current_avg}"})
 
-                if current_avg >= _WORK_THRESHOLD:
-                    break
-
-            # Update scores dict to reflect final iteration scores
             scores = {**current_scores, "average": current_avg}
         else:
             current_resume = resume_text
@@ -1033,6 +1029,19 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                 )
             except Exception:
                 _logger.exception("job=%s: auto-profile resolution failed — skipping", job_id)
+
+        # ── Save updated claims ledger to the resolved profile (T3.2) ─────
+        # Use resolved_profile_id (may be newly created) if available, else fall back
+        # to the profile linked when the job was submitted.
+        _ledger_target_profile = resolved_profile_id or _initial_profile_id
+        if _ledger_target_profile:
+            try:
+                from agents.memory import save_claims_ledger  # noqa: PLC0415
+                async with AsyncSessionLocal() as db:
+                    await save_claims_ledger(db, _ledger_target_profile, ledger)
+                _logger.info("job=%s: saved claims ledger for profile %s", job_id, _ledger_target_profile)
+            except Exception:
+                _logger.exception("job=%s: failed to save claims ledger — continuing", job_id)
 
         # ── Persist Resume record (short-lived session) ────────────────
         resume_record = None

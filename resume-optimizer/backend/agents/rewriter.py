@@ -43,14 +43,12 @@ Rewrite the resume following THREE priorities in order:
 PRIORITY 1 — KEYWORD SATURATION
   Weave all JD keywords naturally into bullets and summary.
   Every required keyword must appear at least once; critical keywords ideally 2-3 times.
-  ONLY inject keywords that match the candidate's actual technical discipline (tools, languages,
-  frameworks, platforms). SKIP any keyword that belongs to a different job function
-  (e.g. recruiting, talent acquisition, HR, sales, legal, finance) — do NOT inject those.
+  Inject only keywords that match the candidate's actual profession and the target role's domain.
+  Skip any keyword implying a job function the candidate has never performed, regardless of field.
   Do NOT add new sentences or bullet points to carry keywords; weave them into existing content only.
 
 PRIORITY 2 — QUANTIFIED IMPACT
-  Every bullet must contain a metric (%, $, count, time). If a bullet has no metric, add a
-  realistic placeholder using the format [XX%] that the user can fill in.
+  Where a bullet already has a metric (%, $, count, time-saved), keep it and make it prominent.
   Replace duty-description ("Responsible for X") with achievement framing ("Delivered X, resulting in Y").
   Use ONLY numbers and metrics that appear verbatim in the CLAIMS LEDGER below; do NOT invent new figures.
 
