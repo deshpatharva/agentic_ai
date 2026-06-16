@@ -93,7 +93,7 @@ async def test_jd_analyzer_returns_dict_with_text_and_tokens():
         ' "seniority_level": "mid", "industry": "saas", "required_certifications": []}'
     )
 
-    async def mock_complete(prompt, model, cached_prefix=None):
+    async def mock_complete(prompt, model, **kwargs):
         return {
             "text": llm_payload,
             "input_tokens": 150,
@@ -137,7 +137,7 @@ async def test_scorer_returns_dict_with_text_and_tokens():
         "overall": 77,
     }
 
-    async def mock_llm_complete(prompt, system=None, schema=None):
+    async def mock_llm_complete(prompt, system=None, **kwargs):
         # real _llm_complete returns (parsed_json, cost_usd, input_tokens, output_tokens)
         return fake_scores, 0.0, 100, 50
 
