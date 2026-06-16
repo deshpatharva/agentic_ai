@@ -179,6 +179,8 @@ async def run_agent(
     jd_keywords: list,
     ledger: ClaimsLedger,
     original_resume: str,
+    seniority_level: str = "mid",
+    required_hard_skills: Optional[list] = None,
     on_event: Optional[Callable[[dict], None]] = None,
 ) -> dict:
     """
@@ -273,7 +275,11 @@ async def run_agent(
 
         # Re-score the current draft
         try:
-            score_result = await score_combined(draft, jd_text, jd_keywords)
+            score_result = await score_combined(
+                draft, jd_text, jd_keywords,
+                seniority_level=seniority_level,
+                required_hard_skills=required_hard_skills,
+            )
             rescored = score_result.get("text", {})
             if rescored:
                 current_scores = rescored

@@ -15,7 +15,7 @@ import logging
 from typing import Callable, Optional
 
 from agents.fact_extractor import ClaimsLedger
-from agents.tools import ResumeState, cleanup_session, register_session
+from agents.tools import ResumeState
 from agents.rewriter import rewrite_resume
 from config import SCORE_TARGET
 from orchestration.agent_loop import run_agent
@@ -23,6 +23,8 @@ from utils.section_parser import detect_sections
 
 _logger = logging.getLogger(__name__)
 
+# Retained for the score-threshold contract checked by tests; the A+C agent loop
+# itself now targets SCORE_TARGET directly via agent_loop._SCORE_TARGET.
 _WORK_THRESHOLD = max(75, SCORE_TARGET - 10)
 
 
@@ -33,13 +35,15 @@ async def run_optimization_async(
     jd_keywords: list,
     claims_ledger: ClaimsLedger,
     scores: dict,
+    seniority_level: str = "mid",
+    required_hard_skills: Optional[list] = None,
     on_event: Optional[Callable[[dict], None]] = None,
 ) -> dict:
     """
     Phase 2 async entry point. Called from _run_pipeline_task in main.py.
 
     Args:
-        job_id:        PipelineJob UUID string — used as the session key.
+        job_id:        PipelineJob UUID string — used for logging/trace correlation.
         resume_text:   Current resume entering Phase 2 (trimmed to MAX_RESUME_CHARS).
         jd_text:       Full JD text — used by the reflection loop scorer.
         jd_keywords:   From Phase 1 analyze_jd().
@@ -72,7 +76,6 @@ async def run_optimization_async(
 
     available_metrics = ", ".join(sorted(claims_ledger.metrics)[:15]) if claims_ledger.metrics else ""
     state = ResumeState(sections=sections, available_metrics=available_metrics)
-    register_session(job_id, state)
 
     if on_event:
         on_event({
@@ -90,11 +93,12 @@ async def run_optimization_async(
             jd_keywords=jd_keywords,
             ledger=claims_ledger,
             original_resume=resume_text,
+            seniority_level=seniority_level,
+            required_hard_skills=required_hard_skills,
             on_event=on_event,
         )
     except Exception as exc:
         _logger.warning("job=%s: agent failed (%s). Using deterministic fallback.", job_id, exc)
-        cleanup_session(job_id)
         if on_event:
             on_event({"type": "stage", "message": "Agent error — using deterministic rewrite.", "stage": "agent"})
         return await _deterministic_fallback(resume_text, jd_keywords, claims_ledger, scores)
@@ -105,7 +109,6 @@ async def run_optimization_async(
     output_tok = result.get("output_tokens", 0)
     cost_usd   = result.get("cost_usd", 0.0)
     iterations = result.get("iterations", 1)
-    cleanup_session(job_id)
 
     # Guard: if nothing changed, all tools silently failed — fall back
     if optimized.strip() == resume_text.strip():

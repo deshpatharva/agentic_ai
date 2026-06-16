@@ -93,41 +93,6 @@ def test_resume_state_reassemble_canonical_order():
 
 
 # ---------------------------------------------------------------------------
-# Session registry tests
-# ---------------------------------------------------------------------------
-
-
-def test_session_registry_roundtrip():
-    from agents import tools
-
-    key = "test-session-abc"
-    st = tools.ResumeState(sections={"summary": "Test"})
-    tools.register_session(key, st)
-    retrieved = tools.get_session(key)
-    assert retrieved is st
-    tools.cleanup_session(key)
-    assert tools.get_session(key) is None
-
-
-def test_cleanup_stale_sessions():
-    """cleanup_stale_sessions should remove sessions older than TTL."""
-    from agents import tools
-    from datetime import datetime, timezone, timedelta
-
-    key = "stale-session-xyz"
-    st = tools.ResumeState(sections={})
-    tools.register_session(key, st)
-
-    # Backdate the creation time well past the TTL
-    with tools._sessions_lock:
-        tools._session_created_at[key] = datetime.now(timezone.utc) - timedelta(hours=5)
-
-    count = tools.cleanup_stale_sessions()
-    assert count >= 1
-    assert tools.get_session(key) is None
-
-
-# ---------------------------------------------------------------------------
 # keyword_inject tests
 # ---------------------------------------------------------------------------
 

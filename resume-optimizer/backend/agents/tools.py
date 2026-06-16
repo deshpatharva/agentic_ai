@@ -10,9 +10,9 @@ functions in _archive/optimizer_agent.py. Key differences:
     asyncio.run(). The A+C driver awaits them directly.
   - Tool signatures accept ``state: ResumeState`` directly instead of a
     ``session_key`` string. The driver resolves the session and passes state in.
-  - ResumeState, the session registry, and _budget_ok are defined here so
-    other PR-2 modules (e.g. orchestration/optimizer.py) can import them
-    without pulling in CrewAI dependencies from _archive/optimizer_agent.py.
+  - ResumeState and _budget_ok are defined here so other PR-2 modules
+    (e.g. orchestration/optimizer.py) can import them without pulling in
+    CrewAI dependencies from _archive/optimizer_agent.py.
 
 SHARED STATE PATTERN
 ====================
@@ -38,7 +38,7 @@ at the start and returns early if exceeded.
 """
 
 import threading
-from typing import Dict, Optional
+from typing import Dict
 
 from config import (
     AGENT_TOKEN_BUDGET,
@@ -58,9 +58,9 @@ class ResumeState:
     """
     Thread-safe container for resume sections and token accounting.
 
-    One instance is created per optimisation job and registered in the
-    module-level session registry before the agent loop starts. Tools mutate
-    sections in-place. Token totals are the authoritative budget counter.
+    One instance is created per optimisation job and passed directly to the
+    agent loop. Tools mutate sections in-place. Token totals are the
+    authoritative budget counter.
     """
 
     def __init__(self, sections: Dict[str, str], available_metrics: str = "") -> None:
@@ -126,50 +126,6 @@ class ResumeState:
                 if name not in SECTION_ORDER and text.strip():
                     parts.append(text.strip())
         return "\n\n".join(parts)
-
-
-# ── Session registry ──────────────────────────────────────────────────────────
-
-_sessions: Dict[str, ResumeState] = {}
-_sessions_lock = threading.Lock()
-_session_created_at: dict = {}
-_SESSION_TTL_SECONDS = 4 * 3600  # 4 hours
-
-
-def cleanup_stale_sessions() -> int:
-    """Remove sessions older than _SESSION_TTL_SECONDS. Called by the stuck-job reaper.
-
-    Returns count of cleaned-up sessions.
-    """
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc)
-    with _sessions_lock:
-        stale = [
-            k for k, t in _session_created_at.items()
-            if (now - t).total_seconds() > _SESSION_TTL_SECONDS
-        ]
-        for k in stale:
-            _sessions.pop(k, None)
-            _session_created_at.pop(k, None)
-    return len(stale)
-
-
-def register_session(session_key: str, state: ResumeState) -> None:
-    from datetime import datetime, timezone
-    with _sessions_lock:
-        _sessions[session_key] = state
-        _session_created_at[session_key] = datetime.now(timezone.utc)
-
-
-def get_session(session_key: str) -> Optional[ResumeState]:
-    with _sessions_lock:
-        return _sessions.get(session_key)
-
-
-def cleanup_session(session_key: str) -> None:
-    with _sessions_lock:
-        _sessions.pop(session_key, None)
-        _session_created_at.pop(session_key, None)
 
 
 # ── Budget helper ─────────────────────────────────────────────────────────────
