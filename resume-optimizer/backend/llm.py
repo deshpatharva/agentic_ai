@@ -122,7 +122,7 @@ async def complete(
                 call_kwargs["response_format"] = {"type": "json_object"}
             else:
                 call_kwargs["response_format"] = response_format
-        # else: omit — rely on drop_params
+        # else: omit entirely — response_format unsupported by this provider
 
     # One bounded retry on transient failures (timeout / connection / 5xx).
     try:

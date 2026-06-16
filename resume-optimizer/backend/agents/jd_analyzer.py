@@ -100,6 +100,8 @@ Return JSON with all fields. For seniority_level use: entry | mid | senior | lea
     result.setdefault("seniority_level", "mid")
     result.setdefault("industry", "")
     result.setdefault("required_certifications", [])
+    # Backward-compat alias consumed by main.py pipeline — derived from critical_keywords
+    result.setdefault("keywords", result.get("critical_keywords", [])[:20])
 
     result_cache.set("jd_analysis", jd_text, value=result)
     return {
