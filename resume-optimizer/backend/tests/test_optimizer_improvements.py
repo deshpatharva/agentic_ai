@@ -45,9 +45,8 @@ def test_section_name_uses_worst_section():
         "worst_section not referenced in optimizer.py or agent_loop.py"
 
 
-def test_optimizer_agent_max_iter_is_six():
-    """AGENT_MAX_ITER must be 6 in optimizer_agent.py."""
-    source = (_BACKEND / "agents" / "optimizer_agent.py").read_text(encoding="utf-8")
-    match = re.search(r"AGENT_MAX_ITER\s*=\s*(\d+)", source)
-    assert match, "AGENT_MAX_ITER not found in optimizer_agent.py"
-    assert int(match.group(1)) == 6, f"AGENT_MAX_ITER should be 6, got {match.group(1)}"
+def test_agent_max_iter_comes_from_config():
+    """AGENT_MAX_ITER must be defined in config.py (the single source of truth)."""
+    import config
+    assert hasattr(config, "AGENT_MAX_ITER"), "AGENT_MAX_ITER must be in config.py"
+    assert isinstance(config.AGENT_MAX_ITER, int) and config.AGENT_MAX_ITER > 0

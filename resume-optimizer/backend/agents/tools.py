@@ -4,7 +4,7 @@ Async tool functions for the native-agent optimizer (Phase 2, PR-2).
 DESIGN
 ======
 This module is a standalone replacement for the CrewAI @tool-decorated
-functions in optimizer_agent.py. Key differences:
+functions in _archive/optimizer_agent.py. Key differences:
 
   - All tool functions are plain ``async def`` — no @tool decorator, no
     asyncio.run(). The A+C driver awaits them directly.
@@ -12,7 +12,7 @@ functions in optimizer_agent.py. Key differences:
     ``session_key`` string. The driver resolves the session and passes state in.
   - ResumeState, the session registry, and _budget_ok are defined here so
     other PR-2 modules (e.g. orchestration/optimizer.py) can import them
-    without pulling in CrewAI dependencies from optimizer_agent.py.
+    without pulling in CrewAI dependencies from _archive/optimizer_agent.py.
 
 SHARED STATE PATTERN
 ====================
