@@ -339,7 +339,7 @@ Experience section:
 Return ONLY the complete updated experience section text."""
 
     result = _call_llm(prompt, MODEL_BULLET_STRENGTHEN)
-    state.add_tokens(result.get("input_tokens", 0), result.get("output_tokens", 0))
+    state.add_tokens(result.get("input_tokens", 0), result.get("output_tokens", 0), result.get("cost_usd", 0.0))
     if result.get("text"):
         state.update_section("experience", result["text"])
         return f"Strengthened {len(weak)} bullet(s) in the experience section."
@@ -400,7 +400,7 @@ Skills section:
 Return ONLY the complete updated skills section text."""
 
     result = _call_llm(prompt, MODEL_SKILLS_REWRITE)
-    state.add_tokens(result.get("input_tokens", 0), result.get("output_tokens", 0))
+    state.add_tokens(result.get("input_tokens", 0), result.get("output_tokens", 0), result.get("cost_usd", 0.0))
     if result.get("text"):
         state.update_section("skills", result["text"])
         return f"Skills section updated to include: {missing_skills_csv}."
@@ -470,7 +470,7 @@ Rules:
 Return ONLY the complete updated {section_name} section text."""
 
     result = _call_llm(prompt, MODEL_SECTION_HUMANIZE)
-    state.add_tokens(result.get("input_tokens", 0), result.get("output_tokens", 0))
+    state.add_tokens(result.get("input_tokens", 0), result.get("output_tokens", 0), result.get("cost_usd", 0.0))
     if result.get("text"):
         state.update_section(section_name, result["text"])
         return f"'{section_name}' polished. Issues addressed: {issues_csv or 'general polish'}."

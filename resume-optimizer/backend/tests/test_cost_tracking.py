@@ -218,3 +218,51 @@ def test_provider_seed_uses_lowercase():
         assert good in source, (
             f"session.py must contain {good} in init_db seed"
         )
+
+
+def test_all_four_tools_accumulate_cost():
+    """All 4 optimizer tools must pass cost_usd to state.add_tokens()."""
+    os.environ.setdefault("JWT_SECRET", "test-secret-32-chars-long-enough-x")
+    os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./test.db")
+
+    import agents.optimizer_agent as oa
+    from agents.optimizer_agent import (
+        ResumeState, keyword_inject_tool,
+        bullet_strengthen_tool, skills_rewrite_tool, section_humanize_tool,
+        register_session,
+    )
+
+    COST = 0.005
+
+    def make_fake_call_llm(text="updated text"):
+        def fake(prompt, model):
+            return {"text": text, "input_tokens": 10, "output_tokens": 5, "cost_usd": COST}
+        return fake
+
+    # keyword_inject_tool — call the underlying function via .func to bypass CrewAI Tool wrapper
+    state = ResumeState(sections={"summary": "Led team."})
+    register_session("key1", state)
+    with patch.object(oa, "_call_llm", make_fake_call_llm()):
+        keyword_inject_tool.func(session_key="key1", missing_keywords_csv="python", target_sections_csv="summary")
+    assert state.cost_usd == pytest.approx(COST), f"keyword_inject cost not tracked: {state.cost_usd}"
+
+    # bullet_strengthen_tool
+    state = ResumeState(sections={"experience": "Responsible for things. Did work."})
+    register_session("key2", state)
+    with patch.object(oa, "_call_llm", make_fake_call_llm()):
+        bullet_strengthen_tool.func(session_key="key2", weak_bullets_csv="Responsible for things")
+    assert state.cost_usd == pytest.approx(COST), f"bullet_strengthen cost not tracked: {state.cost_usd}"
+
+    # skills_rewrite_tool
+    state = ResumeState(sections={"skills": "Python, SQL"})
+    register_session("key3", state)
+    with patch.object(oa, "_call_llm", make_fake_call_llm()):
+        skills_rewrite_tool.func(session_key="key3", missing_skills_csv="kubernetes")
+    assert state.cost_usd == pytest.approx(COST), f"skills_rewrite cost not tracked: {state.cost_usd}"
+
+    # section_humanize_tool
+    state = ResumeState(sections={"summary": "Responsible for things."})
+    register_session("key4", state)
+    with patch.object(oa, "_call_llm", make_fake_call_llm()):
+        section_humanize_tool.func(session_key="key4", section_name="summary", issues_csv="passive voice")
+    assert state.cost_usd == pytest.approx(COST), f"section_humanize cost not tracked: {state.cost_usd}"
