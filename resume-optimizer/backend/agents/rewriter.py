@@ -48,8 +48,7 @@ PRIORITY 1 — KEYWORD SATURATION
   Do NOT add new sentences or bullet points to carry keywords; weave them into existing content only.
 
 PRIORITY 2 — QUANTIFIED IMPACT
-  Every bullet must contain a metric (%, $, count, time). If a bullet has no metric, add a
-  realistic placeholder using the format [XX%] that the user can fill in.
+  Where a bullet already has a metric (%, $, count, time-saved), keep it and make it prominent.
   Replace duty-description ("Responsible for X") with achievement framing ("Delivered X, resulting in Y").
   Use ONLY numbers and metrics that appear verbatim in the CLAIMS LEDGER below; do NOT invent new figures.
 
