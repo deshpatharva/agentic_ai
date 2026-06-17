@@ -30,6 +30,14 @@ def build_report(
     remaining_lower = {g.lower() for g in remaining}
     addressed = [g for g in identified if g.lower() not in remaining_lower]
 
+    def _pick(dim: str, key: str, n: int = 5) -> list:
+        d = final_scores.get(dim) or {}
+        return (d.get(key) or [])[:n] if isinstance(d, dict) else []
+
+    def _pick_str(dim: str, key: str) -> str:
+        d = final_scores.get(dim) or {}
+        return str(d.get(key) or "") if isinstance(d, dict) else ""
+
     return {
         "baseline_score": round(float(baseline_score)),
         "final_score": round(float(final_scores.get("average", baseline_score))),
@@ -42,4 +50,14 @@ def build_report(
         "gaps_addressed": addressed,
         "gaps_remaining": remaining,
         "iterations": int(iterations),
+        # Per-dimension detail so the co-pilot can ask targeted improvement questions.
+        # Capped at 5 items each to keep the context window lean.
+        "dimension_detail": {
+            "ats":         {"missing_keywords": _pick("ats",         "missing_keywords")},
+            "impact":      {"weak_bullets":     _pick("impact",      "weak_bullets")},
+            "skills_gap":  {"missing_skills":   _pick("skills_gap",  "missing_skills"),
+                            "critical_missing": _pick("skills_gap",  "critical_missing")},
+            "readability": {"issues":           _pick("readability", "issues"),
+                            "worst_section":    _pick_str("readability", "worst_section")},
+        },
     }
