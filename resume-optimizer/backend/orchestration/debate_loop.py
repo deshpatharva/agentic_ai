@@ -41,6 +41,7 @@ async def run_debate(
     ledger: ClaimsLedger,
     original_resume: str,
     on_event: Optional[Callable[[dict], None]] = None,
+    **kwargs,
 ) -> dict:
     """
     Run the two-agent debate loop (Pro tier).

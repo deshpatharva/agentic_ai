@@ -135,3 +135,6 @@ STUCK_JOB_TIMEOUT_MINUTES = int(os.environ.get("STUCK_JOB_TIMEOUT_MINUTES", "30"
 
 # ── Stripe (optional) ─────────────────────────────────────────────────────────
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
+
+# ── Tier gating ──────────────────────────────────────────────────────────────
+PRO_DEBATE_ENABLED  = False   # flag-gated; default OFF for beta

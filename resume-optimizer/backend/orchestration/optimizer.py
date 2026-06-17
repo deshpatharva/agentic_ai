@@ -18,8 +18,10 @@ from agents.fact_extractor import ClaimsLedger
 from agents.tools import ResumeState
 from agents.rewriter import rewrite_resume
 from agents.verifier import verify_final_draft
+import config
 from config import SCORE_TARGET
 from orchestration.agent_loop import run_agent
+from orchestration.debate_loop import run_debate
 from utils.section_parser import detect_sections
 
 _logger = logging.getLogger(__name__)
@@ -39,6 +41,7 @@ async def run_optimization_async(
     seniority_level: str = "mid",
     required_hard_skills: Optional[list] = None,
     on_event: Optional[Callable[[dict], None]] = None,
+    plan: str = "standard",
 ) -> dict:
     """
     Phase 2 async entry point. Called from _run_pipeline_task in main.py.
@@ -51,6 +54,8 @@ async def run_optimization_async(
         claims_ledger: From Phase 1 extract_claims().
         scores:        Baseline score dict from Phase 1 score_combined().
         on_event:      SSE event callback.
+        plan:          User's subscription plan — "standard" (default) or "pro".
+                       "pro" activates the debate loop when PRO_DEBATE_ENABLED=True.
 
     Returns:
         {"text", "input_tokens", "output_tokens", "cost_usd", "iterations", "fallback"}
@@ -86,9 +91,18 @@ async def run_optimization_async(
             "stage":   "agent",
         })
 
-    # ── Run A+C agent loop ────────────────────────────────────────────────────
+    # ── Select driver based on plan and feature flag ──────────────────────────
+    use_debate = plan == "pro" and config.PRO_DEBATE_ENABLED
+    driver = run_debate if use_debate else run_agent
+
+    _logger.info(
+        "job=%s: plan=%r PRO_DEBATE_ENABLED=%r → driver=%s",
+        job_id, plan, config.PRO_DEBATE_ENABLED, driver.__name__,
+    )
+
+    # ── Run selected driver ───────────────────────────────────────────────────
     try:
-        result = await run_agent(
+        result = await driver(
             state=state,
             scores=scores,
             jd_text=jd_text,
