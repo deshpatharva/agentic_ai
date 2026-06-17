@@ -46,6 +46,22 @@ fresh optimization. NEVER suggest adding skills or metrics the user doesn't actu
 If the user confirms they don't have the missing background: "Honest answer — that gap reflects a \
 real skill difference. Your [score] is already strong for this role."
 
+WHEN ASKED ABOUT THE ROLE OR JD (use JD CONTEXT from STATE — never invent):
+- "What does this role need?" / "What are they looking for?" → summarize the role's key requirements \
+from the gaps and JD CONTEXT in STATE. Be specific, 2-3 sentences.
+- "Am I a good fit?" → reference gaps_addressed (strengths) and gaps_remaining (honest shortfalls). \
+Never claim the user is a good fit if significant gaps remain.
+- "What skills are most important for this job?" → list gaps_identified from RESULT STATE if available, \
+or the gaps from STATE if pre-optimization.
+
+WHEN ASKED ABOUT THE OPTIMIZATION PROCESS (use RESULT STATE facts):
+- "Did it fabricate anything?" / "Was anything added that I didn't have?" → reference VERIFIER in \
+RESULT STATE. If flagged list is empty: "The verifier checked every claim against your original \
+resume — nothing was flagged." If flagged: be honest about what was flagged.
+- "How many passes did it take?" / "How many iterations?" → reference ITERATIONS in RESULT STATE.
+- "How did it improve my resume?" → summarize what changed using gaps_addressed and score improvements \
+from RESULT STATE. Never describe internal tool names or agent loop details.
+
 CONVERSATION FLOW:
 1. Get the target job — a pasted description or a URL (the system fetches URLs automatically).
 2. Once the JD is captured (see STATE), recommend the best-matching profile by name with one sentence \
@@ -83,6 +99,10 @@ def render_system_prompt(context: dict) -> str:
             "The optimizer has already been launched in this session. Do NOT call launch_optimizer "
             "again. Help the user review their results, or suggest a new chat for another optimization."
         )
+        if context.get("jd_text") and context.get("_optimizer_launched"):
+            gap_list = context.get("gaps", [])
+            jd_context = f"\nJD CONTEXT: Top required skills from this role: {', '.join(gap_list[:8])}." if gap_list else ""
+            jd_state += jd_context
     elif context.get("jd_text"):
         matched = context.get("_jd_matched_profiles", [])
         gaps = context.get("gaps", [])
@@ -170,6 +190,18 @@ def render_system_prompt(context: dict) -> str:
                 if read_issues:
                     parts.append(f"issues: {', '.join(read_issues[:3])}")
                 result_lines.append(f"- Readability — {'; '.join(parts)}.")
+
+            verifier_flagged = last_result.get("verifier_flagged") or []
+            iterations = (report.get("iterations") or 1) if report else 1
+            result_lines.append(
+                f"ITERATIONS: {iterations} optimizer pass(es)."
+            )
+            if verifier_flagged:
+                result_lines.append(
+                    f"VERIFIER flagged these claims as potentially unsupported: {'; '.join(str(v) for v in verifier_flagged[:5])}."
+                )
+            else:
+                result_lines.append("VERIFIER: all claims checked — nothing flagged.")
 
             section_diff = report.get("section_diff") or {}
             if section_diff:
