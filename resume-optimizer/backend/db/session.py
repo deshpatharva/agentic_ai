@@ -95,6 +95,7 @@ async def init_db() -> None:
                     PlanLimit(
                         plan="free",
                         daily_uploads=2,
+                        daily_edits=5,
                         max_stored_resumes=1,
                         job_scraping_enabled=False,
                         price_cents=0,
@@ -102,6 +103,7 @@ async def init_db() -> None:
                     PlanLimit(
                         plan="pro",
                         daily_uploads=20,
+                        daily_edits=20,
                         max_stored_resumes=10,
                         job_scraping_enabled=True,
                         price_cents=900,
@@ -109,6 +111,7 @@ async def init_db() -> None:
                     PlanLimit(
                         plan="enterprise",
                         daily_uploads=999,
+                        daily_edits=999,
                         max_stored_resumes=999,
                         job_scraping_enabled=True,
                         price_cents=2900,

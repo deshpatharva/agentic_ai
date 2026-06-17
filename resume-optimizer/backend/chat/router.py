@@ -9,15 +9,15 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from auth.dependencies import get_current_user
 from chat.agent import render_system_prompt
-from chat.tools import TOOLS, LAUNCH_TOOL, SAVE_TOOL, DOWNLOAD_TOOL, parse_tool_calls, message_text
+from chat.tools import TOOLS, LAUNCH_TOOL, SAVE_TOOL, DOWNLOAD_TOOL, EDIT_TOOL, parse_tool_calls, message_text
 from chat.dependencies import get_or_create_session, require_complete_profile
-from chat.handoff import fire_optimizer, save_profile_from_session, resolve_profile_download
+from chat.handoff import fire_optimizer, save_profile_from_session, resolve_profile_download, apply_edit
 from chat.window import build_window
 from config import MODEL_CHAT_AGENT, CHAT_WINDOW_TURNS
 from db.models import ChatMessage, ChatSession, DailyUsageCounter, PlanLimit, User
@@ -307,6 +307,54 @@ async def _check_quota(user: User, db: AsyncSession) -> None:
         )
 
 
+async def _check_edit_quota(user: User, db: AsyncSession) -> None:
+    """Raise HTTP 429 if the user has hit their daily edit limit."""
+    from auth.dependencies import _effective_plan
+    from datetime import date
+
+    plan = _effective_plan(user)
+    limits = await db.scalar(select(PlanLimit).where(PlanLimit.plan == plan))
+    if not limits:
+        return
+
+    today_str = date.today().isoformat()
+    used = await db.scalar(
+        select(DailyUsageCounter.edits).where(
+            DailyUsageCounter.user_id == user.id,
+            DailyUsageCounter.date == today_str,
+        )
+    ) or 0
+
+    if used >= limits.daily_edits:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "edit_limit_reached",
+                "limit": limits.daily_edits,
+                "used": used,
+                "upgrade_message": "You've reached your daily edit limit. Upgrade to Pro for more edits.",
+            },
+        )
+
+
+async def _increment_edit_counter(user_id: str, db: AsyncSession) -> None:
+    """Increment today's edit counter for the user (upsert)."""
+    import uuid as _uuid_mod
+    from datetime import date
+    # SQLAlchemy stores Uuid() as CHAR(32) hex (no dashes) in SQLite; strip dashes for raw SQL.
+    uid_hex = _uuid_mod.UUID(user_id).hex
+    await db.execute(
+        text(
+            "INSERT INTO daily_usage_counters (user_id, date, runs, edits) "
+            "VALUES (:uid, :date, 0, 1) "
+            "ON CONFLICT (user_id, date) DO UPDATE "
+            "SET edits = daily_usage_counters.edits + 1"
+        ),
+        {"uid": uid_hex, "date": date.today().isoformat()},
+    )
+    await db.commit()
+
+
 @router.post("/chat")
 async def optimize_chat(
     body: ChatTurnRequest,
@@ -427,6 +475,7 @@ async def optimize_chat(
         launch = next((c for c in tool_calls if c["name"] == LAUNCH_TOOL), None)
         save = next((c for c in tool_calls if c["name"] == SAVE_TOOL), None)
         download = next((c for c in tool_calls if c["name"] == DOWNLOAD_TOOL), None)
+        edit = next((c for c in tool_calls if c["name"] == EDIT_TOOL), None)
 
         # Persist the assistant's visible text (may be empty if it only called a tool).
         async with AsyncSessionLocal() as wdb:
@@ -445,7 +494,8 @@ async def optimize_chat(
             "Launching the optimizer now…" if launch
             else "Generating your document…" if download
             else "Saving your profile…" if save
-            else ""
+            else "Editing your resume…" if edit
+            else "Sorry, I didn't catch that. Could you rephrase?"
         )
         yield {"event": "final", "data": json.dumps({"content": display})}
 
@@ -502,6 +552,26 @@ async def optimize_chat(
                 yield {"event": "saved_profile", "data": json.dumps(saved)}
             except HTTPException as exc:
                 yield {"event": "error", "data": json.dumps({"message": str(exc.detail)})}
+
+        # ── Targeted user-instructed edit ───────────────────────────────────
+        elif edit:
+            try:
+                await _check_edit_quota(current_user, db)
+            except HTTPException as exc:
+                detail = exc.detail
+                msg = (detail.get("upgrade_message", "Daily edit limit reached.")
+                       if isinstance(detail, dict) else str(detail))
+                yield {"event": "error", "data": json.dumps({"message": msg})}
+                yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
+                return
+            try:
+                edit_result = await apply_edit(current_user, session, edit["arguments"])
+                async with AsyncSessionLocal() as wdb:
+                    await _increment_edit_counter(str(current_user.id), wdb)
+                yield {"event": "resume_edited", "data": json.dumps(edit_result)}
+            except HTTPException as exc:
+                msg = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+                yield {"event": "error", "data": json.dumps({"message": msg})}
 
         yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
 

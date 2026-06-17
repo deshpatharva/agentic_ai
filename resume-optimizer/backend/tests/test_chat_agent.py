@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # ── agent.py ─────────────────────────────────────────────────────────────────
 
 from chat.agent import render_system_prompt
-from chat.tools import parse_tool_calls, message_text, TOOLS, LAUNCH_TOOL, SAVE_TOOL, DOWNLOAD_TOOL
+from chat.tools import parse_tool_calls, message_text, TOOLS, LAUNCH_TOOL, SAVE_TOOL, DOWNLOAD_TOOL, EDIT_TOOL
 from chat.gaps import compute_gaps
 from utils.text_sanitizer import sanitize_resume_text
 from utils.optimization_report import build_report
@@ -41,7 +41,8 @@ class TestSanitizeResumeText:
         assert sanitize_resume_text("improved agility by [XX%].") == "improved agility."
 
     def test_strips_standalone_placeholder(self):
-        assert sanitize_resume_text("gain of [XX%] here") == "gain of here"
+        # "of [XX%]" matches the connective-clause pattern, so "of" is consumed too.
+        assert sanitize_resume_text("gain of [XX%] here") == "gain here"
 
     def test_preserves_currency(self):
         s = "saved $500K and $200K, lost $335"
@@ -78,7 +79,7 @@ class TestParseToolCalls:
 
     def test_tools_shape(self):
         names = {t["function"]["name"] for t in TOOLS}
-        assert names == {LAUNCH_TOOL, SAVE_TOOL, DOWNLOAD_TOOL}
+        assert names == {LAUNCH_TOOL, SAVE_TOOL, DOWNLOAD_TOOL, EDIT_TOOL}
 
 
 class TestComputeGaps:

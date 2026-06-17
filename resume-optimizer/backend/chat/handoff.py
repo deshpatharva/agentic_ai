@@ -9,9 +9,27 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 from sqlalchemy import select
 
+from agents.fact_extractor import extract_claims
+from agents.jd_analyzer import analyze_jd
+from agents.scorer import score_combined
+from agents.tools import ResumeState
 from db.models import ChatSession, JobStatus, PipelineJob, Profile, User
 from db.session import AsyncSessionLocal
+from orchestration.agent_loop import run_agent
+from utils.optimization_report import build_report
 from utils.profile_utils import sections_to_text
+from utils.section_parser import detect_sections
+
+
+async def _parse_sections(raw_text: str) -> dict:
+    """Lazy wrapper around profiles.router._parse_sections.
+
+    Defined at module level so tests can patch ``handoff._parse_sections``.
+    The actual import is deferred to avoid heavy startup dependencies from
+    profiles.router being pulled in at module load time.
+    """
+    from profiles.router import _parse_sections as _ps  # noqa: PLC0415
+    return await _ps(raw_text)
 
 
 async def fire_optimizer(
@@ -194,3 +212,163 @@ async def save_profile_from_session(
         await db.commit()
         await db.refresh(new_profile)
         return {"profile_id": str(new_profile.id), "label": label}
+
+
+def _flat_scores(scores: dict) -> dict:
+    """Pull the 5 dimension scores into a flat {dim: int} dict."""
+    return {
+        d: (scores[d]["score"] if isinstance(scores.get(d), dict) else int(scores.get(d, 0) or 0))
+        for d in ("ats", "impact", "skills_gap", "readability", "jd_tailoring")
+    }
+
+
+def _avg4(flat: dict) -> int:
+    """Average of the 4 pipeline dimensions (keeps final_score comparable to the pipeline)."""
+    keys = ("ats", "impact", "skills_gap", "readability")
+    return round(sum(flat.get(k, 0) for k in keys) / len(keys))
+
+
+async def apply_edit(user, session, arguments: dict) -> dict:
+    """Apply a targeted, user-instructed edit via the optimizer agent."""
+    instruction = (arguments.get("instruction") or "").strip()
+    if not instruction:
+        raise HTTPException(status_code=400, detail="Tell me what you'd like to change.")
+
+    ctx = dict(session.context or {})
+    last_result = ctx.get("last_result")
+
+    # Block edits while an optimization is still running (launched but no result yet).
+    if ctx.get("_optimizer_launched") and not last_result:
+        raise HTTPException(
+            status_code=409,
+            detail="An optimization is in progress — wait for it to finish before making manual edits.",
+        )
+
+    # ── Resolve source text + pre-edit scores ────────────────────────────────
+    if last_result:
+        source_text = last_result.get("optimized_text") or sections_to_text(last_result.get("sections") or {})
+        raw_scores = last_result.get("scores") or {}
+        scores_before = _flat_scores(raw_scores)
+    else:
+        profile_id = str(arguments.get("profile_id", "") or "")
+        try:
+            pid = uuid.UUID(profile_id)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=400,
+                detail="Nothing to edit yet — run the optimizer first, or tell me which saved profile to update.",
+            )
+        async with AsyncSessionLocal() as db:
+            from db.models import Profile
+            prof = await db.scalar(
+                select(Profile).where(Profile.id == pid, Profile.user_id == user.id)
+            )
+            if not prof:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Couldn't find that profile. Please pick one from the list.",
+                )
+            source_text = prof.raw_text or sections_to_text(prof.sections or {})
+        scores_before = None  # computed below from baseline scoring
+
+    if not source_text.strip():
+        raise HTTPException(status_code=400, detail="That resume has no text to edit.")
+
+    jd_text = ctx.get("jd_text", "") or ""
+
+    # ── Phase-1-lite: claims, JD analysis, baseline scoring ──────────────────
+    ledger = await asyncio.to_thread(extract_claims, source_text)
+    if jd_text:
+        jd_dict = await analyze_jd(jd_text)
+        jd_result = jd_dict.get("text", jd_dict) or {}
+    else:
+        jd_result = {}
+    jd_keywords = jd_result.get("keywords", []) or []
+    seniority = jd_result.get("seniority_level", "mid")
+    required_hard_skills = jd_result.get("required_hard_skills", []) or []
+
+    baseline_dict = await score_combined(
+        source_text, jd_text, jd_keywords=jd_keywords,
+        seniority_level=seniority, required_hard_skills=required_hard_skills,
+    )
+    baseline_scores = baseline_dict.get("text", {}) or {}
+    if scores_before is None:
+        scores_before = _flat_scores(baseline_scores)
+
+    # ── Run the agent with the user's instruction injected ───────────────────
+    sections = detect_sections(source_text)
+    available_metrics = ""
+    if ledger and hasattr(ledger, "metrics") and ledger.metrics:
+        available_metrics = ", ".join(sorted(ledger.metrics)[:15])
+    state = ResumeState(sections=sections, available_metrics=available_metrics)
+
+    agent_result = await run_agent(
+        state=state,
+        scores=baseline_scores,
+        jd_text=jd_text,
+        jd_keywords=jd_keywords,
+        ledger=ledger,
+        original_resume=source_text,
+        seniority_level=seniority,
+        required_hard_skills=required_hard_skills,
+        user_instruction=instruction,
+        max_reflections=2,
+    )
+
+    edited_text = (agent_result.get("text") or "").strip()
+    if not edited_text or edited_text == source_text.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="The edit produced no change — your resume is unchanged.",
+        )
+
+    verifier_flagged = agent_result.get("flagged", []) or []
+
+    # ── Re-score the edited draft ─────────────────────────────────────────────
+    new_dict = await score_combined(
+        edited_text, jd_text, jd_keywords=jd_keywords,
+        seniority_level=seniority, required_hard_skills=required_hard_skills,
+    )
+    new_scores = new_dict.get("text", {}) or {}
+    new_flat = _flat_scores(new_scores)
+    new_scores_for_report = {**new_scores, "average": _avg4(new_flat)}
+
+    report = build_report(
+        jd_result=jd_result,
+        original_text=source_text,
+        optimized_text=edited_text,
+        baseline_score=_avg4(scores_before),
+        final_scores=new_scores_for_report,
+        iterations=agent_result.get("iterations", 1),
+    )
+
+    # ── Re-parse into rich profile sections (for save/docx) ──────────────────
+    new_sections = await _parse_sections(edited_text)
+
+    sections_changed = list((report.get("section_diff") or {}).keys())
+
+    # ── Write back to session.context["last_result"] ─────────────────────────
+    async with AsyncSessionLocal() as db:
+        sess_row = await db.get(ChatSession, session.id)
+        if sess_row:
+            new_ctx = dict(sess_row.context or {})
+            prev = dict(new_ctx.get("last_result") or {})
+            prev.update({
+                "sections":         new_sections or {},
+                "optimized_text":   edited_text,
+                "final_score":      float(new_scores_for_report["average"]),
+                "scores":           new_flat,
+                "report":           report,
+                "verifier_flagged": list(verifier_flagged),
+            })
+            new_ctx["last_result"] = prev
+            sess_row.context = new_ctx
+            sess_row.updated_at = datetime.now(timezone.utc)
+            await db.commit()
+
+    return {
+        "sections_changed": sections_changed,
+        "scores":           new_flat,
+        "scores_before":    scores_before,
+        "verifier_flagged": list(verifier_flagged),
+    }

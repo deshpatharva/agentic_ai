@@ -77,11 +77,12 @@ AGENT_TOKEN_BUDGET = 20_000   # cumulative input+output tokens across all Phase 
 
 # Conversational optimize co-pilot. Uses native tool-calling (launch/save/download),
 # so it needs a model with reliable tool-use — and cost matters since this runs every
-# chat turn. Llama 3.3 70B via Groq has mature function-calling and is ~cents/conversation
-# (far cheaper than Anthropic). Cheaper alternatives if needed: "groq/openai/gpt-oss-120b"
-# or "gemini/gemini-2.5-flash-lite". complete_with_tools() degrades to a plain reply if a
-# model fumbles the tools param.
-MODEL_CHAT_AGENT  = "groq/llama-3.3-70b-versatile"
+# chat turn. Gemini 2.5 Flash is cost-effective (~cents/conversation) and reliably
+# handles the stateful prompt + tool-calling flow. Fallback options:
+# "groq/llama-3.3-70b-versatile" (cheaper, less reliable on complex turns) or
+# "gemini/gemini-2.5-flash-lite" (cheapest). complete_with_tools() degrades to a
+# plain reply if a model fumbles the tools param.
+MODEL_CHAT_AGENT  = "gemini/gemini-2.5-flash"
 CHAT_WINDOW_TURNS = 10   # last N turns sent to the chat model per call
 
 # ── API URLs ──────────────────────────────────────────────────────────────────
