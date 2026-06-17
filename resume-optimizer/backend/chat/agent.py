@@ -174,10 +174,12 @@ def render_system_prompt(context: dict) -> str:
             section_diff = report.get("section_diff") or {}
             if section_diff:
                 result_lines.append("SECTION CHANGES (use to answer 'what changed' / 'why was this written' questions):")
-                for sec, diff in list(section_diff.items())[:4]:  # cap at 4 sections
+                for sec, diff in list(section_diff.items())[:4]:
                     if diff.get("before"):
-                        result_lines.append(f"  [{sec}] before: {diff['before'][:200]}")
-                    result_lines.append(f"  [{sec}] after:  {diff['after'][:200]}")
+                        result_lines.append(f"  [{sec}] CHANGED before: {diff['before'][:200]}")
+                        result_lines.append(f"  [{sec}] CHANGED after:  {diff['after'][:200]}")
+                    else:
+                        result_lines.append(f"  [{sec}] ADDED: {diff['after'][:200]}")
 
         result_state = "\n".join(result_lines)
     else:
