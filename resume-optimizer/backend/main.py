@@ -42,7 +42,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-from limiter import limiter
+from limiter import limiter, pipeline_limiter, get_user_id_key
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
@@ -288,8 +288,10 @@ class ScrapeJobsRequest(BaseModel):
 # ── Routes ───────────────────────────────────────────────────────────────────
 
 @app.post("/run-pipeline")
+@limiter.limit("10/minute", key_func=get_user_id_key)
 async def run_pipeline(
-    request: RunPipelineRequest,
+    request: Request,
+    pipeline_request: RunPipelineRequest,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(check_plan_limit),
     db: AsyncSession = Depends(get_db),
@@ -299,7 +301,7 @@ async def run_pipeline(
     Returns immediately; progress is streamed via SSE at /status/{job_id}.
     """
     try:
-        job_uuid = uuid.UUID(request.job_id)
+        job_uuid = uuid.UUID(pipeline_request.job_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="Job not found.")
 
@@ -309,12 +311,12 @@ async def run_pipeline(
     if not job or str(job.user_id) != str(current_user.id):
         raise HTTPException(status_code=404, detail="Job not found. Upload a resume first.")
 
-    if not request.jd_text.strip():
+    if not pipeline_request.jd_text.strip():
         raise HTTPException(status_code=400, detail="jd_text cannot be empty.")
 
-    if request.profile_id:
+    if pipeline_request.profile_id:
         try:
-            pid = uuid.UUID(request.profile_id)
+            pid = uuid.UUID(pipeline_request.profile_id)
             prof_result = await db.execute(
                 select(Profile).where(Profile.id == pid, Profile.user_id == current_user.id)
             )
@@ -326,7 +328,7 @@ async def run_pipeline(
         except ValueError:
             pass
 
-    job.jd_text = request.jd_text
+    job.jd_text = pipeline_request.jd_text
     job.status = JobStatus.running
     job.updated_at = datetime.now(timezone.utc)
     await db.commit()
