@@ -17,8 +17,11 @@ from typing import Callable, Optional
 from agents.fact_extractor import ClaimsLedger
 from agents.tools import ResumeState
 from agents.rewriter import rewrite_resume
+from agents.verifier import verify_final_draft
+import config
 from config import SCORE_TARGET
 from orchestration.agent_loop import run_agent
+from orchestration.debate_loop import run_debate
 from utils.section_parser import detect_sections
 
 _logger = logging.getLogger(__name__)
@@ -38,6 +41,7 @@ async def run_optimization_async(
     seniority_level: str = "mid",
     required_hard_skills: Optional[list] = None,
     on_event: Optional[Callable[[dict], None]] = None,
+    plan: str = "standard",
 ) -> dict:
     """
     Phase 2 async entry point. Called from _run_pipeline_task in main.py.
@@ -50,6 +54,8 @@ async def run_optimization_async(
         claims_ledger: From Phase 1 extract_claims().
         scores:        Baseline score dict from Phase 1 score_combined().
         on_event:      SSE event callback.
+        plan:          User's subscription plan — "standard" (default) or "pro".
+                       "pro" activates the debate loop when PRO_DEBATE_ENABLED=True.
 
     Returns:
         {"text", "input_tokens", "output_tokens", "cost_usd", "iterations", "fallback"}
@@ -72,7 +78,8 @@ async def run_optimization_async(
                 "message": "Resume has no detectable named sections — using full rewrite.",
                 "stage":   "agent",
             })
-        return await _deterministic_fallback(resume_text, jd_keywords, claims_ledger, scores)
+        pipeline_result = await _deterministic_fallback(resume_text, jd_keywords, claims_ledger, scores)
+        return await _with_verifier(pipeline_result, claims_ledger)
 
     available_metrics = ", ".join(sorted(claims_ledger.metrics)[:15]) if claims_ledger.metrics else ""
     state = ResumeState(sections=sections, available_metrics=available_metrics)
@@ -84,9 +91,18 @@ async def run_optimization_async(
             "stage":   "agent",
         })
 
-    # ── Run A+C agent loop ────────────────────────────────────────────────────
+    # ── Select driver based on plan and feature flag ──────────────────────────
+    use_debate = plan == "pro" and config.PRO_DEBATE_ENABLED
+    driver = run_debate if use_debate else run_agent
+
+    _logger.info(
+        "job=%s: plan=%r PRO_DEBATE_ENABLED=%r → driver=%s",
+        job_id, plan, config.PRO_DEBATE_ENABLED, driver.__name__,
+    )
+
+    # ── Run selected driver ───────────────────────────────────────────────────
     try:
-        result = await run_agent(
+        result = await driver(
             state=state,
             scores=scores,
             jd_text=jd_text,
@@ -101,7 +117,8 @@ async def run_optimization_async(
         _logger.warning("job=%s: agent failed (%s). Using deterministic fallback.", job_id, exc)
         if on_event:
             on_event({"type": "stage", "message": "Agent error — using deterministic rewrite.", "stage": "agent"})
-        return await _deterministic_fallback(resume_text, jd_keywords, claims_ledger, scores)
+        pipeline_result = await _deterministic_fallback(resume_text, jd_keywords, claims_ledger, scores)
+        return await _with_verifier(pipeline_result, claims_ledger)
 
     # ── Extract result ────────────────────────────────────────────────────────
     optimized  = result.get("text", resume_text)
@@ -118,15 +135,30 @@ async def run_optimization_async(
         )
         if on_event:
             on_event({"type": "stage", "message": "No changes from agent — using deterministic rewrite.", "stage": "agent"})
-        return await _deterministic_fallback(resume_text, jd_keywords, claims_ledger, scores)
+        pipeline_result = await _deterministic_fallback(resume_text, jd_keywords, claims_ledger, scores)
+        return await _with_verifier(pipeline_result, claims_ledger)
 
-    return {
+    pipeline_result = {
         "text":          optimized,
         "input_tokens":  input_tok,
         "output_tokens": output_tok,
         "cost_usd":      cost_usd,
         "iterations":    iterations,
         "fallback":      False,
+    }
+    return await _with_verifier(pipeline_result, claims_ledger)
+
+
+async def _with_verifier(pipeline_result: dict, ledger: ClaimsLedger) -> dict:
+    """Run the LLM verifier on the final draft and attach verifier_flagged to the result dict."""
+    draft = pipeline_result.get("text", "")
+    vr = await verify_final_draft(draft, ledger)
+    return {
+        **pipeline_result,
+        "input_tokens":  pipeline_result.get("input_tokens",  0) + vr.input_tokens,
+        "output_tokens": pipeline_result.get("output_tokens", 0) + vr.output_tokens,
+        "cost_usd":      pipeline_result.get("cost_usd",     0.0) + vr.cost_usd,
+        "verifier_flagged": vr.flagged,
     }
 
 

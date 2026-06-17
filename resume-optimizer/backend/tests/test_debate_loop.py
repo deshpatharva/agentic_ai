@@ -1,0 +1,261 @@
+"""Tests for the two-agent debate loop driver (T4.2)."""
+import os
+import sys
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+import pytest
+
+os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
+os.environ.setdefault("GOOGLE_AI_STUDIO_API_KEY", "test-key")
+os.environ.setdefault("GROQ_API_KEY", "test-key")
+os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+os.environ.setdefault("DELTA_STORAGE_PATH", "./test_delta_store")
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# ---------------------------------------------------------------------------
+# Shared fixtures
+# ---------------------------------------------------------------------------
+
+SCORES_BELOW_TARGET = {
+    "ats":         {"score": 60, "missing_keywords": ["docker", "kubernetes"], "matched_keywords": []},
+    "impact":      {"score": 90, "weak_bullets": [],     "strong_bullets": []},
+    "skills_gap":  {"score": 90, "missing_skills": [],   "matched_skills": []},
+    "readability": {"score": 90, "issues": [],           "worst_section": "experience"},
+    "overall": 80,
+}
+
+
+def _make_state(sections=None):
+    from agents.tools import ResumeState
+    return ResumeState(sections=sections or {"experience": "Did work.", "skills": "Python"})
+
+
+def _make_ledger():
+    from agents.fact_extractor import ClaimsLedger
+    return ClaimsLedger(companies=frozenset(), metrics=frozenset(), raw_bullets=tuple())
+
+
+def _done_msg(content="Done optimizing."):
+    """Return a fake assistant message with no tool_calls."""
+    msg = MagicMock()
+    msg.content = content
+    msg.tool_calls = None
+    return msg
+
+
+def _fake_complete_with_tools_result(msg=None, in_tok=100, out_tok=50, cost=0.01):
+    if msg is None:
+        msg = _done_msg()
+    return {"message": msg, "input_tokens": in_tok, "output_tokens": out_tok, "cost_usd": cost}
+
+
+def _clean_guard(generated_text, ledger, source_text):
+    """Fabrication guard stub that always returns clean (no gaps)."""
+    from agents.fabrication_guard import GuardResult
+    return GuardResult(text=generated_text, stripped=[], gaps=[])
+
+
+# ---------------------------------------------------------------------------
+# Test 1: debate loop is bounded by rounds
+# ---------------------------------------------------------------------------
+
+
+async def test_debate_loop_bounded_rounds():
+    """Reviewer objects in round 1 then clears in round 2; loop exits after round 2.
+    Result must have 'text', 'input_tokens', 'output_tokens', 'cost_usd', 'iterations'."""
+    from orchestration import debate_loop
+
+    state = _make_state()
+    ledger = _make_ledger()
+
+    # complete_with_tools (optimizer inner loop) returns done immediately
+    async def fake_complete_with_tools(messages, model, tools):
+        return _fake_complete_with_tools_result(_done_msg())
+
+    # complete (reviewer): object round 1, clear round 2
+    reviewer_call_count = [0]
+
+    async def fake_complete(prompt, model, **kwargs):
+        reviewer_call_count[0] += 1
+        if reviewer_call_count[0] == 1:
+            return {"text": "OBJECTION: bullets are weak", "input_tokens": 30, "output_tokens": 10, "cost_usd": 0.001}
+        return {"text": "No objections.", "input_tokens": 30, "output_tokens": 5, "cost_usd": 0.0005}
+
+    with patch.object(debate_loop, "complete_with_tools", side_effect=fake_complete_with_tools), \
+         patch.object(debate_loop, "complete", side_effect=fake_complete), \
+         patch.object(debate_loop, "fabrication_guard", side_effect=_clean_guard):
+        result = await debate_loop.run_debate(
+            state=state,
+            scores=SCORES_BELOW_TARGET,
+            jd_text="JD text",
+            jd_keywords=["docker"],
+            ledger=ledger,
+            original_resume="Did work.",
+        )
+
+    assert "text" in result
+    assert "input_tokens" in result
+    assert "output_tokens" in result
+    assert "cost_usd" in result
+    assert "iterations" in result
+    assert result["text"]
+    assert reviewer_call_count[0] == 2  # ran both rounds before exiting
+
+
+# ---------------------------------------------------------------------------
+# Test 2: reviewer objection triggers optimizer revision
+# ---------------------------------------------------------------------------
+
+
+async def test_reviewer_objection_triggers_revision():
+    """When reviewer objects in round 1, optimizer's inner loop runs (complete_with_tools called)."""
+    from orchestration import debate_loop
+
+    state = _make_state()
+    ledger = _make_ledger()
+
+    optimizer_call_count = [0]
+
+    async def fake_complete_with_tools(messages, model, tools):
+        optimizer_call_count[0] += 1
+        return _fake_complete_with_tools_result(_done_msg())
+
+    reviewer_call_count = [0]
+
+    async def fake_complete(prompt, model, **kwargs):
+        reviewer_call_count[0] += 1
+        if reviewer_call_count[0] == 1:
+            return {"text": "OBJECTION: ATS score too low", "input_tokens": 30, "output_tokens": 10, "cost_usd": 0.001}
+        return {"text": "No objections.", "input_tokens": 30, "output_tokens": 5, "cost_usd": 0.0005}
+
+    with patch.object(debate_loop, "complete_with_tools", side_effect=fake_complete_with_tools), \
+         patch.object(debate_loop, "complete", side_effect=fake_complete), \
+         patch.object(debate_loop, "fabrication_guard", side_effect=_clean_guard):
+        await debate_loop.run_debate(
+            state=state,
+            scores=SCORES_BELOW_TARGET,
+            jd_text="JD text",
+            jd_keywords=["docker"],
+            ledger=ledger,
+            original_resume="Did work.",
+        )
+
+    # complete_with_tools must have been called at least once (optimizer ran)
+    assert optimizer_call_count[0] >= 1, (
+        f"Expected optimizer inner loop to run (complete_with_tools >= 1), got {optimizer_call_count[0]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 3: no objection on round 1 terminates early
+# ---------------------------------------------------------------------------
+
+
+async def test_debate_loop_no_objection_terminates_early():
+    """When reviewer says 'No objections.' immediately, loop exits after 1 round."""
+    from orchestration import debate_loop
+
+    state = _make_state()
+    ledger = _make_ledger()
+
+    async def fake_complete_with_tools(messages, model, tools):
+        return _fake_complete_with_tools_result(_done_msg())
+
+    reviewer_call_count = [0]
+
+    async def fake_complete(prompt, model, **kwargs):
+        reviewer_call_count[0] += 1
+        return {"text": "No objections.", "input_tokens": 30, "output_tokens": 5, "cost_usd": 0.0005}
+
+    with patch.object(debate_loop, "complete_with_tools", side_effect=fake_complete_with_tools), \
+         patch.object(debate_loop, "complete", side_effect=fake_complete), \
+         patch.object(debate_loop, "fabrication_guard", side_effect=_clean_guard):
+        result = await debate_loop.run_debate(
+            state=state,
+            scores=SCORES_BELOW_TARGET,
+            jd_text="JD text",
+            jd_keywords=[],
+            ledger=ledger,
+            original_resume="Did work.",
+        )
+
+    assert reviewer_call_count[0] == 1, (
+        f"Expected exactly 1 reviewer call (early exit), got {reviewer_call_count[0]}"
+    )
+    assert result["text"]
+
+
+# ---------------------------------------------------------------------------
+# Test 4: call_kind is set to "pro_debate"
+# ---------------------------------------------------------------------------
+
+
+async def test_debate_loop_sets_pro_debate_call_kind():
+    """run_debate must call set_call_kind('pro_debate') at start."""
+    from orchestration import debate_loop
+
+    state = _make_state()
+    ledger = _make_ledger()
+
+    async def fake_complete_with_tools(messages, model, tools):
+        return _fake_complete_with_tools_result(_done_msg())
+
+    async def fake_complete(prompt, model, **kwargs):
+        return {"text": "No objections.", "input_tokens": 30, "output_tokens": 5, "cost_usd": 0.0005}
+
+    with patch.object(debate_loop, "complete_with_tools", side_effect=fake_complete_with_tools), \
+         patch.object(debate_loop, "complete", side_effect=fake_complete), \
+         patch.object(debate_loop, "fabrication_guard", side_effect=_clean_guard), \
+         patch.object(debate_loop, "set_call_kind") as mock_set_kind:
+        await debate_loop.run_debate(
+            state=state,
+            scores=SCORES_BELOW_TARGET,
+            jd_text="JD text",
+            jd_keywords=[],
+            ledger=ledger,
+            original_resume="Did work.",
+        )
+
+    mock_set_kind.assert_called_with("pro_debate")
+
+
+# ---------------------------------------------------------------------------
+# Test 5: fabrication_guard runs exactly once on final draft
+# ---------------------------------------------------------------------------
+
+
+async def test_debate_loop_guard_runs_on_final_draft():
+    """fabrication_guard must be called exactly once (on the final draft) when loop exits."""
+    from orchestration import debate_loop
+
+    state = _make_state()
+    ledger = _make_ledger()
+
+    async def fake_complete_with_tools(messages, model, tools):
+        return _fake_complete_with_tools_result(_done_msg())
+
+    async def fake_complete(prompt, model, **kwargs):
+        return {"text": "No objections.", "input_tokens": 30, "output_tokens": 5, "cost_usd": 0.0005}
+
+    guard_call_count = [0]
+
+    def counting_guard(generated_text, ledger_, source_text):
+        guard_call_count[0] += 1
+        return _clean_guard(generated_text, ledger_, source_text)
+
+    with patch.object(debate_loop, "complete_with_tools", side_effect=fake_complete_with_tools), \
+         patch.object(debate_loop, "complete", side_effect=fake_complete), \
+         patch.object(debate_loop, "fabrication_guard", side_effect=counting_guard):
+        await debate_loop.run_debate(
+            state=state,
+            scores=SCORES_BELOW_TARGET,
+            jd_text="JD text",
+            jd_keywords=[],
+            ledger=ledger,
+            original_resume="Did work.",
+        )
+
+    assert guard_call_count[0] == 1, (
+        f"Expected fabrication_guard to be called exactly once, got {guard_call_count[0]}"
+    )
