@@ -50,6 +50,9 @@ async def run_debate(
     agent critiques it in a single pass. Rounds continue until the Reviewer
     raises no new objections or DEBATE_MAX_ROUNDS is exhausted.
 
+    `**kwargs` accepts seniority_level and required_hard_skills for interface
+    symmetry with run_agent; they are not used by this driver.
+
     Returns:
         dict with keys:
           - text (str): final optimized resume text
@@ -122,8 +125,8 @@ async def run_debate(
                     _logger.warning("debate_loop: model called unknown tool %r", tool_name)
                 else:
                     try:
-                        kwargs = json.loads(tc.function.arguments)
-                        obs = await TOOL_MAP[tool_name](state, **kwargs)
+                        tool_args = json.loads(tc.function.arguments)
+                        obs = await TOOL_MAP[tool_name](state, **tool_args)
                     except Exception as exc:
                         obs = f"Tool error: {exc}"
                         _logger.warning("debate_loop: tool %r raised %s", tool_name, exc)
