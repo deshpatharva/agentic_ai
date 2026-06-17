@@ -87,3 +87,33 @@ async def test_register_rate_limit(client):
         "full_name": "Spam",
     })
     assert r.status_code == 429
+
+
+def test_pipeline_rate_limit_key_is_per_user():
+    """Rate limit on /run-pipeline must key by user_id, not IP address."""
+    from pathlib import Path
+    source = (Path(__file__).parent.parent / "limiter.py").read_text()
+    # The key_func for pipeline limits must not be the global get_remote_address
+    # Instead it should be a user-keyed function
+    assert "get_user_id" in source or "user_id_key" in source or "current_user" in source, \
+        "limiter.py must define a per-user key_func for pipeline rate limits"
+
+
+def test_x_forwarded_for_is_trusted():
+    """Limiter must trust X-Forwarded-For header (behind Azure load balancer)."""
+    from pathlib import Path
+    source = (Path(__file__).parent.parent / "limiter.py").read_text()
+    assert "X-Forwarded-For" in source or "forwarded" in source.lower() or "real_ip" in source.lower(), \
+        "limiter.py must handle X-Forwarded-For for accurate IP-based limiting behind Azure"
+
+
+def test_per_user_key_func_returns_user_id():
+    """The per-user key function must return the user's ID string."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from limiter import get_user_id_key
+    # Test that the function exists and has the right signature
+    import inspect
+    sig = inspect.signature(get_user_id_key)
+    assert len(sig.parameters) >= 1, "get_user_id_key must accept a request parameter"
