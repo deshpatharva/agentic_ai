@@ -160,7 +160,8 @@ TOOL_MAP: dict[str, Callable] = {
 # ── System prompt builder ─────────────────────────────────────────────────────
 
 
-def _build_system(scores: dict, jd_keywords: list, available_sections: list) -> str:
+def _build_system(scores: dict, jd_keywords: list, available_sections: list,
+                  user_instruction: Optional[str] = None) -> str:
     """Build the system prompt dynamically so each reflection sees fresh scores."""
     ats    = scores.get("ats", {})
     impact = scores.get("impact", {})
@@ -174,7 +175,16 @@ def _build_system(scores: dict, jd_keywords: list, available_sections: list) -> 
     def _flag(d: dict) -> str:
         return "NEEDS WORK" if _s(d) < _SCORE_TARGET else "ok"
 
-    return f"""You are a Resume Optimization Strategist. Your job is to raise all resume scores above {_SCORE_TARGET} using the available tools.
+    instruction_block = ""
+    if user_instruction:
+        instruction_block = (
+            "PRIORITY USER FEEDBACK: The user reviewed their resume and is not happy. "
+            f"They asked you to fix the following: {user_instruction}\n"
+            "Address ONLY what was flagged using the available tools. Do not re-run a full "
+            "optimization or change sections the user did not mention.\n\n"
+        )
+
+    return f"""{instruction_block}You are a Resume Optimization Strategist. Your job is to raise all resume scores above {_SCORE_TARGET} using the available tools.
 
 CURRENT SCORES:
   ATS Match:    {_s(ats):>3}  [{_flag(ats)}]
@@ -207,6 +217,8 @@ async def run_agent(
     original_resume: str,
     seniority_level: str = "mid",
     required_hard_skills: Optional[list] = None,
+    user_instruction: Optional[str] = None,
+    max_reflections: Optional[int] = None,
     on_event: Optional[Callable[[dict], None]] = None,
 ) -> dict:
     """
@@ -223,8 +235,11 @@ async def run_agent(
     # Tag all LlmCallLog rows from this driver as "phase2_optimizer"
     set_call_kind("phase2_optimizer")
 
+    reflections_cap = max_reflections or AGENT_MAX_REFLECTIONS
+
     messages: list[dict] = [
-        {"role": "system", "content": _build_system(scores, jd_keywords, state.available_sections())}
+        {"role": "system",
+         "content": _build_system(scores, jd_keywords, state.available_sections(), user_instruction)}
     ]
 
     current_scores = scores
@@ -233,7 +248,7 @@ async def run_agent(
     # even if the loop exits early (e.g. budget exceeded before first reflection).
     guard = type("_Guard", (), {"gaps": [], "text": state.reassemble()})()
 
-    for reflection_idx in range(AGENT_MAX_REFLECTIONS):
+    for reflection_idx in range(reflections_cap):
 
         # ── Inner tool-calling loop ───────────────────────────────────────────
         for _ in range(AGENT_MAX_ITER):
@@ -322,13 +337,13 @@ async def run_agent(
 
         _logger.info(
             "agent_loop reflection %d/%d: overall=%s all_above=%s guard_gaps=%d",
-            reflection_idx + 1, AGENT_MAX_REFLECTIONS, overall, all_above, len(guard.gaps),
+            reflection_idx + 1, reflections_cap, overall, all_above, len(guard.gaps),
         )
 
         if all_above and not guard.gaps:
             break  # target met, no fabrication flags — done
 
-        if reflection_idx < AGENT_MAX_REFLECTIONS - 1:
+        if reflection_idx < reflections_cap - 1:
             # Feed reflection back as a user message so the model can continue
             feedback_parts: list[str] = []
             if not all_above:
@@ -349,7 +364,8 @@ async def run_agent(
             # Refresh system message with updated scores
             messages[0] = {
                 "role": "system",
-                "content": _build_system(current_scores, jd_keywords, state.available_sections()),
+                "content": _build_system(current_scores, jd_keywords,
+                                         state.available_sections(), user_instruction),
             }
 
     # Prefer guard's cleaned text when fabrications were detected
@@ -361,4 +377,5 @@ async def run_agent(
         "output_tokens": state.output_tokens,
         "cost_usd":      state.cost_usd,
         "iterations":    iterations,
+        "flagged":       list(guard.gaps),
     }

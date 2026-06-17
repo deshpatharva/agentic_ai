@@ -14,6 +14,7 @@ import json
 LAUNCH_TOOL = "launch_optimizer"
 SAVE_TOOL = "save_profile"
 DOWNLOAD_TOOL = "download_profile"
+EDIT_TOOL = "edit_resume"
 
 # OpenAI-style tool schemas. LiteLLM translates these to each provider's native
 # tool format (Anthropic, Groq, Gemini) under the hood.
@@ -88,6 +89,40 @@ TOOLS = [
                     },
                 },
                 "required": ["label"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": EDIT_TOOL,
+            "description": (
+                "Apply a targeted, user-requested edit to the resume — for example removing a "
+                "bullet, shortening the summary, reordering skills, or fixing a tone issue. Call "
+                "this when the user wants the resume TEXT changed. The instruction may cover "
+                "multiple sections at once. Do NOT call it for score discussions, explanations, or "
+                "anything outside resume text changes."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "instruction": {
+                        "type": "string",
+                        "description": (
+                            "Exactly what the user asked to change, in their own words. Verbatim "
+                            "detail only — never invent experience, employers, metrics, or skills."
+                        ),
+                    },
+                    "profile_id": {
+                        "type": "string",
+                        "description": (
+                            "Optional. The exact id of the saved profile to edit, copied from the "
+                            "profile list. Only needed when no optimization has run yet in this "
+                            "session. Empty string when editing the session's optimized resume."
+                        ),
+                    },
+                },
+                "required": ["instruction"],
             },
         },
     },
