@@ -45,7 +45,7 @@ async def _llm_complete(
         return parsed2, response2.get("cost_usd", 0.0), response2.get("input_tokens", 0), response2.get("output_tokens", 0)
 
 
-# ── All 4 scores in one LLM call ─────────────────────────────────────────────
+# ── All 5 scores in one LLM call ─────────────────────────────────────────────
 
 async def score_combined(
     resume_text: str,
@@ -54,7 +54,7 @@ async def score_combined(
     seniority_level: str = "mid",
     required_hard_skills: Optional[List[str]] = None,
 ) -> dict:
-    """Return structured scoring across 4 dimensions with calibration rubric."""
+    """Return structured scoring across 5 dimensions with calibration rubric."""
     # Result cache: key over stable inputs — same resume+JD+seniority always yields the same score
     cache_key = hashlib.sha256(f"{resume_text}||{jd_text}||{seniority_level}".encode()).hexdigest()
     cached = result_cache.get("score_combined", cache_key)
