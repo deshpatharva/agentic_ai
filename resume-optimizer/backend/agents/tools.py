@@ -44,6 +44,7 @@ from config import (
     AGENT_TOKEN_BUDGET,
     MODEL_BULLET_STRENGTHEN,
     MODEL_KEYWORD_INJECT,
+    MODEL_OPTIMIZER,
     MODEL_SECTION_HUMANIZE,
     MODEL_SKILLS_REWRITE,
 )
@@ -437,3 +438,69 @@ Return ONLY the complete updated {section_name} section text."""
         state.update_section(section_name, result["text"])
         return f"'{section_name}' polished. Issues addressed: {issues_csv or 'general polish'}."
     return f"Humanization of '{section_name}' returned empty output — section unchanged."
+
+
+# ── Tool 5: Bullet reorder (fixes low JD Tailoring score) ────────────────────
+
+
+async def bullets_reorder(
+    state: ResumeState,
+    section_name: str,
+    jd_focus_csv: str,
+) -> str:
+    """
+    Reorder bullets in a section by JD relevance (most relevant first).
+
+    Args:
+        state: The ResumeState for this optimisation session.
+        section_name: Section to reorder: experience, summary, or skills.
+        jd_focus_csv: Comma-separated JD keywords to prioritize when reordering.
+
+    Returns:
+        Short status string. Resume state is updated in-place.
+    """
+    ok, msg = _budget_ok(state)
+    if not ok:
+        return msg
+
+    section_text = state.get_section(section_name)
+    if not section_text.strip():
+        available = state.available_sections()
+        return (
+            f"Section '{section_name}' not found or empty. "
+            f"Available sections: {', '.join(available)}. "
+            f"Retry with one of those names."
+        )
+
+    prompt = f"""Reorder the bullets in the {section_name} section below so that the bullets most
+relevant to the JD focus keywords appear first.
+
+JD focus keywords: {jd_focus_csv}
+
+Rules:
+- ONLY reorder existing bullets — do NOT add, remove, or modify any bullet text
+- Keep all bullet text exactly as written (no paraphrasing, no edits)
+- Move the most JD-relevant bullets to the top; least relevant to the bottom
+- If no bullets are present (e.g. a prose paragraph), return the section unchanged
+- Plain text only — no markdown, no LaTeX, no formatting changes
+
+{section_name.title()} section:
+\"\"\"
+{section_text}
+\"\"\"
+
+Return ONLY the complete {section_name} section text with bullets reordered."""
+
+    try:
+        result = await complete(prompt, MODEL_OPTIMIZER)
+    except Exception as exc:
+        return f"LLM call failed: {exc}"
+    state.add_tokens(
+        result.get("input_tokens", 0),
+        result.get("output_tokens", 0),
+        result.get("cost_usd", 0.0),
+    )
+    if result.get("text"):
+        state.update_section(section_name, result["text"])
+        return f"Reordered bullets in '{section_name}' by JD relevance."
+    return f"Bullet reorder of '{section_name}' returned empty output — section unchanged."
