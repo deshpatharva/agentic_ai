@@ -445,7 +445,7 @@ async def optimize_chat(
             "Launching the optimizer now…" if launch
             else "Generating your document…" if download
             else "Saving your profile…" if save
-            else ""
+            else "Sorry, I didn't catch that. Could you rephrase?"
         )
         yield {"event": "final", "data": json.dumps({"content": display})}
 
