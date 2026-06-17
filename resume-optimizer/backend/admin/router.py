@@ -2,11 +2,11 @@
 import asyncio
 import uuid
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone, date, time
+from datetime import datetime, timedelta, timezone, time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.dependencies import get_admin_user
@@ -84,7 +84,7 @@ async def bootstrap(
         raise HTTPException(status_code=403, detail="Invalid bootstrap secret.")
 
     admin_count = (
-        await db.execute(select(func.count(User.id)).where(User.is_admin == True))
+        await db.execute(select(func.count(User.id)).where(User.is_admin.is_(True)))
     ).scalar()
     if admin_count > 0:
         raise HTTPException(status_code=403, detail="An admin already exists.")
@@ -119,7 +119,7 @@ async def get_stats(
 
     total_users = (await db.execute(select(func.count(User.id)))).scalar() or 0
     active_users = (
-        await db.execute(select(func.count(User.id)).where(User.is_active == True))
+        await db.execute(select(func.count(User.id)).where(User.is_active.is_(True)))
     ).scalar() or 0
     total_resumes = (await db.execute(select(func.count(Resume.id)))).scalar() or 0
     pipeline_runs_today = (
@@ -693,7 +693,7 @@ async def create_provider_cost(
     # Mark existing active row as inactive
     result = await db.execute(
         select(ProviderCost).where(
-            (ProviderCost.provider == body.provider) & (ProviderCost.active == True)
+            (ProviderCost.provider == body.provider) & (ProviderCost.active.is_(True))
         )
     )
     existing = result.scalar_one_or_none()
