@@ -6,11 +6,10 @@ generated resume against the ClaimsLedger built from the original resume text.
 
 Decision per line:
   - All claims verified → keep the line unchanged
-  - Fabricated metric or company found →
-      a) substitute with the closest matching original bullet (difflib ratio > 0.35)
-      b) or drop entirely and add to `gaps` so the user can fill it honestly
+  - Fabricated metric or company found → tag the line with [VERIFY] and record
+    in `gaps` so the user can review and fill it honestly
 
-Nothing unverifiable is ever kept in the output.
+Nothing unverifiable is silently kept in the output.
 """
 
 from __future__ import annotations
@@ -80,8 +79,12 @@ class GuardResult:
     gaps:     List[str]  # bullets dropped because no original matched
 
 
-def _normalise_metric(m: str) -> float:
-    """Convert a metric string to a dimensionless float for numeric comparison."""
+def _normalise_metric(m: str) -> float | None:
+    """Convert a metric string to a dimensionless float for numeric comparison.
+
+    Returns None on parse failure so callers can distinguish unparseable input
+    from a legitimate zero value.
+    """
     s = m.strip().replace(",", "").replace("$", "").replace("%", "").replace("x", "")
     multiplier = 1.0
     if s and s[-1].lower() == "k":
@@ -93,7 +96,7 @@ def _normalise_metric(m: str) -> float:
     try:
         return float(s) * multiplier
     except ValueError:
-        return 0.0
+        return None
 
 
 def _metric_attested(generated_metric: str, source_text: str, is_percentage: bool = False) -> bool:
@@ -104,11 +107,11 @@ def _metric_attested(generated_metric: str, source_text: str, is_percentage: boo
     """
     tolerance = _PCT_TOLERANCE if is_percentage else _NUM_TOLERANCE
     gen_val = _normalise_metric(generated_metric)
-    if gen_val == 0.0:
+    if gen_val is None:
         return True  # unparseable — give benefit of the doubt
     for m in METRIC_RE.finditer(source_text):
         src_val = _normalise_metric(m.group(0))
-        if src_val > 0 and abs(gen_val - src_val) / max(abs(src_val), 1e-9) < tolerance:
+        if src_val is not None and abs(gen_val - src_val) / max(abs(src_val), 1e-9) < tolerance:
             return True
     return False
 
@@ -145,9 +148,10 @@ def _title_attested(title: str, ledger_titles: frozenset) -> bool:
 
 def _degree_attested(degree: str, ledger_degrees: frozenset) -> bool:
     """Return True if this degree substring-matches any ledger degree."""
-    dl = degree.lower().strip()[:30]
+    dl = degree.lower().strip()
     for d in ledger_degrees:
-        if dl in d.lower() or d.lower()[:30] in dl:
+        ld = d.lower().strip()
+        if dl in ld or ld in dl:
             return True
     return False
 
@@ -184,17 +188,6 @@ def _drop_persona_sentences(line: str, allowed_terms: frozenset[str]) -> str:
         kept.append(sent)
 
     return " ".join(kept).strip()
-
-
-def _closest_original(line: str, raw_bullets: tuple) -> str:
-    """Return the most similar original bullet if ratio > 0.35, else empty string."""
-    if not raw_bullets:
-        return ""
-    best_ratio, best = max(
-        (difflib.SequenceMatcher(None, line.lower(), b.lower()).ratio(), b)
-        for b in raw_bullets
-    )
-    return best if best_ratio > 0.35 else ""
 
 
 def fabrication_guard(
