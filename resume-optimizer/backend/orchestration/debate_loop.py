@@ -62,6 +62,7 @@ async def run_debate(
 
     current_scores = scores
     iterations = 0
+    last_objection: str | None = None
     # Guard result initialised so we always have something to reference
     # even if the loop exits early (e.g. budget exceeded before first round).
     guard = type("_Guard", (), {"gaps": [], "text": state.reassemble()})()
@@ -78,14 +79,10 @@ async def run_debate(
         ]
 
         # Feed reviewer objection from previous round as user context (round > 0)
-        # This variable is set at end of each round below.
-        if round_idx > 0 and "last_objection" in dir():
+        if round_idx > 0 and last_objection:
             messages.append({
                 "role": "user",
-                "content": (
-                    f"The reviewer raised this objection: {last_objection}\n"  # noqa: F821
-                    "Please address it."
-                ),
+                "content": f"The reviewer raised this objection: {last_objection}\nPlease address it.",
             })
 
         for _ in range(AGENT_MAX_ITER):
@@ -159,7 +156,12 @@ async def run_debate(
             "Otherwise respond EXACTLY: OBJECTION: <one specific issue, 20 words or less>"
         )
 
-        reviewer_result = await complete(reviewer_prompt, MODEL_OPTIMIZER)
+        try:
+            reviewer_result = await complete(reviewer_prompt, MODEL_OPTIMIZER)
+        except Exception as exc:
+            _logger.warning("debate_loop: reviewer LLM call failed (%s) — treating as no objection", exc)
+            break
+
         state.add_tokens(
             reviewer_result.get("input_tokens", 0),
             reviewer_result.get("output_tokens", 0),
@@ -186,7 +188,7 @@ async def run_debate(
             break
 
         # Store objection to feed back next round
-        last_objection = reviewer_text  # noqa: F841
+        last_objection = reviewer_text
 
         # If this is the last round, don't iterate further
         if round_idx >= DEBATE_MAX_ROUNDS - 1:
