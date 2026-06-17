@@ -28,6 +28,7 @@ from agents.scorer import score_combined
 from agents.tools import (
     ResumeState,
     bullet_strengthen,
+    bullets_reorder,
     keyword_inject,
     section_humanize,
     skills_rewrite,
@@ -122,6 +123,27 @@ TOOL_DEFS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "bullets_reorder",
+            "description": "Reorder bullets in an experience section so the most JD-relevant bullets appear first. Call when JD Tailoring score is below target due to bullet ordering.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "section_name": {
+                        "type": "string",
+                        "description": "Section to reorder: experience, summary, or skills",
+                    },
+                    "jd_focus_csv": {
+                        "type": "string",
+                        "description": "Comma-separated JD keywords to prioritize when reordering",
+                    },
+                },
+                "required": ["section_name", "jd_focus_csv"],
+            },
+        },
+    },
 ]
 
 # ── Tool dispatch table ───────────────────────────────────────────────────────
@@ -131,6 +153,7 @@ TOOL_MAP: dict[str, Callable] = {
     "bullet_strengthen": bullet_strengthen,
     "skills_rewrite":    skills_rewrite,
     "section_humanize":  section_humanize,
+    "bullets_reorder":   bullets_reorder,
 }
 
 
