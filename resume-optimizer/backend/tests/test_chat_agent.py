@@ -195,6 +195,17 @@ class TestBuildWindow:
         assert window[1]["content"] == "hi"
         assert window[2]["content"] == "there"
 
+    def test_empty_content_orm_object(self):
+        """ORM object with content='' must not raise TypeError (regression: falsy-or bug)."""
+        class FakeMsg:
+            def __init__(self, role, content):
+                self.role = role
+                self.content = content
+
+        history = [FakeMsg("user", "hi"), FakeMsg("assistant", "")]
+        window = build_window("s", history)
+        assert window[2]["content"] == ""
+
     def test_empty_history(self):
         window = build_window("only system", [])
         assert len(window) == 1

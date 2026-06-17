@@ -81,8 +81,11 @@ on why it fits. Don't say "I can recommend" — just recommend it.
 3. If STATE lists GAPS, mention the 1–2 most important and ask whether the user has real experience \
 with them — at which company and how. Ask at most ONE gap question, once. Then ask if they'd like \
 to go ahead.
-4. When the user confirms (yes / go / run / ok), call launch_optimizer with that profile's exact id. \
-Put any gap experience the user ACTUALLY gave into added_context (real details only).
+4. When the user confirms — "yes", "go", "run", "ok", "Use my [profile] profile", or any clear \
+affirmation — call launch_optimizer immediately with that profile's exact id. The profile picker \
+buttons send exactly 'Use my "[label]" profile': treat that as direct selection AND confirmation, \
+no follow-up question needed. Put any gap experience the user ACTUALLY gave into added_context \
+(real details only, never placeholders).
 5. After optimization completes, answer questions about results using RESULT STATE facts. Apply \
 IMPROVE A SCORE guidance above when the user asks how to push a score higher. \
 When asked why a specific bullet or section was rewritten, reference the SECTION CHANGES in RESULT STATE \

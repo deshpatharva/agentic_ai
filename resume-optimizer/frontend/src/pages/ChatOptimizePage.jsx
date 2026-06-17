@@ -317,6 +317,11 @@ export default function ChatOptimizePage() {
             const id = addMsg('assistant', `Here's your ${label} resume as a Word document:`);
             updateMsg(id, { download: { href: buildDownloadUrl(data.download_url), label: `Download ${label}.docx` } });
 
+          } else if (event === 'resume_edited') {
+            // Resume was edited in-session; the AI's text message already summarises the change.
+            // Re-fetch sessions so the rail title stays fresh.
+            fetchSessions();
+
           } else if (event === 'error') {
             updateMsg(assistantId, { content: `❌ ${data.message || 'Something went wrong.'}`, isError: true });
           }
