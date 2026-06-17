@@ -61,7 +61,7 @@ async def _provider_rates() -> dict[str, tuple[float, float]]:
         from sqlalchemy import select
         async with AsyncSessionLocal() as db:
             rows = (await db.execute(
-                select(ProviderCost).where(ProviderCost.active == True)
+                select(ProviderCost).where(ProviderCost.active.is_(True))
             )).scalars().all()
         data = {r.provider: (r.input_cost_per_1m_tokens, r.output_cost_per_1m_tokens)
                 for r in rows}

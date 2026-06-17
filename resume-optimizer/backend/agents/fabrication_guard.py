@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import difflib
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List
 
 from agents.fact_extractor import (
@@ -51,11 +51,14 @@ def _normalise_metric(m: str) -> float:
     s = m.strip().replace(",", "").replace("$", "").replace("%", "").replace("x", "")
     multiplier = 1.0
     if s and s[-1].lower() == "k":
-        multiplier = 1_000; s = s[:-1]
+        multiplier = 1_000
+        s = s[:-1]
     elif s and s[-1].lower() == "m":
-        multiplier = 1_000_000; s = s[:-1]
+        multiplier = 1_000_000
+        s = s[:-1]
     elif s and s[-1].lower() == "b":
-        multiplier = 1_000_000_000; s = s[:-1]
+        multiplier = 1_000_000_000
+        s = s[:-1]
     try:
         return float(s) * multiplier
     except ValueError:

@@ -51,7 +51,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── Agent & utility imports ──────────────────────────────────────────────────
 from agents.jd_analyzer import analyze_jd
-from config import SCORE_TARGET, BACKEND_URL, FRONTEND_URL, MODEL_SCORER, MAX_RESUME_CHARS, MAX_JD_CHARS, STUCK_JOB_TIMEOUT_MINUTES, DATABASE_URL
+from config import SCORE_TARGET, FRONTEND_URL, MAX_RESUME_CHARS, MAX_JD_CHARS, STUCK_JOB_TIMEOUT_MINUTES, DATABASE_URL
 from agents.scorer import score_combined
 from agents.fact_extractor import extract_claims
 from agents.fabrication_guard import fabrication_guard
@@ -461,7 +461,7 @@ async def download_resume(
 
     async with AsyncSessionLocal() as db:
         user_result = await db.execute(
-            select(User).where(User.id == uuid.UUID(user_id), User.is_active == True)
+            select(User).where(User.id == uuid.UUID(user_id), User.is_active.is_(True))
         )
         current_user = user_result.scalar_one_or_none()
         if not current_user:

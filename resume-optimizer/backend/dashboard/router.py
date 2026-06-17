@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.dependencies import get_current_user
-from db.models import DailyUsageCounter, PlanLimit, Resume, User, ProviderCost
+from db.models import DailyUsageCounter, PlanLimit, Resume, User
 from db.session import get_db
 from delta.writer import count_unread_matches, read_job_matches
 

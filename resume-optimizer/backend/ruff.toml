@@ -1,0 +1,17 @@
+[lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]
+
+exclude = [
+    "_archive",
+]
+
+[lint.per-file-ignores]
+# Deferred imports are intentional — startup crash-log reader runs before imports
+"main.py" = ["E402"]
+# Re-export modules — unused-import warnings are false positives
+"agents/__init__.py" = ["F401"]
+"generators/__init__.py" = ["F401"]
+"parsers/__init__.py" = ["F401"]
+# Test files: relaxed style rules
+"tests/*.py" = ["F401", "E401", "E402", "E702", "F841"]

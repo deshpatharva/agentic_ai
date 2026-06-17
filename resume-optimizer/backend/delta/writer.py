@@ -10,7 +10,6 @@ Storage path: DELTA_STORAGE_PATH env var (default: ./delta_store)
 Prod: set DELTA_STORAGE_PATH=s3://your-bucket/delta/
 """
 
-import os
 import threading
 import time as _time
 from typing import Optional
