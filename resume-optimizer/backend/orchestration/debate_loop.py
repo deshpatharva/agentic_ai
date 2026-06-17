@@ -1,0 +1,211 @@
+"""
+Two-agent debate driver for the Pro tier.
+
+Architecture:
+  DEBATE LOOP (max DEBATE_MAX_ROUNDS):
+    OPTIMIZER: inner tool-calling loop (same TOOL_DEFS/TOOL_MAP as agent_loop)
+    REVIEWER:  single complete() call — returns "No objections." or "OBJECTION: <issue>"
+    exit when no objections OR rounds exhausted OR budget hit
+  GUARD: fabrication_guard on final draft
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from typing import Callable, Optional
+
+from agents.fabrication_guard import fabrication_guard
+from agents.fact_extractor import ClaimsLedger
+from agents.tools import ResumeState
+from config import AGENT_MAX_ITER, AGENT_TOKEN_BUDGET, MODEL_OPTIMIZER
+from llm import complete, complete_with_tools
+from observability.trace import set_call_kind
+from orchestration.agent_loop import TOOL_DEFS, TOOL_MAP, _build_system
+
+_logger = logging.getLogger(__name__)
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+
+DEBATE_MAX_ROUNDS = 2  # max debate rounds — always bounded
+
+
+# ── Main entry point ──────────────────────────────────────────────────────────
+
+
+async def run_debate(
+    state: ResumeState,
+    scores: dict,
+    jd_text: str,
+    jd_keywords: list,
+    ledger: ClaimsLedger,
+    original_resume: str,
+    on_event: Optional[Callable[[dict], None]] = None,
+) -> dict:
+    """
+    Run the two-agent debate loop (Pro tier).
+
+    The Optimizer agent revises the resume using tool calls; the Reviewer
+    agent critiques it in a single pass. Rounds continue until the Reviewer
+    raises no new objections or DEBATE_MAX_ROUNDS is exhausted.
+
+    Returns:
+        dict with keys:
+          - text (str): final optimized resume text
+          - input_tokens (int): cumulative input tokens across all calls
+          - output_tokens (int): cumulative output tokens across all calls
+          - cost_usd (float): cumulative cost
+          - iterations (int): number of complete_with_tools calls made
+    """
+    # Tag all LlmCallLog rows from this driver as "pro_debate"
+    set_call_kind("pro_debate")
+
+    current_scores = scores
+    iterations = 0
+    # Guard result initialised so we always have something to reference
+    # even if the loop exits early (e.g. budget exceeded before first round).
+    guard = type("_Guard", (), {"gaps": [], "text": state.reassemble()})()
+
+    for round_idx in range(DEBATE_MAX_ROUNDS):
+        _logger.info("debate_loop: starting round %d/%d", round_idx + 1, DEBATE_MAX_ROUNDS)
+
+        # ── Optimizer inner tool-calling loop ──────────────────────────────
+        messages: list[dict] = [
+            {
+                "role": "system",
+                "content": _build_system(current_scores, jd_keywords, state.available_sections()),
+            }
+        ]
+
+        # Feed reviewer objection from previous round as user context (round > 0)
+        # This variable is set at end of each round below.
+        if round_idx > 0 and "last_objection" in dir():
+            messages.append({
+                "role": "user",
+                "content": (
+                    f"The reviewer raised this objection: {last_objection}\n"  # noqa: F821
+                    "Please address it."
+                ),
+            })
+
+        for _ in range(AGENT_MAX_ITER):
+            if state.total_tokens() >= AGENT_TOKEN_BUDGET:
+                _logger.info(
+                    "debate_loop: token budget reached (%d/%d), stopping optimizer",
+                    state.total_tokens(), AGENT_TOKEN_BUDGET,
+                )
+                break
+
+            result = await complete_with_tools(messages, MODEL_OPTIMIZER, TOOL_DEFS)
+            state.add_tokens(
+                result["input_tokens"],
+                result["output_tokens"],
+                result.get("cost_usd", 0.0),
+            )
+            iterations += 1
+
+            msg = result["message"]
+
+            messages.append({
+                "role": "assistant",
+                "content": msg.content or "",
+                "tool_calls": msg.tool_calls or None,
+            })
+
+            if not msg.tool_calls:
+                _logger.debug("debate_loop: optimizer returned no tool_calls — inner loop done")
+                break
+
+            # Dispatch each tool call and collect observations
+            for tc in msg.tool_calls:
+                tool_name = tc.function.name
+                if tool_name not in TOOL_MAP:
+                    obs = f"Unknown tool: {tool_name}"
+                    _logger.warning("debate_loop: model called unknown tool %r", tool_name)
+                else:
+                    try:
+                        kwargs = json.loads(tc.function.arguments)
+                        obs = await TOOL_MAP[tool_name](state, **kwargs)
+                    except Exception as exc:
+                        obs = f"Tool error: {exc}"
+                        _logger.warning("debate_loop: tool %r raised %s", tool_name, exc)
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": obs,
+                })
+
+                if on_event:
+                    on_event({
+                        "type": "agent_step",
+                        "message": f"[Debate round {round_idx + 1}] Tool {tool_name}: {obs[:100]}",
+                        "stage": "debate",
+                        "tokens_used": state.total_tokens(),
+                        "budget": AGENT_TOKEN_BUDGET,
+                        "round": round_idx + 1,
+                    })
+
+        # ── Reviewer single-pass critique ──────────────────────────────────
+        draft = state.reassemble()
+        overall = current_scores.get("overall", 0)
+
+        reviewer_prompt = (
+            "You are a skeptical resume reviewer. The optimizer just revised this resume.\n\n"
+            f"CURRENT RESUME DRAFT:\n{draft[:2000]}\n\n"
+            f"SCORES: overall={overall}\n\n"
+            "Your task: identify ONE specific remaining problem.\n"
+            "If you have no more objections, respond EXACTLY: No objections.\n"
+            "Otherwise respond EXACTLY: OBJECTION: <one specific issue, 20 words or less>"
+        )
+
+        reviewer_result = await complete(reviewer_prompt, MODEL_OPTIMIZER)
+        state.add_tokens(
+            reviewer_result.get("input_tokens", 0),
+            reviewer_result.get("output_tokens", 0),
+            reviewer_result.get("cost_usd", 0.0),
+        )
+
+        reviewer_text = reviewer_result.get("text", "").strip()
+        _logger.info(
+            "debate_loop round %d/%d reviewer said: %r",
+            round_idx + 1, DEBATE_MAX_ROUNDS, reviewer_text[:80],
+        )
+
+        if on_event:
+            on_event({
+                "type": "debate_review",
+                "message": f"[Reviewer round {round_idx + 1}]: {reviewer_text[:120]}",
+                "stage": "debate",
+                "round": round_idx + 1,
+            })
+
+        # Termination check: reviewer satisfied?
+        if reviewer_text.lower().startswith("no objections"):
+            _logger.info("debate_loop: reviewer satisfied after round %d — exiting", round_idx + 1)
+            break
+
+        # Store objection to feed back next round
+        last_objection = reviewer_text  # noqa: F841
+
+        # If this is the last round, don't iterate further
+        if round_idx >= DEBATE_MAX_ROUNDS - 1:
+            _logger.info(
+                "debate_loop: max rounds (%d) exhausted — exiting with last draft",
+                DEBATE_MAX_ROUNDS,
+            )
+
+    # ── Fabrication guard on final draft ──────────────────────────────────────
+    final_draft = state.reassemble()
+    guard = fabrication_guard(final_draft, ledger, original_resume)
+
+    # Prefer guard's cleaned text when fabrications were detected
+    final_text = guard.text if guard.gaps else final_draft
+
+    return {
+        "text":          final_text,
+        "input_tokens":  state.input_tokens,
+        "output_tokens": state.output_tokens,
+        "cost_usd":      state.cost_usd,
+        "iterations":    iterations,
+    }
