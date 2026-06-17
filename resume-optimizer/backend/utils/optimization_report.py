@@ -61,7 +61,7 @@ def build_report(
         "scores": {
             k: (final_scores[k]["score"] if isinstance(final_scores.get(k), dict)
                 else final_scores.get(k, 0))
-            for k in ("ats", "impact", "skills_gap", "readability")
+            for k in ("ats", "impact", "skills_gap", "readability", "jd_tailoring")
         },
         "gaps_identified": identified,
         "gaps_addressed": addressed,
@@ -76,6 +76,7 @@ def build_report(
                             "critical_missing": _pick("skills_gap",  "critical_missing")},
             "readability": {"issues":           _pick("readability", "issues"),
                             "worst_section":    _pick_str("readability", "worst_section")},
+            "jd_tailoring": {"issues": _pick("jd_tailoring", "issues")},
         },
         "section_diff": section_diff,
     }

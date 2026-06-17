@@ -143,6 +143,7 @@ def _build_system(scores: dict, jd_keywords: list, available_sections: list) -> 
     impact = scores.get("impact", {})
     skills = scores.get("skills_gap", {})
     read   = scores.get("readability", {})
+    tailor = scores.get("jd_tailoring", {})
 
     def _s(d: dict) -> int:
         return d.get("score", 0)
@@ -153,15 +154,17 @@ def _build_system(scores: dict, jd_keywords: list, available_sections: list) -> 
     return f"""You are a Resume Optimization Strategist. Your job is to raise all resume scores above {_SCORE_TARGET} using the available tools.
 
 CURRENT SCORES:
-  ATS Match:   {_s(ats):>3}  [{_flag(ats)}]
+  ATS Match:    {_s(ats):>3}  [{_flag(ats)}]
     missing_keywords: {', '.join(ats.get('missing_keywords', [])[:15])}
-  Impact:      {_s(impact):>3}  [{_flag(impact)}]
+  Impact:       {_s(impact):>3}  [{_flag(impact)}]
     weak_bullets: {', '.join(impact.get('weak_bullets', [])[:8])}
-  Skills Gap:  {_s(skills):>3}  [{_flag(skills)}]
+  Skills Gap:   {_s(skills):>3}  [{_flag(skills)}]
     missing_skills: {', '.join(skills.get('missing_skills', [])[:15])}
-  Readability: {_s(read):>3}  [{_flag(read)}]
+  Readability:  {_s(read):>3}  [{_flag(read)}]
     worst_section: {read.get('worst_section', 'experience')}
     issues: {', '.join(read.get('issues', [])[:4])}
+  JD Tailoring: {_s(tailor):>3}  [{_flag(tailor)}]
+    issues: {', '.join(tailor.get('issues', [])[:3])}
 
 AVAILABLE RESUME SECTIONS: {', '.join(available_sections)}
 JD KEYWORDS (context only): {', '.join(jd_keywords[:20])}
@@ -291,7 +294,7 @@ async def run_agent(
         overall = current_scores.get("overall", 0)
         all_above = all(
             current_scores.get(d, {}).get("score", 0) >= _SCORE_TARGET
-            for d in ("ats", "impact", "skills_gap", "readability")
+            for d in ("ats", "impact", "skills_gap", "readability", "jd_tailoring")
         )
 
         _logger.info(

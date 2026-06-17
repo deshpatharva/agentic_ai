@@ -1,10 +1,11 @@
 """
 Resume Scorers
-All 4 scores returned from a single LLM call via MODEL_SCORER.
+All 5 scores returned from a single LLM call via MODEL_SCORER.
   1. ATS Match     — keyword coverage (moved from local to LLM prompt)
   2. Impact Score  — quantified achievements, action verbs
   3. Skills Gap    — JD skills vs resume skills
   4. Readability   — structure, tone, formatting
+  5. JD Tailoring  — summary specificity + bullet ordering for this role
 """
 
 import hashlib
@@ -101,11 +102,17 @@ Readability (0-100):
   50-69  = Tense mixing, dense paragraphs, weak/missing summary
   <50    = Major formatting issues; no clear summary
 
+JD Tailoring (0-100):
+  90-100 = Summary explicitly mentions the domain, target role, and key focus from the JD; most JD-relevant bullets are at the TOP of each experience section (highest keyword density first)
+  70-89  = Summary references the role/domain but is somewhat generic; bullet ordering is mostly relevant-first
+  40-60  = Summary is generic/boilerplate not written for THIS specific role; bullet ordering is random
+  <40    = Summary is completely generic; bullets are in reverse-chronological or random order with no JD alignment
+
 Seniority context: {seniority_note}
 {required_block}
 
 Return ONLY a raw JSON object — no markdown, no code fences, no prose before or after.
-Use EXACTLY these top-level keys: "ats", "impact", "skills_gap", "readability", "overall".
+Use EXACTLY these top-level keys: "ats", "impact", "skills_gap", "readability", "jd_tailoring", "overall".
 
 Required JSON shape:
 {{
@@ -113,6 +120,7 @@ Required JSON shape:
   "impact": {{"score": <int 0-100>, "weak_bullets": [...], "strong_bullets": [...], "has_quantified_achievements": <bool>}},
   "skills_gap": {{"score": <int 0-100>, "missing_skills": [...], "matched_skills": [...], "critical_missing": [...]}},
   "readability": {{"score": <int 0-100>, "issues": [...], "worst_section": "<string>", "has_summary": <bool>, "tense_consistent": <bool>}},
+  "jd_tailoring": {{"score": <int 0-100>, "issues": [...], "summary_generic": <bool>}},
   "overall": <int 0-100>
 }}"""
 
@@ -172,9 +180,18 @@ Return the JSON object with ALL fields populated using the exact keys specified.
                 },
                 "required": ["score", "issues", "worst_section", "has_summary", "tense_consistent"],
             },
+            "jd_tailoring": {
+                "type": "object",
+                "properties": {
+                    "score": {"type": "integer"},
+                    "issues": {"type": "array", "items": {"type": "string"}},
+                    "summary_generic": {"type": "boolean"},
+                },
+                "required": ["score", "issues", "summary_generic"],
+            },
             "overall": {"type": "integer"},
         },
-        "required": ["ats", "impact", "skills_gap", "readability", "overall"],
+        "required": ["ats", "impact", "skills_gap", "readability", "jd_tailoring", "overall"],
     }
 
     response_format = {
@@ -187,20 +204,20 @@ Return the JSON object with ALL fields populated using the exact keys specified.
     )
 
     # Clamp scores to [0, 100]
-    for section in ("ats", "impact", "skills_gap", "readability"):
+    for section in ("ats", "impact", "skills_gap", "readability", "jd_tailoring"):
         if isinstance(result.get(section), dict) and "score" in result[section]:
             result[section]["score"] = max(0, min(100, result[section]["score"]))
     if "overall" in result:
         result["overall"] = max(0, min(100, result["overall"]))
 
-    # If schema-valid but all four sub-scores are 0 — retry once, then accept
+    # If schema-valid but all five sub-scores are 0 — retry once, then accept
     if all(result.get(s, {}).get("score", 0) == 0
-           for s in ("ats", "impact", "skills_gap", "readability")):
+           for s in ("ats", "impact", "skills_gap", "readability", "jd_tailoring")):
         _logger.warning("scorer returned all-zero scores — retrying once")
         result, cost_usd, input_tokens, output_tokens = await _llm_complete(
             prompt, system=None, response_format=response_format, cached_prefix=system
         )
-        for section in ("ats", "impact", "skills_gap", "readability"):
+        for section in ("ats", "impact", "skills_gap", "readability", "jd_tailoring"):
             if isinstance(result.get(section), dict) and "score" in result[section]:
                 result[section]["score"] = max(0, min(100, result[section]["score"]))
         if "overall" in result:
