@@ -314,3 +314,64 @@ async def test_apply_edit_fabrication_flagged_still_writes_back(db_tables):
     async with AsyncSessionLocal() as db:
         row = await db.get(ChatSession, sess.id)
         assert row.context["last_result"]["verifier_flagged"] == ["Managed a team of 20"]
+
+
+# ── Group 7: router quota helpers ────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_check_edit_quota_blocks_when_over(db_tables):
+    from chat import router
+    from db.models import User, PlanType, PlanLimit, DailyUsageCounter
+    from db.session import AsyncSessionLocal
+    from fastapi import HTTPException
+    from datetime import date
+
+    async with AsyncSessionLocal() as db:
+        db.add(PlanLimit(plan="free", daily_uploads=2, daily_edits=3,
+                         max_stored_resumes=1, job_scraping_enabled=False, price_cents=0))
+        user = User(id=uuid.uuid4(), email=f"q-{uuid.uuid4().hex[:8]}@t.com",
+                    password_hash="x", plan=PlanType.free)
+        db.add(user)
+        db.add(DailyUsageCounter(user_id=user.id, date=date.today().isoformat(), runs=0, edits=3))
+        await db.commit()
+        await db.refresh(user)
+
+    async with AsyncSessionLocal() as db:
+        with pytest.raises(HTTPException) as exc:
+            await router._check_edit_quota(user, db)
+        assert exc.value.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_increment_edit_counter(db_tables):
+    from chat import router
+    from db.models import User, PlanType, DailyUsageCounter
+    from db.session import AsyncSessionLocal
+    from sqlalchemy import select
+    from datetime import date
+
+    async with AsyncSessionLocal() as db:
+        user = User(id=uuid.uuid4(), email=f"i-{uuid.uuid4().hex[:8]}@t.com",
+                    password_hash="x", plan=PlanType.free)
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+
+    async with AsyncSessionLocal() as db:
+        await router._increment_edit_counter(str(user.id), db)
+        await router._increment_edit_counter(str(user.id), db)
+
+    async with AsyncSessionLocal() as db:
+        n = await db.scalar(select(DailyUsageCounter.edits).where(
+            DailyUsageCounter.user_id == user.id,
+            DailyUsageCounter.date == date.today().isoformat()))
+        assert n == 2
+
+
+def test_router_imports_edit_tool_and_apply_edit():
+    import inspect
+    from chat import router
+    src = inspect.getsource(router)
+    assert "EDIT_TOOL" in src
+    assert "apply_edit" in src
+    assert "resume_edited" in src
