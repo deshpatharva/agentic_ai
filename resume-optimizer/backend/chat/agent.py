@@ -56,7 +56,10 @@ to go ahead.
 4. When the user confirms (yes / go / run / ok), call launch_optimizer with that profile's exact id. \
 Put any gap experience the user ACTUALLY gave into added_context (real details only).
 5. After optimization completes, answer questions about results using RESULT STATE facts. Apply \
-IMPROVE A SCORE guidance above when the user asks how to push a score higher.
+IMPROVE A SCORE guidance above when the user asks how to push a score higher. \
+When asked why a specific bullet or section was rewritten, reference the SECTION CHANGES in RESULT STATE \
+— explain which score dimension drove the change (e.g., 'this bullet was in the Impact weak list, so it \
+was strengthened with a quantified outcome').
 
 STYLE: concise, warm, expert. 1–3 sentences per reply. Chat normally when no action is needed.
 
@@ -167,6 +170,14 @@ def render_system_prompt(context: dict) -> str:
                 if read_issues:
                     parts.append(f"issues: {', '.join(read_issues[:3])}")
                 result_lines.append(f"- Readability — {'; '.join(parts)}.")
+
+            section_diff = report.get("section_diff") or {}
+            if section_diff:
+                result_lines.append("SECTION CHANGES (use to answer 'what changed' / 'why was this written' questions):")
+                for sec, diff in list(section_diff.items())[:4]:  # cap at 4 sections
+                    if diff.get("before"):
+                        result_lines.append(f"  [{sec}] before: {diff['before'][:200]}")
+                    result_lines.append(f"  [{sec}] after:  {diff['after'][:200]}")
 
         result_state = "\n".join(result_lines)
     else:

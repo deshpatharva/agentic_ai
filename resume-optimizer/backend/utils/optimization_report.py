@@ -9,6 +9,7 @@ existing gap computation), no LLM calls.
 from __future__ import annotations
 
 from chat.gaps import compute_gaps
+from utils.section_parser import detect_sections
 
 
 def build_report(
@@ -38,6 +39,22 @@ def build_report(
         d = final_scores.get(dim) or {}
         return str(d.get(key) or "") if isinstance(d, dict) else ""
 
+    # Build per-section before/after diff (capped at 800 chars each)
+    _CAP = 800
+    orig_sections = detect_sections(original_text or "")
+    opt_sections = detect_sections(optimized_text or "")
+    all_section_names = set(orig_sections) | set(opt_sections)
+    section_diff: dict = {}
+    for sec in all_section_names:
+        before = orig_sections.get(sec, "")
+        after = opt_sections.get(sec, "")
+        if before.strip() == after.strip():
+            continue  # skip identical sections
+        section_diff[sec] = {
+            "before": before[:_CAP],
+            "after": after[:_CAP],
+        }
+
     return {
         "baseline_score": round(float(baseline_score)),
         "final_score": round(float(final_scores.get("average", baseline_score))),
@@ -60,4 +77,5 @@ def build_report(
             "readability": {"issues":           _pick("readability", "issues"),
                             "worst_section":    _pick_str("readability", "worst_section")},
         },
+        "section_diff": section_diff,
     }
