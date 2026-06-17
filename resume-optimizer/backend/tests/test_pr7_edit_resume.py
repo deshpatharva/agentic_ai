@@ -119,3 +119,103 @@ def test_system_prompt_has_edit_guidance():
     src = inspect.getsource(agent)
     assert "edit_resume" in src
     assert "RESUME EDITS" in src
+
+
+# ── Group 4: apply_edit handler ──────────────────────────────────────────────
+
+import uuid
+import pytest_asyncio
+from datetime import datetime, timezone
+
+
+@pytest_asyncio.fixture
+async def db_tables():
+    from db.models import Base
+    from db.session import engine
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+
+
+async def _make_user_and_session(context: dict):
+    """Insert a User + ChatSession with the given context; return (user, session)."""
+    from db.models import User, ChatSession, PlanType
+    from db.session import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        user = User(
+            id=uuid.uuid4(),
+            email=f"edit-{uuid.uuid4().hex[:8]}@test.com",
+            password_hash="x",
+            plan=PlanType.free,
+        )
+        db.add(user)
+        sess = ChatSession(
+            id=uuid.uuid4(),
+            user_id=user.id,
+            title="t",
+            context=context,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        db.add(sess)
+        await db.commit()
+        await db.refresh(user)
+        await db.refresh(sess)
+        return user, sess
+
+
+def _fake_scores(values: dict):
+    """values: {dim: int} -> full score_combined-style dict."""
+    out = {d: {"score": values.get(d, 80)} for d in
+           ("ats", "impact", "skills_gap", "readability", "jd_tailoring")}
+    out["overall"] = round(sum(values.values()) / len(values)) if values else 80
+    return {"text": out, "tokens": {"input_tokens": 0, "output_tokens": 0}, "cost_usd": 0.0}
+
+
+@pytest.mark.asyncio
+async def test_apply_edit_last_result_source_writes_back(db_tables):
+    from chat import handoff
+    from db.models import ChatSession
+    from db.session import AsyncSessionLocal
+
+    ctx = {
+        "jd_text": "Python data engineer with Spark.",
+        "_optimizer_launched": True,
+        "last_result": {
+            "sections": {"summary": "Old summary"},
+            "optimized_text": "SUMMARY\nOld summary.\n\nEXPERIENCE\n- Built Kafka pipelines.",
+            "scores": {"ats": 70, "impact": 65, "skills_gap": 72, "readability": 80},
+            "report": {"scores": {"ats": 70, "impact": 65, "skills_gap": 72, "readability": 80}},
+        },
+    }
+    user, sess = await _make_user_and_session(ctx)
+
+    agent_ret = {"text": "SUMMARY\nNew summary.\n\nEXPERIENCE\n- Built Spark pipelines.",
+                 "input_tokens": 5, "output_tokens": 5, "cost_usd": 0.0,
+                 "iterations": 1, "flagged": []}
+
+    with patch.object(handoff, "run_agent", AsyncMock(return_value=agent_ret)), \
+         patch.object(handoff, "score_combined", AsyncMock(return_value=_fake_scores(
+             {"ats": 82, "impact": 75, "skills_gap": 80, "readability": 88, "jd_tailoring": 71}))), \
+         patch.object(handoff, "analyze_jd", AsyncMock(return_value={"text": {"keywords": ["spark"],
+             "seniority_level": "mid", "required_hard_skills": []}, "tokens": {}, "cost_usd": 0.0})), \
+         patch.object(handoff, "extract_claims", return_value=None), \
+         patch.object(handoff, "_parse_sections", AsyncMock(return_value={"summary": "New summary."})):
+        result = await handoff.apply_edit(user, sess, {"instruction": "Replace Kafka with Spark."})
+
+    # returned event payload
+    assert result["scores"]["ats"] == 82
+    assert result["scores_before"]["ats"] == 70
+    assert result["verifier_flagged"] == []
+    assert isinstance(result["sections_changed"], list)
+
+    # written back to session context
+    async with AsyncSessionLocal() as db:
+        row = await db.get(ChatSession, sess.id)
+        lr = row.context["last_result"]
+        assert lr["optimized_text"] == agent_ret["text"]
+        assert lr["sections"] == {"summary": "New summary."}
+        assert lr["scores"]["jd_tailoring"] == 71
+        assert lr["verifier_flagged"] == []
