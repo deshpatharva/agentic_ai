@@ -126,9 +126,11 @@ def render_system_prompt(context: dict) -> str:
             rest_labels = [m["label"] for m in matched[1:] if m.get("label")]
             alt_str = f" (other options: {', '.join(rest_labels)})" if rest_labels else ""
             jd_action = (
-                f"\n\nDO THIS NOW: recommend the **{top}** profile{alt_str} with one sentence on why "
-                f"it fits, then ask if they'd like to go ahead. Do NOT call launch_optimizer in this "
-                f"reply — wait for the user to confirm in their next message."
+                f"\n\nJD captured. Recommended profile: **{top}**{alt_str}. "
+                f"If you have not yet recommended it, do so now with one sentence on why it fits "
+                f"and ask if they'd like to proceed. "
+                f"When the user confirms — any 'yes', 'go', 'run', or profile picker button "
+                f"sending 'Use my \"{top}\" profile' — call launch_optimizer immediately."
             )
             if gaps:
                 jd_action += (
