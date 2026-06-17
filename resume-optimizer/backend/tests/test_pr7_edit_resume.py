@@ -219,3 +219,98 @@ async def test_apply_edit_last_result_source_writes_back(db_tables):
         assert lr["sections"] == {"summary": "New summary."}
         assert lr["scores"]["jd_tailoring"] == 71
         assert lr["verifier_flagged"] == []
+
+
+# ── Group 5: apply_edit — profile source + error paths ───────────────────────
+
+@pytest.mark.asyncio
+async def test_apply_edit_profile_source(db_tables):
+    """No last_result → edit the saved profile named by profile_id."""
+    from chat import handoff
+    from db.models import Profile
+    from db.session import AsyncSessionLocal
+
+    user, sess = await _make_user_and_session({})  # no jd, no last_result
+    async with AsyncSessionLocal() as db:
+        prof = Profile(
+            id=uuid.uuid4(), user_id=user.id, label="Data Engineer",
+            raw_text="SUMMARY\nGeneric summary.\n\nSKILLS\nPython, SQL.",
+            sections={"summary": "Generic summary."},
+            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+        )
+        db.add(prof)
+        await db.commit()
+        pid = str(prof.id)
+
+    agent_ret = {"text": "SUMMARY\nTighter summary.\n\nSKILLS\nPython, SQL.",
+                 "input_tokens": 1, "output_tokens": 1, "cost_usd": 0.0,
+                 "iterations": 1, "flagged": []}
+
+    with patch.object(handoff, "run_agent", AsyncMock(return_value=agent_ret)), \
+         patch.object(handoff, "score_combined", AsyncMock(return_value=_fake_scores(
+             {"ats": 80, "impact": 80, "skills_gap": 80, "readability": 90, "jd_tailoring": 60}))), \
+         patch.object(handoff, "extract_claims", return_value=None), \
+         patch.object(handoff, "_parse_sections", AsyncMock(return_value={"summary": "Tighter summary."})):
+        result = await handoff.apply_edit(user, sess, {"instruction": "Shorten the summary.", "profile_id": pid})
+
+    assert result["scores"]["readability"] == 90
+    from db.models import ChatSession
+    async with AsyncSessionLocal() as db:
+        row = await db.get(ChatSession, sess.id)
+        assert row.context["last_result"]["optimized_text"] == agent_ret["text"]
+
+
+@pytest.mark.asyncio
+async def test_apply_edit_no_source_returns_400(db_tables):
+    from chat import handoff
+    from fastapi import HTTPException
+    user, sess = await _make_user_and_session({})
+    with pytest.raises(HTTPException) as exc:
+        await handoff.apply_edit(user, sess, {"instruction": "Fix it."})
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_apply_edit_blocked_during_active_optimization(db_tables):
+    from chat import handoff
+    from fastapi import HTTPException
+    user, sess = await _make_user_and_session({"_optimizer_launched": True})  # no last_result
+    with pytest.raises(HTTPException) as exc:
+        await handoff.apply_edit(user, sess, {"instruction": "Fix it."})
+    assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_apply_edit_empty_output_returns_422(db_tables):
+    from chat import handoff
+    from fastapi import HTTPException
+    ctx = {"last_result": {"optimized_text": "SUMMARY\nSame text.", "sections": {}, "scores": {}}}
+    user, sess = await _make_user_and_session(ctx)
+    agent_ret = {"text": "SUMMARY\nSame text.", "flagged": [], "iterations": 1,
+                 "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
+    with patch.object(handoff, "run_agent", AsyncMock(return_value=agent_ret)), \
+         patch.object(handoff, "score_combined", AsyncMock(return_value=_fake_scores({"ats": 80}))), \
+         patch.object(handoff, "extract_claims", return_value=None):
+        with pytest.raises(HTTPException) as exc:
+            await handoff.apply_edit(user, sess, {"instruction": "no-op"})
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_apply_edit_fabrication_flagged_still_writes_back(db_tables):
+    from chat import handoff
+    from db.models import ChatSession
+    from db.session import AsyncSessionLocal
+    ctx = {"last_result": {"optimized_text": "SUMMARY\nReal text.", "sections": {}, "scores": {"ats": 70}}}
+    user, sess = await _make_user_and_session(ctx)
+    agent_ret = {"text": "SUMMARY\nEdited text.", "flagged": ["Managed a team of 20"],
+                 "iterations": 1, "input_tokens": 1, "output_tokens": 1, "cost_usd": 0.0}
+    with patch.object(handoff, "run_agent", AsyncMock(return_value=agent_ret)), \
+         patch.object(handoff, "score_combined", AsyncMock(return_value=_fake_scores({"ats": 75}))), \
+         patch.object(handoff, "extract_claims", return_value=None), \
+         patch.object(handoff, "_parse_sections", AsyncMock(return_value={"summary": "Edited text."})):
+        result = await handoff.apply_edit(user, sess, {"instruction": "Add team leadership."})
+    assert result["verifier_flagged"] == ["Managed a team of 20"]
+    async with AsyncSessionLocal() as db:
+        row = await db.get(ChatSession, sess.id)
+        assert row.context["last_result"]["verifier_flagged"] == ["Managed a team of 20"]
