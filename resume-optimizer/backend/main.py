@@ -1105,7 +1105,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
         # ── Write Delta analytics (fire-and-forget, not rate limiting) ─────
         if user_id:
             try:
-                await asyncio.to_thread(write_daily_usage, {
+                asyncio.create_task(asyncio.to_thread(write_daily_usage, {
                     "user_id":       user_id,
                     "date":          date_type.today().isoformat(),
                     "pipeline_runs": 1,
@@ -1113,7 +1113,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                     "input_tokens":  total_input_tokens,
                     "output_tokens": total_output_tokens,
                     "tokens_used":   total_input_tokens + total_output_tokens,
-                })
+                }))
             except Exception:
                 pass
 

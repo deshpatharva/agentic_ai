@@ -59,6 +59,10 @@ async def run_optimization_async(
 
     Returns:
         {"text", "input_tokens", "output_tokens", "cost_usd", "iterations", "fallback"}
+
+    Design note:
+        Each call creates a fresh ResumeState -- no shared in-process state.
+        Multi-worker deployments do not require sticky sessions.
     """
     if on_event:
         on_event({"type": "stage", "message": "Parsing resume sections...", "stage": "agent"})
