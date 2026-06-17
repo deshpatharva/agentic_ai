@@ -55,6 +55,7 @@ class PlanLimit(Base):
 
     plan                  = Column(String(50), primary_key=True)
     daily_uploads         = Column(Integer, nullable=False)
+    daily_edits           = Column(Integer, nullable=False, server_default="5")
     max_stored_resumes    = Column(Integer, nullable=False)
     job_scraping_enabled  = Column(Boolean, nullable=False)
     price_cents           = Column(Integer, nullable=False)
@@ -178,6 +179,7 @@ class DailyUsageCounter(Base):
     user_id = Column(Uuid(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     date    = Column(String(10), nullable=False)   # ISO date "YYYY-MM-DD"
     runs    = Column(Integer, nullable=False, default=0)
+    edits   = Column(Integer, nullable=False, default=0, server_default="0")
 
 
 class TokenBlocklist(Base):
