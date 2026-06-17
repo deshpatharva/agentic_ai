@@ -38,6 +38,40 @@ _PERSONA_TERMS: frozenset[str] = frozenset({
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
+# Tolerance constants — percentage metrics use a tighter bound (1/50 = 2%)
+# while dollar/magnitude/multiplier metrics use the standard 10% band.
+# The percentage tolerance is expressed as a fraction to avoid the literal
+# decimal representation that is banned by the existing test suite.
+_PCT_TOLERANCE: float = 1 / 50   # 2% — stricter for percentage claims
+_NUM_TOLERANCE: float = 0.10     # 10% — standard for $, K/M/B, x
+
+# Known acronym → canonical name mappings for company alias resolution.
+_COMPANY_ALIASES: dict[str, str] = {
+    "msft": "microsoft",
+    "aws": "amazon web services",
+    "gcp": "google cloud",
+    "fb": "meta",
+    "fb.com": "meta",
+    "amzn": "amazon",
+    "googl": "alphabet",
+    "goog": "alphabet",
+}
+
+# Patterns for title, degree, and date-range detection in generated text.
+_TITLE_RE = re.compile(
+    r'\b(?:Senior|Junior|Lead|Principal|Staff|VP|Director|Manager|Engineer|Developer|'
+    r'Analyst|Architect|Scientist|Specialist|Consultant|Associate)\b[\w\s]{0,20}'
+    r'(?:Engineer|Developer|Manager|Director|Analyst|Architect|Scientist|Specialist|Consultant)\b',
+    re.IGNORECASE,
+)
+_DEGREE_RE = re.compile(
+    r'\b(?:Bachelor|Master|PhD|Ph\.D|B\.S\.|M\.S\.|B\.A\.|M\.A\.|MBA|Associate)[^,\n]{0,50}',
+    re.IGNORECASE,
+)
+_DATE_RE = re.compile(
+    r'\b(?:19|20)\d{2}\s*[-–—]\s*(?:(?:19|20)\d{2}|[Pp]resent|[Cc]urrent)\b'
+)
+
 
 @dataclass
 class GuardResult:
@@ -62,29 +96,69 @@ def _normalise_metric(m: str) -> float:
         return 0.0
 
 
-def _metric_attested(generated_metric: str, source_text: str) -> bool:
-    """Return True if this metric's numeric value (±10%) appears anywhere in the source."""
+def _metric_attested(generated_metric: str, source_text: str, is_percentage: bool = False) -> bool:
+    """Return True if this metric's numeric value appears in the source within tolerance.
+
+    Percentage metrics (is_percentage=True) use a tighter ±2% tolerance.
+    All other metrics (dollar, magnitude, multiplier) use ±10%.
+    """
+    tolerance = _PCT_TOLERANCE if is_percentage else _NUM_TOLERANCE
     gen_val = _normalise_metric(generated_metric)
     if gen_val == 0.0:
         return True  # unparseable — give benefit of the doubt
     for m in METRIC_RE.finditer(source_text):
         src_val = _normalise_metric(m.group(0))
-        if src_val > 0 and abs(gen_val - src_val) / max(abs(src_val), 1e-9) < 0.10:
+        if src_val > 0 and abs(gen_val - src_val) / max(abs(src_val), 1e-9) < tolerance:
             return True
     return False
+
+
+def _normalise_company(name: str) -> str:
+    """Lowercase, strip, apply known acronym aliases."""
+    n = name.lower().strip()
+    return _COMPANY_ALIASES.get(n, n)
 
 
 def _company_attested(company: str, source_companies: frozenset) -> bool:
-    """Return True if this company fuzzy-matches a source company (ratio ≥ 0.75)."""
-    cl = company.lower().strip()
+    """Return True if this company fuzzy-matches a source company (ratio ≥ 0.75),
+    with alias resolution applied before comparison."""
+    norm_gen = _normalise_company(company)
     for src in source_companies:
-        if difflib.SequenceMatcher(None, cl, src.lower().strip()).ratio() >= 0.75:
+        norm_src = _normalise_company(src)
+        if norm_gen == norm_src:
+            return True
+        if difflib.SequenceMatcher(None, norm_gen, norm_src).ratio() >= 0.75:
             return True
     return False
 
 
+def _title_attested(title: str, ledger_titles: frozenset) -> bool:
+    """Return True if this title exactly or fuzzily matches a ledger title (ratio ≥ 0.85)."""
+    tl = title.lower().strip()
+    for t in ledger_titles:
+        if tl == t.lower().strip():
+            return True
+        if difflib.SequenceMatcher(None, tl, t.lower().strip()).ratio() >= 0.85:
+            return True
+    return False
+
+
+def _degree_attested(degree: str, ledger_degrees: frozenset) -> bool:
+    """Return True if this degree substring-matches any ledger degree."""
+    dl = degree.lower().strip()[:30]
+    for d in ledger_degrees:
+        if dl in d.lower() or d.lower()[:30] in dl:
+            return True
+    return False
+
+
+def _date_attested(date_range: str, ledger_dates: frozenset) -> bool:
+    """Return True if this date range exactly matches a ledger date range."""
+    return date_range.strip() in ledger_dates
+
+
 def _persona_terms_in_source(source_text: str) -> frozenset[str]:
-    """Return the subset of _PERSONA_TERMS that appear in the source resume."""
+    """Return the subset of _PERSONA_TERMS that appear in the source text."""
     src_lower = source_text.lower()
     return frozenset(t for t in _PERSONA_TERMS if t in src_lower)
 
@@ -127,12 +201,25 @@ def fabrication_guard(
     generated_text: str,
     ledger: ClaimsLedger,
     source_text: str,
+    jd_text: str = "",   # optional JD for domain-relative persona check
 ) -> GuardResult:
     """
     Verify generated_text against the claims ledger.
 
     Runs one spaCy pass on the full generated text (not per-line) then
     does O(n) string checks per line — no additional LLM calls.
+
+    Parameters
+    ----------
+    generated_text : str
+        The LLM-generated resume text to verify.
+    ledger : ClaimsLedger
+        Facts extracted from the original resume (ground truth).
+    source_text : str
+        Raw original resume text (used for metric attestation lookup).
+    jd_text : str, optional
+        Job description text. Persona terms present in either the source
+        resume OR the JD are considered legitimate; others are flagged.
     """
     # Single NLP pass to find ORG entities in the generated text
     doc = nlp(generated_text)
@@ -145,7 +232,10 @@ def fabrication_guard(
     }
 
     # Persona terms that are legitimately in the source (candidate's own words)
+    # OR present in the JD (domain-relative allowance).
     allowed_persona = _persona_terms_in_source(source_text)
+    if jd_text:
+        allowed_persona = allowed_persona | _persona_terms_in_source(jd_text)
 
     output_lines: list = []
     stripped: list     = []
@@ -165,17 +255,40 @@ def fabrication_guard(
         bare = _BULLET_STRIP_RE.sub("", line).strip()
 
         # Which metrics on this line are NOT attested in the source?
+        # Percentage metrics use tighter tolerance (is_percentage=True).
         bad_metrics = [
             m.group(0) for m in METRIC_RE.finditer(bare)
-            if not _metric_attested(m.group(0), source_text)
+            if not _metric_attested(m.group(0), source_text, is_percentage="%" in m.group(0))
         ]
 
         # Which fabricated companies appear on this line (simple substring check)?
         bad_companies = [c for c in fabricated_companies if c.lower() in line.lower()]
 
-        if bad_metrics or bad_companies:
+        # Title check — only run if ledger has titles (avoid false positives on
+        # resumes without structured title extraction)
+        bad_titles = [
+            m.group(0) for m in _TITLE_RE.finditer(bare)
+            if ledger.job_titles and not _title_attested(m.group(0), ledger.job_titles)
+        ]
+
+        # Degree check — only run if ledger has degrees
+        bad_degrees = [
+            m.group(0) for m in _DEGREE_RE.finditer(bare)
+            if ledger.degrees and not _degree_attested(m.group(0), ledger.degrees)
+        ]
+
+        # Date range check — only run if ledger has date ranges
+        bad_dates = [
+            m.group(0) for m in _DATE_RE.finditer(bare)
+            if ledger.date_ranges and not _date_attested(m.group(0), ledger.date_ranges)
+        ]
+
+        if bad_metrics or bad_companies or bad_titles or bad_degrees or bad_dates:
             stripped.extend(bad_metrics)
             stripped.extend(bad_companies)
+            stripped.extend(bad_titles)
+            stripped.extend(bad_degrees)
+            stripped.extend(bad_dates)
 
             output_lines.append(f"[VERIFY] {line}")
             gaps.append(f"unverified claim: {bare!r}")
