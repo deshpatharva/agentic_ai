@@ -22,6 +22,9 @@ _logger = logging.getLogger(__name__)
 class VerifierResult:
     text: str                               # draft unchanged — verifier only flags, never modifies
     flagged: List[str] = field(default_factory=list)
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float = 0.0
 
 
 async def verify_final_draft(draft: str, ledger: ClaimsLedger) -> VerifierResult:
@@ -80,4 +83,10 @@ Output format: one unsupported claim per line, or "VERIFIED" if clean. No prose.
     if flagged:
         _logger.info("verifier flagged %d unsupported claim(s)", len(flagged))
 
-    return VerifierResult(text=draft, flagged=flagged)
+    return VerifierResult(
+        text=draft,
+        flagged=flagged,
+        input_tokens=llm_result.get("input_tokens", 0),
+        output_tokens=llm_result.get("output_tokens", 0),
+        cost_usd=llm_result.get("cost_usd", 0.0),
+    )

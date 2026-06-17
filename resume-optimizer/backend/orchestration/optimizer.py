@@ -138,8 +138,14 @@ async def run_optimization_async(
 async def _with_verifier(pipeline_result: dict, ledger: ClaimsLedger) -> dict:
     """Run the LLM verifier on the final draft and attach verifier_flagged to the result dict."""
     draft = pipeline_result.get("text", "")
-    verifier_result = await verify_final_draft(draft, ledger)
-    return {**pipeline_result, "verifier_flagged": verifier_result.flagged}
+    vr = await verify_final_draft(draft, ledger)
+    return {
+        **pipeline_result,
+        "input_tokens":  pipeline_result.get("input_tokens",  0) + vr.input_tokens,
+        "output_tokens": pipeline_result.get("output_tokens", 0) + vr.output_tokens,
+        "cost_usd":      pipeline_result.get("cost_usd",     0.0) + vr.cost_usd,
+        "verifier_flagged": vr.flagged,
+    }
 
 
 async def _deterministic_fallback(
