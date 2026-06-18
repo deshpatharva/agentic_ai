@@ -45,12 +45,12 @@ DELTA_STORAGE_PATH = os.environ.get("DELTA_STORAGE_PATH", "./delta_store")
 # ── Models ────────────────────────────────────────────────────────────────────
 # All model names use LiteLLM provider prefixes — change here to swap providers.
 # Rewriter — Gemini 2.5 Flash Lite (fast, cheap, good at keyword incorporation)
-MODEL_REWRITER      = "gemini/gemini-2.5-flash-lite"
+MODEL_REWRITER      = "gemini/gemini-3.1-flash-lite"
 # Rewriter iter 2+ — applying feedback diffs only, lite is sufficient
-MODEL_REWRITER_FAST = "gemini/gemini-2.5-flash-lite"
+MODEL_REWRITER_FAST = "gemini/gemini-3.1-flash-lite"
 
 # Humanizer main pass — Gemini 2.5 Flash-Lite
-MODEL_HUMANIZER     = "gemini/gemini-2.5-flash-lite"
+MODEL_HUMANIZER     = "gemini/gemini-3.1-flash-lite"
 
 # Humanizer critic — Llama 3.1 8B via Groq (structured feedback, near-free)
 MODEL_CRITIC        = "groq/llama-3.1-8b-instant"
@@ -59,20 +59,20 @@ MODEL_CRITIC        = "groq/llama-3.1-8b-instant"
 MODEL_VERIFIER      = "groq/llama-3.1-8b-instant"
 
 # Scorers — Gemini 2.5 Flash-Lite (ultra-cheap, all 4 scores in 1 call)
-MODEL_SCORER        = "gemini/gemini-2.5-flash-lite"
+MODEL_SCORER        = "gemini/gemini-3.1-flash-lite"
 
 # JD Analyzer — Gemini 2.5 Flash-Lite (keyword extraction only)
-MODEL_JD_ANALYZER     = "gemini/gemini-2.5-flash-lite"
+MODEL_JD_ANALYZER     = "gemini/gemini-3.1-flash-lite"
 
-MODEL_PROFILE_PARSER  = "gemini/gemini-2.5-flash-lite"
-MODEL_INTERVIEW_SYNTH = "gemini/gemini-2.5-flash-lite"
+MODEL_PROFILE_PARSER  = "gemini/gemini-3.1-flash-lite"
+MODEL_INTERVIEW_SYNTH = "gemini/gemini-3.1-flash-lite"
 
 # Agentic Phase 2 models
-MODEL_OPTIMIZER          = "gemini/gemini-2.5-flash"        # Strategist — needs reasoning
-MODEL_KEYWORD_INJECT     = "gemini/gemini-2.5-flash-lite"   # ATS tool — cheap, fast
-MODEL_BULLET_STRENGTHEN  = "gemini/gemini-2.5-flash-lite"   # Impact tool
-MODEL_SKILLS_REWRITE     = "gemini/gemini-2.5-flash-lite"   # Skills gap tool
-MODEL_SECTION_HUMANIZE   = "gemini/gemini-2.5-flash-lite"   # Readability tool
+MODEL_OPTIMIZER          = "gemini/gemini-3.5-flash"        # Strategist — needs reasoning
+MODEL_KEYWORD_INJECT     = "gemini/gemini-3.1-flash-lite"   # ATS tool — cheap, fast
+MODEL_BULLET_STRENGTHEN  = "gemini/gemini-3.1-flash-lite"   # Impact tool
+MODEL_SKILLS_REWRITE     = "gemini/gemini-3.1-flash-lite"   # Skills gap tool
+MODEL_SECTION_HUMANIZE   = "gemini/gemini-3.1-flash-lite"   # Readability tool
 
 # Phase 2 hard limits
 AGENT_MAX_ITER     = 10       # max CrewAI agent iterations before forced stop
@@ -83,7 +83,7 @@ AGENT_TOKEN_BUDGET = 20_000   # cumulative input+output tokens across all Phase 
 # chat turn. Gemini 2.5 Flash is cost-effective (~cents/conversation) and reliably
 # handles the stateful prompt + tool-calling flow. Fallback options:
 # "groq/llama-3.3-70b-versatile" (cheaper, less reliable on complex turns) or
-# "gemini/gemini-2.5-flash-lite" (cheapest). complete_with_tools() degrades to a
+# "gemini/gemini-3.1-flash-lite" (cheapest). complete_with_tools() degrades to a
 # plain reply if a model fumbles the tools param.
 MODEL_CHAT_AGENT  = "gemini/gemini-2.5-flash"
 CHAT_WINDOW_TURNS = 10   # last N turns sent to the chat model per call
