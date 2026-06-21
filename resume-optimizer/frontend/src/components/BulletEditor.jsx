@@ -36,7 +36,7 @@ export default function BulletEditor({ bullet, onUpdate, onRemove }) {
       <span className="text-ink-faint mt-0.5 shrink-0">•</span>
       <span className="flex-1 text-sm text-ink">{bullet}</span>
       <button
-        onClick={() => setEditing(true)}
+        onClick={() => { setValue(bullet); setEditing(true); }}
         aria-label="Edit bullet"
         className="opacity-0 group-hover:opacity-100 text-ink-faint hover:text-primary transition-opacity shrink-0"
       >

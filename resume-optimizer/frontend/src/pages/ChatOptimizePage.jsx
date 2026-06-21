@@ -52,10 +52,11 @@ export default function ChatOptimizePage() {
   const [profileSuggestions, setProfileSuggestions] = useState([]);
   const [optimizerLaunched, setOptimizerLaunched]   = useState(false);
 
-  const esRef       = useRef(null);
-  const pollRef     = useRef(null);   // result-polling interval (SSE fallback)
-  const bottomRef   = useRef(null);
-  const textareaRef = useRef(null);
+  const esRef        = useRef(null);
+  const pollRef      = useRef(null);   // result-polling interval (SSE fallback)
+  const chatAbortRef = useRef(null);   // aborts the in-flight /optimize/chat stream
+  const bottomRef    = useRef(null);
+  const textareaRef  = useRef(null);
 
   const { fetchSessions } = useChatSessionStore();
 
@@ -70,6 +71,7 @@ export default function ChatOptimizePage() {
   // Cleanup on unmount: close stream and stop any polling.
   useEffect(() => () => {
     esRef.current?.close();
+    chatAbortRef.current?.abort();
     if (pollRef.current) clearInterval(pollRef.current);
   }, []);
 
@@ -99,6 +101,11 @@ export default function ChatOptimizePage() {
 
   // ── Load a past session ──────────────────────────────────────────────────────
   async function loadSession(id) {
+    // Cancel any in-flight chat/SSE stream so its late events can't clobber the
+    // session we're about to load.
+    chatAbortRef.current?.abort();
+    esRef.current?.close();
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
     try {
       const { data } = await getSession(id);
       setSessionId(data.id);
@@ -135,6 +142,7 @@ export default function ChatOptimizePage() {
   // ── New chat ─────────────────────────────────────────────────────────────────
   function newChat() {
     esRef.current?.close();
+    chatAbortRef.current?.abort();
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
     setMessages([]);
     setInput('');
@@ -195,6 +203,10 @@ export default function ChatOptimizePage() {
       }, 3000);
     }
 
+    // Close any previous status stream before opening a new one, so a second
+    // optimize launch can't leak the first connection or have its late terminal
+    // event tear down this one.
+    esRef.current?.close();
     const es = new EventSource(
       `${client.defaults.baseURL}/status/${jobId}?token=${encodeURIComponent(sseToken)}`
     );
@@ -241,6 +253,12 @@ export default function ChatOptimizePage() {
     setStreamingMsgId(assistantId);
     const isFirstTurn = !sessionId;
 
+    // New AbortController per send; aborting it (session switch / unmount) cancels
+    // the stream so its late events can't mutate a different session's state.
+    chatAbortRef.current?.abort();
+    const ac = new AbortController();
+    chatAbortRef.current = ac;
+
     try {
       const res = await fetch(`${client.defaults.baseURL}/optimize/chat`, {
         method: 'POST',
@@ -249,6 +267,7 @@ export default function ChatOptimizePage() {
           Authorization: `Bearer ${getToken()}`,
         },
         body: JSON.stringify({ session_id: sessionId, message: text }),
+        signal: ac.signal,
       });
 
       if (!res.ok) {
@@ -273,7 +292,7 @@ export default function ChatOptimizePage() {
 
       for (;;) {
         const { value, done } = await reader.read();
-        if (done) break;
+        if (done || ac.signal.aborted) break;
         buf += decoder.decode(value, { stream: true });
 
         let idx;
@@ -328,9 +347,13 @@ export default function ChatOptimizePage() {
         }
       }
     } catch {
+      // Aborted (the user switched sessions / unmounted) — leave the newly loaded
+      // session's state untouched.
+      if (ac.signal.aborted) return;
       updateMsg(assistantId, { content: '❌ Network error — please try again.', isError: true });
     }
 
+    if (ac.signal.aborted) return;
     setStreamingMsgId(null);
     // Functional updater reads the latest phase — if a handoff set it to 'running',
     // don't clobber it back to 'idle' (stale-closure trap).
