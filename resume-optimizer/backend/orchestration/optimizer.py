@@ -92,7 +92,7 @@ async def run_optimization_async(
         })
 
     # ── Select driver based on plan and feature flag ──────────────────────────
-    use_debate = plan == "pro" and config.PRO_DEBATE_ENABLED
+    use_debate = plan in ("pro", "enterprise") and config.PRO_DEBATE_ENABLED
     driver = run_debate if use_debate else run_agent
 
     _logger.info(

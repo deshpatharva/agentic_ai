@@ -55,8 +55,13 @@ async def score_combined(
     required_hard_skills: Optional[List[str]] = None,
 ) -> dict:
     """Return structured scoring across 5 dimensions with calibration rubric."""
-    # Result cache: key over stable inputs — same resume+JD+seniority always yields the same score
-    cache_key = hashlib.sha256(f"{resume_text}||{jd_text}||{seniority_level}".encode()).hexdigest()
+    # Result cache: key over EVERY input that feeds the scoring prompt, so two runs that
+    # differ only in jd_keywords or required_hard_skills don't collide on a stale score.
+    _kw_part  = "|".join(sorted(jd_keywords or []))
+    _req_part = "|".join(sorted(required_hard_skills or []))
+    cache_key = hashlib.sha256(
+        f"{resume_text}||{jd_text}||{seniority_level}||{_kw_part}||{_req_part}".encode()
+    ).hexdigest()
     cached = result_cache.get("score_combined", cache_key)
     if cached is not None:
         return {"text": cached, "tokens": {"input_tokens": 0, "output_tokens": 0}, "cost_usd": 0.0}

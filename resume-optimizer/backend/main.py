@@ -51,7 +51,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # ── Agent & utility imports ──────────────────────────────────────────────────
 from agents.jd_analyzer import analyze_jd
-from config import SCORE_TARGET, FRONTEND_URL, MAX_RESUME_CHARS, MAX_JD_CHARS, STUCK_JOB_TIMEOUT_MINUTES, DATABASE_URL
+from config import SCORE_TARGET, SCORE_DIMENSIONS, FRONTEND_URL, MAX_RESUME_CHARS, MAX_JD_CHARS, STUCK_JOB_TIMEOUT_MINUTES, DATABASE_URL
 from agents.scorer import score_combined
 from agents.fact_extractor import extract_claims
 from agents.fabrication_guard import fabrication_guard
@@ -67,7 +67,7 @@ from db.session import get_db, init_db, AsyncSessionLocal
 from db.models import JobStatus, PipelineEvent, PipelineJob, Profile, Resume, User, TokenBlocklist
 from utils.profile_utils import sections_to_text as _sections_to_text
 from auth.router import router as auth_router, user_router
-from auth.dependencies import decode_token, decode_sse_token, get_current_user, check_plan_limit
+from auth.dependencies import decode_token, decode_sse_token, get_current_user, check_plan_limit, _effective_plan
 from dashboard.router import router as dashboard_router
 from admin.router import router as admin_router
 from profiles.router import router as profiles_router, profile_ops as profile_ops_router
@@ -795,6 +795,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
 
     try:
         # ── Load job (short-lived session, closed before any LLM call) ─────
+        user_plan = "standard"
         async with AsyncSessionLocal() as db:
             job_result = await db.execute(select(PipelineJob).where(PipelineJob.id == job_uuid))
             job_row = job_result.scalar_one()
@@ -803,6 +804,11 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             original_filename = job_row.original_filename
             # Capture profile_id before session closes (detached object may not lazy-load)
             _initial_profile_id = job_row.profile_id
+            # Resolve the user's effective plan (honours active trial) for tier gating
+            if user_id:
+                user_row = await db.scalar(select(User).where(User.id == uuid.UUID(user_id)))
+                if user_row:
+                    user_plan = _effective_plan(user_row)
 
         total_input_tokens  = 0
         total_output_tokens = 0
@@ -852,9 +858,9 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
         total_output_tokens += baseline_tokens["output_tokens"]
         total_cost_usd      += baseline_dict.get("cost_usd", 0.0)
 
-        baseline_avg = round(sum(baseline_scores[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")) / 4)
+        baseline_avg = round(sum(baseline_scores.get(k, {}).get("score", 0) for k in SCORE_DIMENSIONS) / len(SCORE_DIMENSIONS))
         await emit({"type": "average", "score": baseline_avg, "iteration": 0,
-                    "scores": {k: baseline_scores[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")},
+                    "scores": {k: baseline_scores.get(k, {}).get("score", 0) for k in SCORE_DIMENSIONS},
                     "message": f"Original resume score: {baseline_avg}"})
 
         scores = {**baseline_scores, "average": baseline_avg}
@@ -866,6 +872,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
 
         # ── Phase 2: Agentic optimization (no DB held) ─────────────────
         _iter = 0
+        verifier_flagged: list = []
         if baseline_avg < SCORE_TARGET:
             current_resume = resume_text
             current_scores = baseline_scores
@@ -888,12 +895,14 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                 seniority_level=seniority_level,
                 required_hard_skills=required_hard_skills,
                 on_event=_on_agent_event,
+                plan=user_plan,
             )
             optimized_text = agent_result["text"]
             total_input_tokens  += agent_result.get("input_tokens", 0)
             total_output_tokens += agent_result.get("output_tokens", 0)
             total_cost_usd      += agent_result.get("cost_usd", 0.0)
             _iter = agent_result.get("iterations", 1)
+            verifier_flagged = agent_result.get("verifier_flagged", [])
 
             if optimized_text and optimized_text.strip() != current_resume.strip():
                 current_resume = optimized_text
@@ -914,10 +923,10 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             total_output_tokens += final_tokens["output_tokens"]
             total_cost_usd      += final_score_dict.get("cost_usd", 0.0)
             current_avg = round(
-                sum(current_scores[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")) / 4
+                sum(current_scores.get(k, {}).get("score", 0) for k in SCORE_DIMENSIONS) / len(SCORE_DIMENSIONS)
             )
             await emit({"type": "average", "score": current_avg, "iteration": _iter,
-                        "scores": {k: current_scores[k]["score"] for k in ("ats", "impact", "skills_gap", "readability")},
+                        "scores": {k: current_scores.get(k, {}).get("score", 0) for k in SCORE_DIMENSIONS},
                         "message": f"Score after optimization: {current_avg}"})
 
             scores = {**current_scores, "average": current_avg}
@@ -1154,11 +1163,12 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                         "final_score":    float(scores.get("average", baseline_avg)),
                         "scores":         {k: scores[k]["score"] if isinstance(scores.get(k), dict)
                                            else scores.get(k, 0)
-                                           for k in ("ats", "impact", "skills_gap", "readability")},
+                                           for k in SCORE_DIMENSIONS},
                         "iterations":     max(_iter, 1),
                         "download_url":   download_url,
                         "label_hint":     (_clean_role_label(job_title) or industry or ""),
                         "report":         optimization_report,
+                        "verifier_flagged": verifier_flagged,
                     }
                     sess_row.context = ctx
                     sess_row.updated_at = datetime.now(timezone.utc)
@@ -1173,6 +1183,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             "final_score":  scores.get("average", baseline_avg),
             "iterations":   max(_iter, 1),
             "report":       optimization_report,
+            "verifier_flagged": verifier_flagged,
             "cost_usd":     round(total_cost_usd, 6),
             "tokens":       {"input": total_input_tokens, "output": total_output_tokens},
         })

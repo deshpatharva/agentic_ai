@@ -33,7 +33,7 @@ from agents.tools import (
     section_humanize,
     skills_rewrite,
 )
-from config import AGENT_MAX_ITER, AGENT_TOKEN_BUDGET, MODEL_OPTIMIZER, SCORE_TARGET
+from config import AGENT_MAX_ITER, AGENT_TOKEN_BUDGET, MODEL_OPTIMIZER, SCORE_DIMENSIONS, SCORE_TARGET
 from llm import complete_with_tools
 from observability.trace import set_call_kind
 
@@ -332,7 +332,7 @@ async def run_agent(
         overall = current_scores.get("overall", 0)
         all_above = all(
             current_scores.get(d, {}).get("score", 0) >= _SCORE_TARGET
-            for d in ("ats", "impact", "skills_gap", "readability", "jd_tailoring")
+            for d in SCORE_DIMENSIONS
         )
 
         _logger.info(

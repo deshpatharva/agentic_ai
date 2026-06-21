@@ -95,6 +95,10 @@ FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")
 # ── Pipeline settings ─────────────────────────────────────────────────────────
 MAX_ITERATIONS      = 4
 SCORE_TARGET        = 90
+# Canonical scoring dimensions — the scorer, the agent loop's done-check, and every
+# score aggregation must iterate this same tuple so a newly-added dimension can't be
+# silently dropped from the headline average or the entry gate.
+SCORE_DIMENSIONS    = ("ats", "impact", "skills_gap", "readability", "jd_tailoring")
 # Minimum profile-vs-JD match score (0-100) above which we consider the JD to be
 # the same domain as an existing profile and skip auto-creating a new one.
 DOMAIN_MATCH_THRESHOLD = int(os.environ.get("DOMAIN_MATCH_THRESHOLD", "70"))
@@ -138,4 +142,6 @@ STUCK_JOB_TIMEOUT_MINUTES = int(os.environ.get("STUCK_JOB_TIMEOUT_MINUTES", "30"
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
 
 # ── Tier gating ──────────────────────────────────────────────────────────────
-PRO_DEBATE_ENABLED  = True   # flag-gated; default OFF for beta
+# Pro-tier 2-agent debate loop. Env-driven so it can be toggled per environment;
+# default OFF for beta (set PRO_DEBATE_ENABLED=true to enable).
+PRO_DEBATE_ENABLED  = os.environ.get("PRO_DEBATE_ENABLED", "false").lower() in ("1", "true", "yes")
