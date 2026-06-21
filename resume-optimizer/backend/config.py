@@ -58,6 +58,10 @@ MODEL_CRITIC        = "groq/llama-3.1-8b-instant"
 # LLM-based final draft verifier — cheap single-pass check against claims ledger
 MODEL_VERIFIER      = "groq/llama-3.1-8b-instant"
 
+# Pro-tier debate Reviewer — short single-objection critique; cheap model is plenty
+# (no need for the strategist-grade MODEL_OPTIMIZER used by the optimizer agent).
+MODEL_REVIEWER      = "gemini/gemini-3.1-flash-lite"
+
 # Scorers — Gemini 2.5 Flash-Lite (ultra-cheap, all 4 scores in 1 call)
 MODEL_SCORER        = "gemini/gemini-3.1-flash-lite"
 

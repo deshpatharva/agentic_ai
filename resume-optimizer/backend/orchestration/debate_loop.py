@@ -17,8 +17,9 @@ from typing import Callable, Optional
 
 from agents.fabrication_guard import fabrication_guard
 from agents.fact_extractor import ClaimsLedger
+from agents.scorer import score_combined
 from agents.tools import ResumeState
-from config import AGENT_MAX_ITER, AGENT_TOKEN_BUDGET, MODEL_OPTIMIZER
+from config import AGENT_MAX_ITER, AGENT_TOKEN_BUDGET, MODEL_OPTIMIZER, MODEL_REVIEWER
 from llm import complete, complete_with_tools
 from observability.trace import set_call_kind
 from orchestration.agent_loop import TOOL_DEFS, TOOL_MAP, _build_system
@@ -50,8 +51,8 @@ async def run_debate(
     agent critiques it in a single pass. Rounds continue until the Reviewer
     raises no new objections or DEBATE_MAX_ROUNDS is exhausted.
 
-    `**kwargs` accepts seniority_level and required_hard_skills for interface
-    symmetry with run_agent; they are not used by this driver.
+    `**kwargs` accepts seniority_level and required_hard_skills, used by the
+    between-round re-score so the optimizer sees fresh scores each round.
 
     Returns:
         dict with keys:
@@ -147,8 +148,22 @@ async def run_debate(
                         "round": round_idx + 1,
                     })
 
-        # ── Reviewer single-pass critique ──────────────────────────────────
+        # ── Re-score the draft so round N+1 (and the reviewer) see fresh scores ──
         draft = state.reassemble()
+        try:
+            _rescore = await score_combined(
+                draft, jd_text, jd_keywords,
+                seniority_level=kwargs.get("seniority_level", "mid"),
+                required_hard_skills=kwargs.get("required_hard_skills"),
+            )
+            if _rescore.get("text"):
+                current_scores = _rescore["text"]
+            _st = _rescore.get("tokens", {})
+            state.add_tokens(_st.get("input_tokens", 0), _st.get("output_tokens", 0), _rescore.get("cost_usd", 0.0))
+        except Exception as exc:
+            _logger.warning("debate_loop: re-score failed (%s) — keeping prior scores", exc)
+
+        # ── Reviewer single-pass critique ──────────────────────────────────
         overall = current_scores.get("overall", 0)
 
         reviewer_prompt = (
@@ -161,7 +176,7 @@ async def run_debate(
         )
 
         try:
-            reviewer_result = await complete(reviewer_prompt, MODEL_OPTIMIZER)
+            reviewer_result = await complete(reviewer_prompt, MODEL_REVIEWER)
         except Exception as exc:
             _logger.warning("debate_loop: reviewer LLM call failed (%s) — treating as no objection", exc)
             break

@@ -56,6 +56,11 @@ def _clean_guard(generated_text, ledger, source_text):
     return GuardResult(text=generated_text, stripped=[], gaps=[])
 
 
+async def _fake_score_combined(*args, **kwargs):
+    """Between-round re-score stub — avoids a real LLM call in unit tests."""
+    return {"text": SCORES_BELOW_TARGET, "tokens": {"input_tokens": 20, "output_tokens": 10}, "cost_usd": 0.001}
+
+
 # ---------------------------------------------------------------------------
 # Test 1: debate loop is bounded by rounds
 # ---------------------------------------------------------------------------
@@ -83,6 +88,7 @@ async def test_debate_loop_bounded_rounds():
         return {"text": "No objections.", "input_tokens": 30, "output_tokens": 5, "cost_usd": 0.0005}
 
     with patch.object(debate_loop, "complete_with_tools", side_effect=fake_complete_with_tools), \
+         patch.object(debate_loop, "score_combined", side_effect=_fake_score_combined), \
          patch.object(debate_loop, "complete", side_effect=fake_complete), \
          patch.object(debate_loop, "fabrication_guard", side_effect=_clean_guard):
         result = await debate_loop.run_debate(
@@ -130,6 +136,7 @@ async def test_reviewer_objection_triggers_revision():
         return {"text": "No objections.", "input_tokens": 30, "output_tokens": 5, "cost_usd": 0.0005}
 
     with patch.object(debate_loop, "complete_with_tools", side_effect=fake_complete_with_tools), \
+         patch.object(debate_loop, "score_combined", side_effect=_fake_score_combined), \
          patch.object(debate_loop, "complete", side_effect=fake_complete), \
          patch.object(debate_loop, "fabrication_guard", side_effect=_clean_guard):
         await debate_loop.run_debate(
@@ -169,6 +176,7 @@ async def test_debate_loop_no_objection_terminates_early():
         return {"text": "No objections.", "input_tokens": 30, "output_tokens": 5, "cost_usd": 0.0005}
 
     with patch.object(debate_loop, "complete_with_tools", side_effect=fake_complete_with_tools), \
+         patch.object(debate_loop, "score_combined", side_effect=_fake_score_combined), \
          patch.object(debate_loop, "complete", side_effect=fake_complete), \
          patch.object(debate_loop, "fabrication_guard", side_effect=_clean_guard):
         result = await debate_loop.run_debate(
@@ -205,6 +213,7 @@ async def test_debate_loop_sets_pro_debate_call_kind():
         return {"text": "No objections.", "input_tokens": 30, "output_tokens": 5, "cost_usd": 0.0005}
 
     with patch.object(debate_loop, "complete_with_tools", side_effect=fake_complete_with_tools), \
+         patch.object(debate_loop, "score_combined", side_effect=_fake_score_combined), \
          patch.object(debate_loop, "complete", side_effect=fake_complete), \
          patch.object(debate_loop, "fabrication_guard", side_effect=_clean_guard), \
          patch.object(debate_loop, "set_call_kind") as mock_set_kind:
@@ -245,6 +254,7 @@ async def test_debate_loop_guard_runs_on_final_draft():
         return _clean_guard(generated_text, ledger_, source_text)
 
     with patch.object(debate_loop, "complete_with_tools", side_effect=fake_complete_with_tools), \
+         patch.object(debate_loop, "score_combined", side_effect=_fake_score_combined), \
          patch.object(debate_loop, "complete", side_effect=fake_complete), \
          patch.object(debate_loop, "fabrication_guard", side_effect=counting_guard):
         await debate_loop.run_debate(

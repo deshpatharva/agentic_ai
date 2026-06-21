@@ -788,10 +788,15 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             )
             await db.commit()
 
+    # Keep strong refs to fire-and-forget emit tasks so they aren't garbage-collected
+    # mid-flight (per asyncio docs) and so emit() exceptions surface via the callback.
+    _pending_emits: set = set()
+
     def _on_agent_event(event: dict):
-        # run_agent is now fully async on the event loop, so create_task is correct.
-        # run_coroutine_threadsafe would also work but is the wrong idiom for same-loop callers.
-        asyncio.create_task(emit(event))
+        # run_agent is fully async on the event loop, so create_task is the right idiom.
+        task = asyncio.create_task(emit(event))
+        _pending_emits.add(task)
+        task.add_done_callback(_pending_emits.discard)
 
     try:
         # ── Load job (short-lived session, closed before any LLM call) ─────
