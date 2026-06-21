@@ -5,6 +5,9 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 const client = axios.create({ baseURL: API_URL });
 
+// Guards against multiple concurrent 401s each wiping storage and redirecting.
+let _redirectingToLogin = false;
+
 client.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
@@ -31,10 +34,13 @@ client.interceptors.response.use(
     // 401 on auth endpoints means bad credentials — let the form show the
     // error instead of redirect-reloading (which would eat the toast).
     const isAuthAttempt = /\/auth\/(login|register)$/.test(config?.url || '');
-    if (err.response?.status === 401 && !isAuthAttempt) {
+    if (err.response?.status === 401 && !isAuthAttempt && !_redirectingToLogin) {
+      _redirectingToLogin = true;
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      window.location.href = '/login';
+      toast.error('Your session has expired — please sign in again.');
+      // Small delay so the toast is visible before the hard redirect reloads the page.
+      setTimeout(() => { window.location.href = '/login'; }, 400);
     }
     if (err.response?.status === 429) {
       const d = err.response.data?.detail || {};
