@@ -12,7 +12,7 @@ import hashlib
 import logging
 from typing import List, Optional
 from llm import complete
-from config import MODEL_SCORER
+from config import MODEL_SCORER, SCORE_DIMENSIONS
 from utils.llm_json import parse_llm_json
 from utils import cache as result_cache
 
@@ -41,8 +41,29 @@ async def _llm_complete(
     except ValueError:
         _logger.error("scorer JSON parse failed — retrying once. raw (first 500): %s", raw[:500])
         response2 = await complete(full_prompt, MODEL_SCORER, response_format=response_format, cached_prefix=cached_prefix)
-        parsed2 = parse_llm_json(response2["text"])  # raises if still bad
+        try:
+            parsed2 = parse_llm_json(response2["text"])
+        except ValueError:
+            _logger.error("scorer JSON parse failed twice — degrading to empty result (safe defaults)")
+            parsed2 = {}
         return parsed2, response2.get("cost_usd", 0.0), response2.get("input_tokens", 0), response2.get("output_tokens", 0)
+
+
+def _normalize_scores(result: dict) -> dict:
+    """Guarantee every scoring dimension is a dict with an int score in [0, 100], so
+    downstream aggregation never KeyErrors on a schema-non-conforming response."""
+    if not isinstance(result, dict):
+        result = {}
+    for section in SCORE_DIMENSIONS:
+        sec = result.get(section)
+        if not isinstance(sec, dict):
+            sec = {}
+            result[section] = sec
+        score = sec.get("score", 0)
+        sec["score"] = max(0, min(100, score)) if isinstance(score, (int, float)) else 0
+    overall = result.get("overall", 0)
+    result["overall"] = max(0, min(100, overall)) if isinstance(overall, (int, float)) else 0
+    return result
 
 
 # ── All 5 scores in one LLM call ─────────────────────────────────────────────
@@ -55,8 +76,13 @@ async def score_combined(
     required_hard_skills: Optional[List[str]] = None,
 ) -> dict:
     """Return structured scoring across 5 dimensions with calibration rubric."""
-    # Result cache: key over stable inputs — same resume+JD+seniority always yields the same score
-    cache_key = hashlib.sha256(f"{resume_text}||{jd_text}||{seniority_level}".encode()).hexdigest()
+    # Result cache: key over EVERY input that feeds the scoring prompt, so two runs that
+    # differ only in jd_keywords or required_hard_skills don't collide on a stale score.
+    _kw_part  = "|".join(sorted(jd_keywords or []))
+    _req_part = "|".join(sorted(required_hard_skills or []))
+    cache_key = hashlib.sha256(
+        f"{resume_text}||{jd_text}||{seniority_level}||{_kw_part}||{_req_part}".encode()
+    ).hexdigest()
     cached = result_cache.get("score_combined", cache_key)
     if cached is not None:
         return {"text": cached, "tokens": {"input_tokens": 0, "output_tokens": 0}, "cost_usd": 0.0}
@@ -203,25 +229,16 @@ Return the JSON object with ALL fields populated using the exact keys specified.
         prompt, system=None, response_format=response_format, cached_prefix=system
     )
 
-    # Clamp scores to [0, 100]
-    for section in ("ats", "impact", "skills_gap", "readability", "jd_tailoring"):
-        if isinstance(result.get(section), dict) and "score" in result[section]:
-            result[section]["score"] = max(0, min(100, result[section]["score"]))
-    if "overall" in result:
-        result["overall"] = max(0, min(100, result["overall"]))
+    # Guarantee shape + clamp scores to [0, 100] so every caller can subscript safely.
+    result = _normalize_scores(result)
 
-    # If schema-valid but all five sub-scores are 0 — retry once, then accept
-    if all(result.get(s, {}).get("score", 0) == 0
-           for s in ("ats", "impact", "skills_gap", "readability", "jd_tailoring")):
+    # If schema-valid but all sub-scores are 0 — retry once, then accept.
+    if all(result[s]["score"] == 0 for s in SCORE_DIMENSIONS):
         _logger.warning("scorer returned all-zero scores — retrying once")
         result, cost_usd, input_tokens, output_tokens = await _llm_complete(
             prompt, system=None, response_format=response_format, cached_prefix=system
         )
-        for section in ("ats", "impact", "skills_gap", "readability", "jd_tailoring"):
-            if isinstance(result.get(section), dict) and "score" in result[section]:
-                result[section]["score"] = max(0, min(100, result[section]["score"]))
-        if "overall" in result:
-            result["overall"] = max(0, min(100, result["overall"]))
+        result = _normalize_scores(result)
 
     result_cache.set("score_combined", cache_key, value=result)
     return {

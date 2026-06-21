@@ -33,7 +33,7 @@ from agents.tools import (
     section_humanize,
     skills_rewrite,
 )
-from config import AGENT_MAX_ITER, AGENT_TOKEN_BUDGET, MODEL_OPTIMIZER, SCORE_TARGET
+from config import AGENT_MAX_ITER, AGENT_TOKEN_BUDGET, MODEL_OPTIMIZER, SCORE_DIMENSIONS, SCORE_TARGET
 from llm import complete_with_tools
 from observability.trace import set_call_kind
 
@@ -243,6 +243,7 @@ async def run_agent(
     ]
 
     current_scores = scores
+    last_scored_draft = original_resume  # baseline `scores` were computed on this text
     iterations = 0
     # Guard result is initialised so we always have something to reference
     # even if the loop exits early (e.g. budget exceeded before first reflection).
@@ -314,25 +315,28 @@ async def run_agent(
         draft = state.reassemble()
         guard = fabrication_guard(draft, ledger, original_resume)
 
-        # Re-score the current draft
-        try:
-            score_result = await score_combined(
-                draft, jd_text, jd_keywords,
-                seniority_level=seniority_level,
-                required_hard_skills=required_hard_skills,
-            )
-            rescored = score_result.get("text", {})
-            if rescored:
-                current_scores = rescored
-            score_tokens = score_result.get("tokens", {})
-            state.add_tokens(score_tokens.get("input_tokens", 0), score_tokens.get("output_tokens", 0), score_result.get("cost_usd", 0.0))
-        except Exception as exc:
-            _logger.warning("Re-score failed (%s) — using prior scores for reflection", exc)
+        # Re-score the current draft — skip the LLM call when the inner loop changed
+        # nothing (draft identical to what we last scored), reusing current_scores.
+        if draft != last_scored_draft:
+            try:
+                score_result = await score_combined(
+                    draft, jd_text, jd_keywords,
+                    seniority_level=seniority_level,
+                    required_hard_skills=required_hard_skills,
+                )
+                rescored = score_result.get("text", {})
+                if rescored:
+                    current_scores = rescored
+                last_scored_draft = draft
+                score_tokens = score_result.get("tokens", {})
+                state.add_tokens(score_tokens.get("input_tokens", 0), score_tokens.get("output_tokens", 0), score_result.get("cost_usd", 0.0))
+            except Exception as exc:
+                _logger.warning("Re-score failed (%s) — using prior scores for reflection", exc)
 
         overall = current_scores.get("overall", 0)
         all_above = all(
             current_scores.get(d, {}).get("score", 0) >= _SCORE_TARGET
-            for d in ("ats", "impact", "skills_gap", "readability", "jd_tailoring")
+            for d in SCORE_DIMENSIONS
         )
 
         _logger.info(

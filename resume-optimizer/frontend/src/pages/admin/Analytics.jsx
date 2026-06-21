@@ -47,7 +47,7 @@ export default function Analytics() {
 
   const costData = (analytics?.daily_costs || []).map(d => ({
     ...d,
-    cost_usd: +(d.cost_cents / 100).toFixed(2),
+    cost_usd: +(((d.cost_cents || 0) / 100).toFixed(2)),
   }));
 
   const sourceData = Object.entries(analytics?.source_counts || {}).map(([source, count]) => ({ source, count }));
@@ -191,7 +191,7 @@ export default function Analytics() {
                     <tr key={`${m.model}-${i}`} className="border-b border-line/60 hover:bg-surface-2/40 transition-colors">
                       <td className="py-2 font-mono text-[11px] text-ink max-w-[180px] truncate">{m.model}</td>
                       <td className="py-2 text-ink-mute capitalize">{m.provider}</td>
-                      <td className="py-2 text-right font-mono text-ink">{m.calls.toLocaleString()}</td>
+                      <td className="py-2 text-right font-mono text-ink">{(m.calls || 0).toLocaleString()}</td>
                       <td className="py-2 text-right font-mono text-ink-mute">{fmtK(m.input_tokens)}</td>
                       <td className="py-2 text-right font-mono text-ink-mute">{fmtK(m.output_tokens)}</td>
                       <td className="py-2 text-right font-mono font-semibold text-hilite">
@@ -211,7 +211,7 @@ export default function Analytics() {
                     <tr className="text-[11px] text-ink-faint pt-1">
                       <td colSpan={2} className="pt-3">Total ({byModel.window_days}d)</td>
                       <td className="pt-3 text-right font-mono text-ink">
-                        {byModel.models.reduce((s, m) => s + m.calls, 0).toLocaleString()}
+                        {byModel.models.reduce((s, m) => s + (m.calls || 0), 0).toLocaleString()}
                       </td>
                       <td className="pt-3 text-right font-mono text-ink">
                         {fmtK(byModel.models.reduce((s, m) => s + m.input_tokens, 0))}
@@ -220,7 +220,7 @@ export default function Analytics() {
                         {fmtK(byModel.models.reduce((s, m) => s + m.output_tokens, 0))}
                       </td>
                       <td className="pt-3 text-right font-mono font-semibold text-ink">
-                        ${byModel.models.reduce((s, m) => s + m.cost_usd, 0).toFixed(4)}
+                        ${byModel.models.reduce((s, m) => s + (m.cost_usd || 0), 0).toFixed(4)}
                       </td>
                       <td colSpan={2} />
                     </tr>
@@ -255,7 +255,7 @@ export default function Analytics() {
           <ChartState isLoading={loading} empty={!costAudit?.by_source?.length}>
             {costAudit && (
               <p className="text-[11px] text-ink-faint mb-3">
-                {costAudit.total_calls.toLocaleString()} calls in last {costAudit.window_days} days
+                {(costAudit.total_calls || 0).toLocaleString()} calls in last {costAudit.window_days} days
               </p>
             )}
             <div className="space-y-3 mt-1">
@@ -263,7 +263,7 @@ export default function Analytics() {
                 <div key={row.source}>
                   <div className="flex justify-between text-xs mb-1">
                     <span className="text-ink font-mono">{row.source || 'unknown'}</span>
-                    <span className="text-ink-mute">{row.calls.toLocaleString()} calls · {row.pct}% · ${row.total_cost_usd.toFixed(4)}</span>
+                    <span className="text-ink-mute">{(row.calls || 0).toLocaleString()} calls · {row.pct || 0}% · ${(row.total_cost_usd || 0).toFixed(4)}</span>
                   </div>
                   <div className="h-1.5 bg-surface-2 rounded-full overflow-hidden">
                     <div

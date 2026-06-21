@@ -25,7 +25,7 @@ export default function ProfilesPage() {
   async function handleSave(profile, { label, labelConfirmed, sections }) {
     setSavingId(profile.id);
     try {
-      await updateProfile(profile.id, { label, labelConfirmed, sections });
+      await updateProfile(profile.id, { label, label_confirmed: labelConfirmed, sections });
       setExpandedId(null);
     } finally {
       setSavingId(null);

@@ -49,7 +49,7 @@ from config import (
     MODEL_SKILLS_REWRITE,
 )
 from llm import complete
-from utils.section_parser import SECTION_ORDER
+from utils.section_parser import reassemble as _reassemble_sections
 
 
 # ── Shared session state ──────────────────────────────────────────────────────
@@ -116,17 +116,13 @@ class ResumeState:
     # ── Reassembly ────────────────────────────────────────────────────────────
 
     def reassemble(self) -> str:
-        """Return the full resume text in canonical section order."""
+        """Return the full resume text in canonical section order.
+
+        Delegates to utils.section_parser.reassemble so the assembled draft stays
+        byte-identical to the before/after diff the optimization report renders.
+        """
         with self._lock:
-            parts: list = []
-            for name in SECTION_ORDER:
-                text = self._sections.get(name, "").strip()
-                if text:
-                    parts.append(text)
-            for name, text in self._sections.items():
-                if name not in SECTION_ORDER and text.strip():
-                    parts.append(text.strip())
-        return "\n\n".join(parts)
+            return _reassemble_sections(dict(self._sections))
 
 
 # ── Budget helper ─────────────────────────────────────────────────────────────

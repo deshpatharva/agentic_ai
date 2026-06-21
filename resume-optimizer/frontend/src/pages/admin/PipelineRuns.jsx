@@ -67,7 +67,7 @@ export default function PipelineRuns() {
     const params = { page, per_page: perPage };
     if (status) params.status = status;
     client.get('/admin/pipeline-runs', { params })
-      .then(r => { setRuns(r.data.results); setTotal(r.data.total); })
+      .then(r => { setRuns(r.data.results || []); setTotal(r.data.total || 0); })
       .catch(() => { setRuns([]); setTotal(0); })
       .finally(() => setLoading(false));
   }, [page, status]);
@@ -140,7 +140,7 @@ export default function PipelineRuns() {
                   <td className="px-4 py-3 text-ink-faint truncate max-w-[140px]">{r.filename}</td>
                   <td className="px-4 py-3 text-right font-mono text-ink">{r.final_score ?? '—'}</td>
                   <td className="px-4 py-3 text-right font-mono text-ink-mute">{r.iterations}</td>
-                  <td className="px-4 py-3 text-right font-mono text-ink-mute">${r.cost_usd?.toFixed(3)}</td>
+                  <td className="px-4 py-3 text-right font-mono text-ink-mute">{r.cost_usd != null ? `$${r.cost_usd.toFixed(3)}` : '—'}</td>
                   <td className="px-4 py-3 text-right font-mono text-ink-mute">{r.tokens != null ? r.tokens.toLocaleString() : '—'}</td>
                   <td className="px-4 py-3 text-right font-mono text-ink-mute">{formatDuration(r.duration_s)}</td>
                   <td className="px-4 py-3 text-ink-faint text-xs whitespace-nowrap">{new Date(r.created_at).toLocaleString()}</td>

@@ -26,6 +26,12 @@ export default function Settings() {
       .catch(() => {});
   }, []);
 
+  // Keep the form in sync with the user record once it hydrates / refreshes, so a
+  // null-at-first-paint user can't lead to saving a blank name/email over the account.
+  useEffect(() => {
+    if (user) setForm({ full_name: user.full_name || '', email: user.email || '' });
+  }, [user]);
+
   const save = async (e) => {
     e.preventDefault();
     setSaving(true);

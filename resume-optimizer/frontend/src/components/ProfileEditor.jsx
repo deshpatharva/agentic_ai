@@ -8,8 +8,26 @@ export default function ProfileEditor({ initialLabel = '', initialSections = {},
   const [label, setLabel] = useState(initialLabel);
   const [labelConfirmed, setLabelConfirmed] = useState(false);
   const [summary, setSummary] = useState(initialSections.summary || '');
-  const [experience, setExperience] = useState(initialSections.experience || []);
-  const [education, setEducation] = useState(initialSections.education || []);
+  // Normalize so each item has string fields + a bullets array — server-parsed
+  // sections may omit fields, which would crash exp.bullets.map() or render
+  // uncontrolled inputs.
+  const [experience, setExperience] = useState(() =>
+    (initialSections.experience || []).map((e) => ({
+      ...e,
+      company: e?.company || '',
+      title:   e?.title || '',
+      dates:   e?.dates || '',
+      bullets: Array.isArray(e?.bullets) ? e.bullets : [],
+    }))
+  );
+  const [education, setEducation] = useState(() =>
+    (initialSections.education || []).map((e) => ({
+      ...e,
+      institution: e?.institution || '',
+      degree:      e?.degree || '',
+      dates:       e?.dates || '',
+    }))
+  );
   const [skills, setSkills] = useState(initialSections.skills || []);
   const [contact, setContact] = useState({
     full_name: '', location: '', email: '', phone: '', linkedin: '', website: '',
