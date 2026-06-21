@@ -19,16 +19,11 @@ from agents.tools import ResumeState
 from agents.rewriter import rewrite_resume
 from agents.verifier import verify_final_draft
 import config
-from config import SCORE_TARGET
 from orchestration.agent_loop import run_agent
 from orchestration.debate_loop import run_debate
 from utils.section_parser import detect_sections
 
 _logger = logging.getLogger(__name__)
-
-# Retained for the score-threshold contract checked by tests; the A+C agent loop
-# itself now targets SCORE_TARGET directly via agent_loop._SCORE_TARGET.
-_WORK_THRESHOLD = max(75, SCORE_TARGET - 10)
 
 
 async def run_optimization_async(

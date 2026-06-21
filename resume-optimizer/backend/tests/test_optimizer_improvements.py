@@ -11,15 +11,6 @@ os.environ.setdefault("GROQ_API_KEY", "test")
 _BACKEND = Path(__file__).parent.parent
 
 
-def test_optimizer_threshold_constant_defined():
-    """_WORK_THRESHOLD must be defined as max(75, SCORE_TARGET - 10)."""
-    source = (_BACKEND / "orchestration" / "optimizer.py").read_text(encoding="utf-8")
-    assert "_WORK_THRESHOLD" in source, "_WORK_THRESHOLD constant not defined in optimizer.py"
-    # Accept either the computed literal or the expression
-    assert "SCORE_TARGET - 10" in source or "max(75" in source, \
-        "_WORK_THRESHOLD must use max(75, SCORE_TARGET-10)"
-
-
 def test_optimizer_list_caps_increased():
     """missing_keywords, weak_bullets, missing_skills caps must be 15/8/15."""
     source = (_BACKEND / "orchestration" / "optimizer.py").read_text(encoding="utf-8")
