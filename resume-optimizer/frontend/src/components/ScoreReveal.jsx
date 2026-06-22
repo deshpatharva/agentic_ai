@@ -3,10 +3,11 @@ import { useCountUp } from '../motion';
 import { buildDownloadUrl } from '../api/client';
 
 const SUBSCORES = [
-  { key: 'ats',         label: 'ATS Match' },
-  { key: 'impact',      label: 'Impact' },
-  { key: 'skills_gap',  label: 'Skills Gap' },
-  { key: 'readability', label: 'Readability' },
+  { key: 'ats',           label: 'ATS Match' },
+  { key: 'impact',        label: 'Impact' },
+  { key: 'skills_gap',    label: 'Skills Gap' },
+  { key: 'readability',   label: 'Readability' },
+  { key: 'jd_tailoring',  label: 'JD Tailoring' },
 ];
 
 function SubScore({ label, value, delay }) {

@@ -34,6 +34,7 @@ SCORE DIMENSIONS — what each one measures:
 - Impact: bullet quality and quantifiable achievements. Low = vague bullets without metrics.
 - Skills Gap: required hard skills absent from the resume. Low = specific tools/technologies missing.
 - Readability: language clarity, active voice, structure. Low = passive phrasing, weak formatting.
+- JD Tailoring: how specifically the resume is customized for the target role. Low = generic language not aligned with the JD.
 
 WHEN ASKED TO IMPROVE A SCORE (use RESULT STATE facts — never invent):
 1. ATS Match low → List up to 3 missing keywords from RESULT STATE. Ask: "Do you have real \
@@ -172,7 +173,8 @@ def render_system_prompt(context: dict) -> str:
             result_lines.append(
                 f"- Score improved from {report.get('baseline_score')} to {report.get('final_score')} "
                 f"(ATS {sc.get('ats')}, Impact {sc.get('impact')}, Skills Gap {sc.get('skills_gap')}, "
-                f"Readability {sc.get('readability')}) over {report.get('iterations')} iteration(s)."
+                f"Readability {sc.get('readability')}, JD Tailoring {sc.get('jd_tailoring')}) "
+                f"over {report.get('iterations')} iteration(s)."
             )
             if report.get("gaps_addressed"):
                 result_lines.append(
