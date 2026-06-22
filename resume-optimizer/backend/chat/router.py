@@ -175,6 +175,7 @@ async def _get_owned_session(session_id: str, user_id, db: AsyncSession) -> Chat
 
 
 _URL_RE = re.compile(r"^https?://", re.I)
+_PICKER_RE = re.compile(r'^Use my "(.+)" profile$')
 
 
 async def _resolve_jd(message: str, db: AsyncSession) -> tuple[str | None, bool]:
@@ -477,17 +478,33 @@ async def optimize_chat(
         download = next((c for c in tool_calls if c["name"] == DOWNLOAD_TOOL), None)
         edit = next((c for c in tool_calls if c["name"] == EDIT_TOOL), None)
 
-        # Persist the assistant's visible text (may be empty if it only called a tool).
-        async with AsyncSessionLocal() as wdb:
-            wdb.add(ChatMessage(
-                session_id=session.id,
-                role="assistant",
-                content=text,
-                input_tokens=usage["input_tokens"],
-                output_tokens=usage["output_tokens"],
-                created_at=datetime.now(timezone.utc),
-            ))
-            await wdb.commit()
+        # Fallback: when the model returns no text AND no tool call, check
+        # whether this is a profile-picker click.  The picker sends exactly
+        # 'Use my "<label>" profile' — treat it as a confirmed launch so the
+        # user isn't stuck with "Sorry, I didn't catch that" on model hiccups.
+        if not text and not tool_calls:
+            picker_match = _PICKER_RE.match(body.message.strip())
+            if (picker_match
+                    and ctx.get("jd_text")
+                    and not ctx.get("_optimizer_launched")):
+                label = picker_match.group(1)
+                profile = next(
+                    (p for p in prompt_ctx.get("profiles", [])
+                     if (p.get("label") or "").lower() == label.lower()),
+                    None,
+                )
+                if profile:
+                    launch = {
+                        "name": LAUNCH_TOOL,
+                        "arguments": {
+                            "profile_id": profile["id"],
+                            "added_context": "",
+                        },
+                    }
+                    _logger.info(
+                        "profile-picker fallback: auto-launching with %s",
+                        profile["label"],
+                    )
 
         # Display text — synthesize a line if the model only called a tool silently.
         display = text or (
@@ -497,6 +514,20 @@ async def optimize_chat(
             else "Editing your resume…" if edit
             else "Sorry, I didn't catch that. Could you rephrase?"
         )
+
+        # Persist the assistant's visible text.  Use `display` (not raw model
+        # `text`) so that page-reload shows the same line the user saw live.
+        async with AsyncSessionLocal() as wdb:
+            wdb.add(ChatMessage(
+                session_id=session.id,
+                role="assistant",
+                content=display,
+                input_tokens=usage["input_tokens"],
+                output_tokens=usage["output_tokens"],
+                created_at=datetime.now(timezone.utc),
+            ))
+            await wdb.commit()
+
         yield {"event": "final", "data": json.dumps({"content": display})}
 
         # ── Launch ──────────────────────────────────────────────────────────
