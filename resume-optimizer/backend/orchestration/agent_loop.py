@@ -29,6 +29,7 @@ from agents.tools import (
     ResumeState,
     bullet_strengthen,
     bullets_reorder,
+    critique_resume,
     keyword_inject,
     section_humanize,
     skills_rewrite,
@@ -144,6 +145,23 @@ TOOL_DEFS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "critique_resume",
+            "description": "Run a critic over the full resume draft to get qualitative feedback on what still reads weak, robotic, or generic. Returns structured issues (robotic phrases, weak bullets, keyword stuffing, tone issues, structural issues). Call this to understand what needs fixing before deciding which tools to use.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "focus_areas_csv": {
+                        "type": "string",
+                        "description": "Optional comma-separated areas to focus on (e.g. 'robotic language,weak bullets'). Leave empty for full critique.",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 # ── Tool dispatch table ───────────────────────────────────────────────────────
@@ -154,6 +172,7 @@ TOOL_MAP: dict[str, Callable] = {
     "skills_rewrite":    skills_rewrite,
     "section_humanize":  section_humanize,
     "bullets_reorder":   bullets_reorder,
+    "critique_resume":   critique_resume,
 }
 
 
@@ -260,7 +279,7 @@ async def run_agent(
                 )
                 break
 
-            result = await complete_with_tools(messages, MODEL_OPTIMIZER, TOOL_DEFS)
+            result = await complete_with_tools(messages, MODEL_OPTIMIZER, TOOL_DEFS, cache_system=True)
             state.add_tokens(
                 result["input_tokens"],
                 result["output_tokens"],

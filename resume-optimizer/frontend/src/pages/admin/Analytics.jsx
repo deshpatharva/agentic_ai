@@ -18,6 +18,7 @@ export default function Analytics() {
   const [tokens,     setTokens]     = useState(null);
   const [byModel,    setByModel]    = useState(null);
   const [costAudit,  setCostAudit]  = useState(null);
+  const [cacheStats, setCacheStats] = useState(null);
   const [days,       setDays]       = useState(30);
   const [loading,    setLoading]    = useState(true);
   const [error,      setError]      = useState(null);
@@ -31,6 +32,7 @@ export default function Analytics() {
       client.get('/admin/analytics/tokens', { params: { days } }).then(r => setTokens(r.data)),
       client.get('/admin/analytics/by-model',{ params: { days } }).then(r => setByModel(r.data)),
       client.get('/admin/analytics/cost-audit',{ params: { days } }).then(r => setCostAudit(r.data)),
+      client.get('/admin/analytics/cache-efficiency',{ params: { days } }).then(r => setCacheStats(r.data)),
     ]).then((results) => {
       const failed = results[0].status === 'rejected' ? results[0] : null;
       if (failed) setError(failed.reason?.response?.data?.detail || failed.reason?.message);
@@ -284,7 +286,70 @@ export default function Analytics() {
         </ChartCard>
       </div>
 
-      {/* ── Row 5: Provider pricing + Job match sources ──────────────────────── */}
+      {/* ── Row 5: Context cache efficiency ───────────────────────────────────── */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
+        <ChartCard title="Cache hit rate (daily)">
+          <ChartState isLoading={loading} empty={!cacheStats?.daily?.length}>
+            {cacheStats && (
+              <div className="flex gap-6 text-[11px] text-ink-faint mb-3">
+                <span>Hit rate: <span className="font-mono text-ink font-semibold">{cacheStats.cache_hit_rate_pct}%</span></span>
+                <span>Cached tokens: <span className="font-mono text-ink">{fmtK(cacheStats.total_cached_tokens)}</span></span>
+                <span>Est. savings: <span className="font-mono text-primary font-semibold">{formatUsd(cacheStats.estimated_savings_usd)}</span></span>
+              </div>
+            )}
+            <ResponsiveContainer width="100%" height={220}>
+              <AreaChart data={cacheStats?.daily || []}>
+                <defs>
+                  <linearGradient id="cacheGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={CHART.green} stopOpacity={0.3} />
+                    <stop offset="95%" stopColor={CHART.green} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} />
+                <XAxis dataKey="date" tick={CHART.tick} tickFormatter={d => d.slice(5)} />
+                <YAxis tick={CHART.tick} tickFormatter={v => `${v}%`} domain={[0, 100]} />
+                <Tooltip contentStyle={CHART.tooltip} formatter={(v, name) => [name === 'hit_rate_pct' ? `${v}%` : fmtK(v), name === 'hit_rate_pct' ? 'Hit rate' : 'Cached tokens']} />
+                <Area type="monotone" dataKey="hit_rate_pct" stroke={CHART.green} fill="url(#cacheGrad)" strokeWidth={2} name="hit_rate_pct" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </ChartState>
+        </ChartCard>
+
+        <ChartCard title="Cache efficiency by call kind">
+          <ChartState isLoading={loading} empty={!cacheStats?.by_call_kind?.length}>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-line text-ink-faint text-xs uppercase tracking-wide">
+                    <th className="py-2 text-left">Call kind</th>
+                    <th className="py-2 text-right">Calls</th>
+                    <th className="py-2 text-right">Hits</th>
+                    <th className="py-2 text-right">Hit rate</th>
+                    <th className="py-2 text-right">Cached tok</th>
+                    <th className="py-2 text-right">Cost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(cacheStats?.by_call_kind || []).map((r, i) => (
+                    <tr key={`${r.call_kind}-${i}`} className="border-b border-line/60 hover:bg-surface-2/40 transition-colors">
+                      <td className="py-2 font-mono text-[11px] text-ink">{r.call_kind}</td>
+                      <td className="py-2 text-right font-mono text-ink-mute">{r.calls.toLocaleString()}</td>
+                      <td className="py-2 text-right font-mono text-ink-mute">{r.cache_hits.toLocaleString()}</td>
+                      <td className="py-2 text-right font-mono font-semibold" style={{ color: r.hit_rate_pct > 50 ? CHART.green : r.hit_rate_pct > 0 ? CHART.amber : CHART.neutral }}>
+                        {r.hit_rate_pct}%
+                      </td>
+                      <td className="py-2 text-right font-mono text-ink-mute">{fmtK(r.cached_tokens)}</td>
+                      <td className="py-2 text-right font-mono text-ink-mute">{formatUsd(r.cost_usd)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </ChartState>
+        </ChartCard>
+      </div>
+
+      {/* ── Row 6: Provider pricing + Job match sources ──────────────────────── */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <div className="bg-card border border-line rounded-card p-5">
           <h3 className="text-sm font-semibold text-ink mb-4">LLM provider pricing</h3>

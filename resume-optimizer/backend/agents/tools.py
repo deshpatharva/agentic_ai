@@ -43,6 +43,7 @@ from typing import Dict
 from config import (
     AGENT_TOKEN_BUDGET,
     MODEL_BULLET_STRENGTHEN,
+    MODEL_CRITIQUE,
     MODEL_KEYWORD_INJECT,
     MODEL_OPTIMIZER,
     MODEL_SECTION_HUMANIZE,
@@ -500,3 +501,91 @@ Return ONLY the complete {section_name} section text with bullets reordered."""
         state.update_section(section_name, result["text"])
         return f"Reordered bullets in '{section_name}' by JD relevance."
     return f"Bullet reorder of '{section_name}' returned empty output — section unchanged."
+
+
+# ── Tool 6: Resume critique (qualitative feedback on the whole draft) ────────
+
+
+async def critique_resume(
+    state: ResumeState,
+    focus_areas_csv: str = "",
+) -> str:
+    """
+    Run a critic over the full resume draft and return structured feedback.
+
+    The strategist can call this at any point to get qualitative feedback
+    on what still reads weak, robotic, or generic — then decide which
+    fix tools to call based on the critique.
+
+    Args:
+        state: The ResumeState for this optimisation session.
+        focus_areas_csv: Optional comma-separated areas to focus critique on
+            (e.g. "robotic language,weak bullets,keyword stuffing"). Empty
+            means critique everything.
+
+    Returns:
+        Structured feedback string the strategist can act on.
+    """
+    ok, msg = _budget_ok(state)
+    if not ok:
+        return msg
+
+    draft = state.reassemble()
+    if not draft.strip():
+        return "Resume draft is empty — nothing to critique."
+
+    focus_note = (
+        f"Focus your critique on: {focus_areas_csv}"
+        if focus_areas_csv.strip()
+        else "Critique all aspects: robotic language, weak bullets, keyword stuffing, tone, structure."
+    )
+
+    prompt = f"""You are a senior hiring manager reviewing a resume. Be specific and actionable.
+
+{focus_note}
+
+For each issue you find, quote the exact phrase from the resume that needs fixing.
+
+Return ONLY a JSON object with these keys (omit any key with an empty list):
+- "robotic_phrases": list of exact phrases that sound robotic or AI-generated
+- "weak_bullets": list of bullet texts that lack impact or measurable outcomes
+- "keyword_stuffing": list of phrases where keywords feel forced or unnatural
+- "tone_issues": list of phrases where tone doesn't match a professional resume
+- "structural_issues": list of section-level problems (ordering, missing info, redundancy)
+
+Resume:
+\"\"\"
+{draft}
+\"\"\"
+
+JSON:"""
+
+    try:
+        result = await complete(prompt, MODEL_CRITIQUE, response_format={"type": "json_object"})
+    except Exception as exc:
+        return f"Critique LLM call failed: {exc}"
+
+    state.add_tokens(
+        result.get("input_tokens", 0),
+        result.get("output_tokens", 0),
+        result.get("cost_usd", 0.0),
+    )
+
+    import json
+    raw = result.get("text", "").strip()
+    try:
+        feedback = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return f"Critique returned non-JSON: {raw[:300]}"
+
+    parts = []
+    for key in ("robotic_phrases", "weak_bullets", "keyword_stuffing", "tone_issues", "structural_issues"):
+        items = feedback.get(key, [])
+        if items:
+            label = key.replace("_", " ").title()
+            parts.append(f"{label}: {'; '.join(str(i) for i in items[:5])}")
+
+    if not parts:
+        return "Critique found no issues — resume reads well."
+
+    return " | ".join(parts)
