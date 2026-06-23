@@ -27,6 +27,7 @@ because CrewAI catches those in some versions — early return is more reliable.
 
 import asyncio
 import threading
+from datetime import datetime
 from typing import Dict, Optional
 
 from crewai import Agent
