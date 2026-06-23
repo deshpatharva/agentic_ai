@@ -95,6 +95,20 @@ async def run_optimization_async(
         job_id, plan, config.PRO_DEBATE_ENABLED, driver.__name__,
     )
 
+    if on_event:
+        if use_debate:
+            on_event({
+                "type":    "stage",
+                "message": f"Pro debate mode active — running {driver.__name__} (plan={plan}, PRO_DEBATE_ENABLED={config.PRO_DEBATE_ENABLED})",
+                "stage":   "agent",
+            })
+        else:
+            on_event({
+                "type":    "stage",
+                "message": f"Standard mode — running {driver.__name__} (plan={plan}, PRO_DEBATE_ENABLED={config.PRO_DEBATE_ENABLED})",
+                "stage":   "agent",
+            })
+
     # ── Run selected driver ───────────────────────────────────────────────────
     try:
         result = await driver(

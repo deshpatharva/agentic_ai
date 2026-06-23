@@ -78,7 +78,7 @@ async def test_second_deactivation_same_provider_no_integrity_error(tmp_path):
             await db.execute(
                 select(ProviderCost).where(
                     ProviderCost.provider == "google",
-                    ProviderCost.active == False,
+                    ProviderCost.active.is_(False),
                 )
             )
         ).scalars().all()

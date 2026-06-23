@@ -77,6 +77,7 @@ MODEL_KEYWORD_INJECT     = "gemini/gemini-3.1-flash-lite"   # ATS tool — cheap
 MODEL_BULLET_STRENGTHEN  = "gemini/gemini-3.1-flash-lite"   # Impact tool
 MODEL_SKILLS_REWRITE     = "gemini/gemini-3.1-flash-lite"   # Skills gap tool
 MODEL_SECTION_HUMANIZE   = "gemini/gemini-3.1-flash-lite"   # Readability tool
+MODEL_CRITIQUE           = "groq/llama-3.1-8b-instant"     # Whole-resume critic — cheap structured feedback
 
 # Phase 2 hard limits
 AGENT_MAX_ITER     = 10       # max CrewAI agent iterations before forced stop
@@ -147,5 +148,5 @@ STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
 
 # ── Tier gating ──────────────────────────────────────────────────────────────
 # Pro-tier 2-agent debate loop. Env-driven so it can be toggled per environment;
-# default OFF for beta (set PRO_DEBATE_ENABLED=true to enable).
-PRO_DEBATE_ENABLED  = os.environ.get("PRO_DEBATE_ENABLED", "false").lower() in ("1", "true", "yes")
+# default ON — set PRO_DEBATE_ENABLED=false to disable.
+PRO_DEBATE_ENABLED  = os.environ.get("PRO_DEBATE_ENABLED", "true").lower() in ("1", "true", "yes")
