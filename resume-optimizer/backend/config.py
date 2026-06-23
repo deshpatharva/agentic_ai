@@ -148,5 +148,5 @@ STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
 
 # ── Tier gating ──────────────────────────────────────────────────────────────
 # Pro-tier 2-agent debate loop. Env-driven so it can be toggled per environment;
-# default OFF for beta (set PRO_DEBATE_ENABLED=true to enable).
-PRO_DEBATE_ENABLED  = os.environ.get("PRO_DEBATE_ENABLED", "false").lower() in ("1", "true", "yes")
+# default ON — set PRO_DEBATE_ENABLED=false to disable.
+PRO_DEBATE_ENABLED  = os.environ.get("PRO_DEBATE_ENABLED", "true").lower() in ("1", "true", "yes")
