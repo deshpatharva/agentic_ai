@@ -31,7 +31,6 @@ from agents.tools import (
     bullets_reorder,
     critique_resume,
     keyword_inject,
-    section_humanize,
     skills_rewrite,
 )
 from config import AGENT_MAX_ITER, AGENT_TOKEN_BUDGET, MODEL_OPTIMIZER, SCORE_DIMENSIONS, SCORE_TARGET
@@ -106,27 +105,6 @@ TOOL_DEFS = [
     {
         "type": "function",
         "function": {
-            "name": "section_humanize",
-            "description": "Polish language and readability in a specific resume section. Call when Readability score is below target.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "section_name": {
-                        "type": "string",
-                        "description": "Section to polish: summary, experience, skills, or education",
-                    },
-                    "issues_csv": {
-                        "type": "string",
-                        "description": "Comma-separated issues from Readability score. Leave empty for general polish.",
-                    },
-                },
-                "required": ["section_name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "bullets_reorder",
             "description": "Reorder bullets in an experience section so the most JD-relevant bullets appear first. Call when JD Tailoring score is below target due to bullet ordering.",
             "parameters": {
@@ -170,7 +148,6 @@ TOOL_MAP: dict[str, Callable] = {
     "keyword_inject":    keyword_inject,
     "bullet_strengthen": bullet_strengthen,
     "skills_rewrite":    skills_rewrite,
-    "section_humanize":  section_humanize,
     "bullets_reorder":   bullets_reorder,
     "critique_resume":   critique_resume,
 }
@@ -202,11 +179,15 @@ Call tools only for dimensions marked NEEDS WORK. When all needed tools have bee
 
 def _build_scores_context(scores: dict) -> str:
     """Volatile scores block — injected as a user message so the system prompt
-    stays cacheable across reflections."""
+    stays cacheable across reflections.
+
+    Readability is intentionally omitted — a dedicated humanize stage runs
+    after the agent loop and handles language polish, so the optimizer should
+    not waste tool calls trying to fix readability.
+    """
     ats    = scores.get("ats", {})
     impact = scores.get("impact", {})
     skills = scores.get("skills_gap", {})
-    read   = scores.get("readability", {})
     tailor = scores.get("jd_tailoring", {})
 
     def _s(d: dict) -> int:
@@ -222,9 +203,6 @@ def _build_scores_context(scores: dict) -> str:
     weak_bullets: {', '.join(impact.get('weak_bullets', [])[:8])}
   Skills Gap:   {_s(skills):>3}  [{_flag(skills)}]
     missing_skills: {', '.join(skills.get('missing_skills', [])[:15])}
-  Readability:  {_s(read):>3}  [{_flag(read)}]
-    worst_section: {read.get('worst_section', 'experience')}
-    issues: {', '.join(read.get('issues', [])[:4])}
   JD Tailoring: {_s(tailor):>3}  [{_flag(tailor)}]
     issues: {', '.join(tailor.get('issues', [])[:3])}
 
