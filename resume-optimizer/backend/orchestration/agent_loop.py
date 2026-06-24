@@ -31,7 +31,6 @@ from agents.tools import (
     bullets_reorder,
     critique_resume,
     keyword_inject,
-    section_humanize,
     skills_rewrite,
 )
 from config import AGENT_MAX_ITER, AGENT_TOKEN_BUDGET, MODEL_OPTIMIZER, SCORE_DIMENSIONS, SCORE_TARGET
@@ -79,7 +78,7 @@ TOOL_DEFS = [
                 "properties": {
                     "weak_bullets_csv": {
                         "type": "string",
-                        "description": "Comma-separated weak bullet texts verbatim from the Impact score",
+                        "description": "Pipe-separated (|) weak bullet texts verbatim from the Impact score's weak_bullets. Use pipe — NOT comma — because bullet text frequently contains commas.",
                     },
                 },
                 "required": ["weak_bullets_csv"],
@@ -100,27 +99,6 @@ TOOL_DEFS = [
                     },
                 },
                 "required": ["missing_skills_csv"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "section_humanize",
-            "description": "Polish language and readability in a specific resume section. Call when Readability score is below target.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "section_name": {
-                        "type": "string",
-                        "description": "Section to polish: summary, experience, skills, or education",
-                    },
-                    "issues_csv": {
-                        "type": "string",
-                        "description": "Comma-separated issues from Readability score. Leave empty for general polish.",
-                    },
-                },
-                "required": ["section_name"],
             },
         },
     },
@@ -170,7 +148,6 @@ TOOL_MAP: dict[str, Callable] = {
     "keyword_inject":    keyword_inject,
     "bullet_strengthen": bullet_strengthen,
     "skills_rewrite":    skills_rewrite,
-    "section_humanize":  section_humanize,
     "bullets_reorder":   bullets_reorder,
     "critique_resume":   critique_resume,
 }
@@ -195,18 +172,21 @@ def _build_system_stable(jd_keywords: list, available_sections: list,
     return f"""{instruction_block}You are a Resume Optimization Strategist. Your job is to raise all resume scores above {_SCORE_TARGET} using the available tools.
 
 AVAILABLE RESUME SECTIONS: {', '.join(available_sections)}
-JD KEYWORDS (context only): {', '.join(jd_keywords[:20])}
 
 Call tools only for dimensions marked NEEDS WORK. When all needed tools have been called, output a brief summary and stop calling tools."""
 
 
 def _build_scores_context(scores: dict) -> str:
     """Volatile scores block — injected as a user message so the system prompt
-    stays cacheable across reflections."""
+    stays cacheable across reflections.
+
+    Readability is intentionally omitted — a dedicated humanize stage runs
+    after the agent loop and handles language polish, so the optimizer should
+    not waste tool calls trying to fix readability.
+    """
     ats    = scores.get("ats", {})
     impact = scores.get("impact", {})
     skills = scores.get("skills_gap", {})
-    read   = scores.get("readability", {})
     tailor = scores.get("jd_tailoring", {})
 
     def _s(d: dict) -> int:
@@ -222,9 +202,6 @@ def _build_scores_context(scores: dict) -> str:
     weak_bullets: {', '.join(impact.get('weak_bullets', [])[:8])}
   Skills Gap:   {_s(skills):>3}  [{_flag(skills)}]
     missing_skills: {', '.join(skills.get('missing_skills', [])[:15])}
-  Readability:  {_s(read):>3}  [{_flag(read)}]
-    worst_section: {read.get('worst_section', 'experience')}
-    issues: {', '.join(read.get('issues', [])[:4])}
   JD Tailoring: {_s(tailor):>3}  [{_flag(tailor)}]
     issues: {', '.join(tailor.get('issues', [])[:3])}
 
@@ -370,9 +347,13 @@ async def run_agent(
                 _logger.warning("Re-score failed (%s) — using prior scores for reflection", exc)
 
         overall = current_scores.get("overall", 0)
+        # Readability is excluded — the post-loop humanize stage owns it, and the
+        # optimizer has no tool to raise it. Including it here would block the
+        # done-check indefinitely whenever readability lags the other dimensions.
+        _agent_dims = tuple(d for d in SCORE_DIMENSIONS if d != "readability")
         all_above = all(
             current_scores.get(d, {}).get("score", 0) >= _SCORE_TARGET
-            for d in SCORE_DIMENSIONS
+            for d in _agent_dims
         )
 
         _logger.info(

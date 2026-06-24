@@ -373,8 +373,8 @@ async def test_phase2_tools_properly_await_complete():
         "agents/tools.py must contain 'await complete(' calls to ensure _record_call fires on the live loop"
 
     # Verify we have at least the main tool implementations using await
-    # (keyword_inject, bullet_strengthen, skills_rewrite, section_humanize)
+    # (keyword_inject, bullet_strengthen, skills_rewrite, bullets_reorder)
     await_count = tools_source.count("await complete(")
     assert await_count >= 4, \
         f"agents/tools.py should have at least 4 'await complete(' calls (keyword_inject, bullet_strengthen, " \
-        f"skills_rewrite, section_humanize), found {await_count}"
+        f"skills_rewrite, bullets_reorder), found {await_count}"
