@@ -72,7 +72,7 @@ MODEL_PROFILE_PARSER  = "gemini/gemini-3.1-flash-lite"
 MODEL_INTERVIEW_SYNTH = "gemini/gemini-3.1-flash-lite"
 
 # Agentic Phase 2 models
-MODEL_OPTIMIZER          = "gemini/gemini-3.5-flash"        # Strategist — needs reasoning
+MODEL_OPTIMIZER          = "anthropic/claude-haiku-4-5"     # Strategist — needs reasoning + tool use
 MODEL_KEYWORD_INJECT     = "gemini/gemini-3.1-flash-lite"   # ATS tool — cheap, fast
 MODEL_BULLET_STRENGTHEN  = "gemini/gemini-3.1-flash-lite"   # Impact tool
 MODEL_SKILLS_REWRITE     = "gemini/gemini-3.1-flash-lite"   # Skills gap tool
