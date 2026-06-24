@@ -26,14 +26,14 @@ export default {
         muted:           'rgb(var(--c-ink-mute) / <alpha-value>)',
       },
       fontFamily: {
-        sans:    ['Archivo', 'system-ui', 'sans-serif'],
-        display: ['Fraunces', 'Georgia', 'serif'],
+        sans:    ['Inter', 'system-ui', 'sans-serif'],
+        display: ['"Space Grotesk"', 'system-ui', 'sans-serif'],
         mono:    ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
       },
       borderRadius: {
-        // editorial: crisp corners, no pills on containers
-        DEFAULT: '8px',
-        card: '10px',
+        // instrument: crisp panels, no pills on containers
+        DEFAULT: '6px',
+        card: '8px',
       },
       boxShadow: {
         card:    'var(--shadow-card)',
