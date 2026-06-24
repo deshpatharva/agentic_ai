@@ -42,6 +42,7 @@ from typing import Dict
 
 from config import (
     AGENT_TOKEN_BUDGET,
+    DEBATE_TOKEN_BUDGET,
     MODEL_BULLET_STRENGTHEN,
     MODEL_CRITIQUE,
     MODEL_KEYWORD_INJECT,
@@ -50,6 +51,7 @@ from config import (
     MODEL_SKILLS_REWRITE,
 )
 from llm import complete
+from observability.trace import current_call_kind
 from utils.section_parser import reassemble as _reassemble_sections
 
 
@@ -130,11 +132,16 @@ class ResumeState:
 
 
 def _budget_ok(state: ResumeState) -> tuple:
-    """Return (True, '') if budget available, (False, message) if exceeded."""
+    """Return (True, '') if budget available, (False, message) if exceeded.
+
+    Picks the budget based on the active call kind so debate gets its larger
+    cap (40K) instead of the single-agent cap (20K).
+    """
+    budget = DEBATE_TOKEN_BUDGET if current_call_kind() == "pro_debate" else AGENT_TOKEN_BUDGET
     total = state.total_tokens()
-    if total >= AGENT_TOKEN_BUDGET:
+    if total >= budget:
         return False, (
-            f"Token budget reached ({total:,}/{AGENT_TOKEN_BUDGET:,}). "
+            f"Token budget reached ({total:,}/{budget:,}). "
             f"Optimization complete — remaining sections unchanged."
         )
     return True, ""
