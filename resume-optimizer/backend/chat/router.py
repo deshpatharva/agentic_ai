@@ -540,7 +540,7 @@ async def optimize_chat(
                 session_id=session.id,
                 role="assistant",
                 content=display,
-                metadata=tool_call_meta,
+                meta=tool_call_meta,
                 input_tokens=usage["input_tokens"],
                 output_tokens=usage["output_tokens"],
                 created_at=datetime.now(timezone.utc),
