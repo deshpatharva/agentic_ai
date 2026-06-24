@@ -96,7 +96,15 @@ async def run_debate(
         if round_idx > 0 and last_objection:
             messages.append({
                 "role": "user",
-                "content": f"The reviewer raised this objection: {last_objection}\nPlease address it.",
+                "content": (
+                    f"The reviewer raised this objection: {last_objection}\n\n"
+                    "Address ONLY this objection. Call at most 1-2 tools that directly "
+                    "target the issue raised. Do NOT re-run a full optimization. Do NOT "
+                    "call keyword_inject, bullet_strengthen, or skills_rewrite unless the "
+                    "objection is specifically about missing keywords, weak bullets, or "
+                    "missing skills. If the objection is about tone, density, or wording, "
+                    "use section_humanize. When the targeted fix is applied, stop calling tools."
+                ),
             })
 
         round_tool_calls = 0
@@ -186,12 +194,21 @@ async def run_debate(
         overall = current_scores.get("overall", 0)
 
         reviewer_prompt = (
-            "You are a skeptical resume reviewer. The optimizer just revised this resume.\n\n"
+            "You are a skeptical resume reviewer. The optimizer just revised this resume "
+            "and can run more tools to address objections.\n\n"
             f"CURRENT RESUME DRAFT:\n{draft}\n\n"
             f"SCORES: overall={overall}\n\n"
-            "Your task: identify ONE specific remaining problem.\n"
-            "If you have no more objections, respond EXACTLY: No objections.\n"
-            "Otherwise respond EXACTLY: OBJECTION: <one specific issue, 20 words or less>"
+            "The optimizer can only fix issues with these tools:\n"
+            "  - keyword_inject: add missing ATS keywords\n"
+            "  - bullet_strengthen: rewrite weak bullets with stronger verbs/metrics\n"
+            "  - skills_rewrite: add missing skills to the skills section\n"
+            "  - section_humanize: fix tone, density, robotic language, metric inflation\n"
+            "  - bullets_reorder: reorder bullets by JD relevance\n\n"
+            "Raise ONE objection that is fixable by these tools. Do NOT raise objections about "
+            "employment gaps, timeline, dates, missing certifications, lack of specific projects, "
+            "or anything requiring new factual information — the optimizer cannot fabricate facts.\n\n"
+            "If you have no more fixable objections, respond EXACTLY: No objections.\n"
+            "Otherwise respond EXACTLY: OBJECTION: <one fixable issue, 20 words or less>"
         )
 
         try:
