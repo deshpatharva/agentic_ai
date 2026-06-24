@@ -43,6 +43,24 @@ resource "azurerm_linux_web_app" "backend" {
     }
   }
 
+  # ── App Service logging ───────────────────────────────────────────────────
+  # REQUIRED for the AppServiceConsoleLogs diagnostic category to receive data.
+  # On Linux App Service, container stdout/stderr is only captured when
+  # application logging is enabled here; without this block logging defaults to
+  # Off and the Log Analytics workspace stays empty despite the diagnostic
+  # setting in monitoring.tf. file_system_level surfaces our JSON stdout logs.
+  logs {
+    application_logs {
+      file_system_level = "Information"
+    }
+    http_logs {
+      file_system {
+        retention_in_days = 7
+        retention_in_mb   = 35
+      }
+    }
+  }
+
   # ── Secrets resolved by App Service from Key Vault at startup ──────────────
   # App Service resolves @Microsoft.KeyVault(...) references before injecting
   # into the process environment. config.py sees plain os.environ values.
