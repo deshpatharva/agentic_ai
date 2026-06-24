@@ -1,7 +1,7 @@
 import { clsx } from 'clsx';
 
 const variants = {
-  primary:   'bg-primary hover:bg-primary-dark text-white dark:text-ink shadow-primary',
+  primary:   'bg-primary hover:bg-primary-dark text-white dark:text-surface shadow-primary',
   secondary: 'bg-card hover:bg-surface-2 text-ink border border-line shadow-card',
   ghost:     'bg-transparent hover:bg-surface-2 text-ink-mute',
   danger:    'bg-err hover:opacity-90 text-white shadow-sm',

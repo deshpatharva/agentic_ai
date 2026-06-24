@@ -45,8 +45,8 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         position="top-right"
         toastOptions={{
           style: {
-            borderRadius: '10px',
-            fontFamily: 'Archivo, sans-serif',
+            borderRadius: '8px',
+            fontFamily: 'Inter, sans-serif',
             background: 'rgb(var(--c-surface))',
             color: 'rgb(var(--c-ink))',
             border: '1px solid rgb(var(--c-line))',

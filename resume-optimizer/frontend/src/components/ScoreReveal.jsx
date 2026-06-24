@@ -49,7 +49,7 @@ export default function ScoreReveal({ finalScore = 0, scores = null, iterations 
         <div className="mb-1">
           <span className="block text-sm text-ink-mute font-medium">/ 100 final score</span>
           <span className="block text-xs text-ink-faint">
-            {improved && <span className="text-primary font-semibold">↑ from {baseline} · </span>}
+            {improved && <span className="font-mono text-primary font-semibold">{baseline} → {Math.round(finalScore)} · </span>}
             {iterations > 0 && `${iterations} iteration${iterations !== 1 ? 's' : ''}`}
           </span>
         </div>
@@ -85,7 +85,7 @@ export default function ScoreReveal({ finalScore = 0, scores = null, iterations 
         <a
           href={buildDownloadUrl(downloadUrl)}
           download
-          className="reveal reveal-4 flex items-center justify-center gap-2 w-full bg-primary hover:bg-primary-dark text-white dark:text-ink py-3 rounded-lg font-semibold shadow-primary transition-colors active:scale-[0.98]"
+          className="reveal reveal-4 flex items-center justify-center gap-2 w-full bg-primary hover:bg-primary-dark text-white dark:text-surface py-3 rounded-lg font-semibold shadow-primary transition-colors active:scale-[0.98]"
         >
           <Download className="w-4 h-4" /> Download Optimized Resume
         </a>

@@ -70,14 +70,14 @@ export default function PipelineProgress({ stage, iteration = 0, score = null, m
                 <div className={clsx(
                   'w-5 h-5 rounded-full flex items-center justify-center border-2 transition-all duration-300',
                   state === 'done'    && 'bg-primary border-primary',
-                  state === 'active'  && 'border-primary bg-card shadow-[0_0_0_3px_rgba(26,107,82,0.15)]',
+                  state === 'active'  && 'border-primary bg-card ring-2 ring-primary/20',
                   state === 'pending' && 'border-line bg-card'
                 )}>
                   {state === 'done'   && <Check className="w-2.5 h-2.5 text-white dark:text-ink" strokeWidth={3} />}
                   {state === 'active' && <span className="w-2 h-2 rounded-full bg-primary stage-pulse" />}
                 </div>
                 <span className={clsx(
-                  'text-[9px] leading-none whitespace-nowrap',
+                  'font-mono text-[9px] leading-none whitespace-nowrap uppercase tracking-wide',
                   state === 'active'  ? 'text-primary font-semibold' :
                   state === 'done'    ? 'text-ink-mute' : 'text-ink-faint'
                 )}>

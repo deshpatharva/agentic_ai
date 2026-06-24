@@ -120,7 +120,7 @@ export default function SessionRail({ activeSessionId, onSelect, onNewChat }) {
       <div className="px-3 py-3 shrink-0 border-b border-line">
         <button
           onClick={onNewChat}
-          className="flex items-center gap-2 w-full px-3 py-2 text-xs font-medium rounded-lg bg-primary text-white dark:text-ink hover:bg-primary-dark shadow-primary transition-all active:scale-95"
+          className="flex items-center gap-2 w-full px-3 py-2 text-xs font-medium rounded-lg bg-primary text-white dark:text-surface hover:bg-primary-dark shadow-primary transition-all active:scale-95"
         >
           <Plus className="w-3.5 h-3.5" />
           New chat

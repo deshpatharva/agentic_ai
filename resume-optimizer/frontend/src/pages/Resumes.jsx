@@ -41,7 +41,7 @@ export default function Resumes() {
             </div>
             <Link
               to="/optimize"
-              className="flex items-center gap-2 px-4 py-2 bg-primary text-white dark:text-ink rounded-lg text-sm font-medium hover:bg-primary-dark transition-colors"
+              className="flex items-center gap-2 px-4 py-2 bg-primary text-white dark:text-surface rounded-lg text-sm font-medium hover:bg-primary-dark transition-colors"
             >
               <FileText className="w-4 h-4" /> Optimize New Resume
             </Link>

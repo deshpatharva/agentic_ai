@@ -27,7 +27,7 @@ export default function TopNav() {
       ) : (
         <>
           <Link to="/login" className="hidden sm:block text-sm text-ink-mute hover:text-primary transition-colors">Sign in</Link>
-          <Link to="/register" className="bg-primary text-white dark:text-ink px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-primary-dark transition-colors whitespace-nowrap">Get started</Link>
+          <Link to="/register" className="bg-primary text-white dark:text-surface px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-primary-dark transition-colors whitespace-nowrap">Get started</Link>
         </>
       )}
     </header>

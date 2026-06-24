@@ -38,7 +38,7 @@ export default function ProfilePicker({ profiles, onSelect, disabled = false }) 
             )}
           >
             {p.recommended && (
-              <span className="absolute -top-2.5 left-3.5 inline-flex items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-white dark:text-ink shadow-sm">
+              <span className="absolute -top-2.5 left-3.5 inline-flex items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-white dark:text-surface shadow-sm">
                 <Sparkles className="w-2.5 h-2.5" /> Recommended
               </span>
             )}

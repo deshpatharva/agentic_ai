@@ -106,18 +106,18 @@ export default function Dashboard() {
                   <AreaChart data={usage}>
                     <defs>
                       <linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#2E9272" stopOpacity={0.3} />
-                        <stop offset="95%" stopColor="#2E9272" stopOpacity={0} />
+                        <stop offset="5%" stopColor="#0D9488" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#0D9488" stopOpacity={0} />
                       </linearGradient>
                     </defs>
-                    <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#8C857D' }} tickFormatter={d => d.slice(5)} />
-                    <YAxis tick={{ fontSize: 10, fill: '#8C857D' }} allowDecimals={false} />
+                    <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#6A7078' }} tickFormatter={d => d.slice(5)} />
+                    <YAxis tick={{ fontSize: 10, fill: '#6A7078' }} allowDecimals={false} />
                     <Tooltip
                       labelFormatter={d => d}
                       formatter={v => [v, 'runs']}
                       contentStyle={{ background: 'rgb(var(--c-surface))', border: '1px solid rgb(var(--c-line))', borderRadius: 8, color: 'rgb(var(--c-ink))' }}
                     />
-                    <Area type="monotone" dataKey="pipeline_runs" stroke="#2E9272" fill="url(#grad)" strokeWidth={2} />
+                    <Area type="monotone" dataKey="pipeline_runs" stroke="#0D9488" fill="url(#grad)" strokeWidth={2} />
                   </AreaChart>
                 </ResponsiveContainer>
               ) : <p className="text-sm text-ink-faint text-center py-12">No usage data yet — run your first pipeline!</p>}

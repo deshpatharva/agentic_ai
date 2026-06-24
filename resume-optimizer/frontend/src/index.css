@@ -6,70 +6,59 @@
    RGB triplets so Tailwind can apply <alpha-value>.
    Light = "paper", dark = "ink". Toggled via .dark on <html>. */
 :root {
-  --c-bg:            250 246 239;  /* paper        #FAF6EF */
+  --c-bg:            248 249 250;  /* near-white   #F8F9FA */
   --c-surface:       255 255 255;  /* card         #FFFFFF */
-  --c-surface-2:     246 240 230;  /* subtle fill  #F6F0E6 */
-  --c-ink:           28 25 23;     /* text         #1C1917 */
-  --c-ink-mute:      87 83 78;     /* secondary    #57534E */
-  --c-ink-faint:     140 133 125;  /* tertiary     #8C857D */
-  --c-line:          231 223 210;  /* hairline     #E7DFD2 */
-  --c-accent:        26 107 82;    /* editorial green #1A6B52 */
-  --c-accent-strong: 17 82 62;     /* hover        #11523E */
-  --c-accent-soft:   228 239 234;  /* green tint   #E4EFEA */
-  --c-hilite:        178 117 21;   /* amber        #B27515 */
-  --c-hilite-soft:   247 237 219;  /* amber tint   #F7EDDB */
-  --c-err:           179 56 44;    /* error        #B3382C */
-  --c-err-soft:      248 232 229;  /* error tint   #F8E8E5 */
+  --c-surface-2:     241 243 245;  /* subtle fill  #F1F3F5 */
+  --c-ink:           17 20 24;     /* text         #111418 */
+  --c-ink-mute:      90 97 105;    /* secondary    #5A6169 */
+  --c-ink-faint:     138 145 152;  /* tertiary     #8A9198 */
+  --c-line:          228 231 234;  /* hairline     #E4E7EA */
+  --c-accent:        13 148 136;   /* signal teal  #0D9488 */
+  --c-accent-strong: 15 118 110;   /* hover        #0F766E */
+  --c-accent-soft:   224 244 241;  /* teal tint    #E0F4F1 */
+  --c-hilite:        161 98 7;     /* amber        #A16207 */
+  --c-hilite-soft:   248 240 224;  /* amber tint   #F8F0E0 */
+  --c-err:           198 56 47;    /* error        #C6382F */
+  --c-err-soft:      250 233 231;  /* error tint   #FAE9E7 */
 
-  --shadow-card:   0 1px 2px rgba(28, 25, 23, 0.05), 0 4px 14px rgba(28, 25, 23, 0.05);
-  --shadow-lifted: 0 2px 6px rgba(28, 25, 23, 0.08), 0 10px 28px rgba(28, 25, 23, 0.09);
-  --shadow-accent: 0 4px 14px rgba(26, 107, 82, 0.28);
+  --shadow-card:   0 1px 2px rgba(17, 20, 24, 0.04), 0 1px 3px rgba(17, 20, 24, 0.06);
+  --shadow-lifted: 0 2px 6px rgba(17, 20, 24, 0.06), 0 8px 24px rgba(17, 20, 24, 0.08);
+  --shadow-accent: 0 0 0 1px rgba(13, 148, 136, 0.25);
 }
 
 .dark {
-  --c-bg:            22 19 15;     /* ink          #16130F */
-  --c-surface:       30 26 21;     /* card         #1E1A15 */
-  --c-surface-2:     42 36 29;     /* subtle fill  #2A241D */
-  --c-ink:           237 230 218;  /* text         #EDE6DA */
-  --c-ink-mute:      178 169 155;  /* secondary    #B2A99B */
-  --c-ink-faint:     126 118 106;  /* tertiary     #7E766A */
-  --c-line:          60 52 42;     /* hairline     #3C342A */
-  --c-accent:        77 184 146;   /* green        #4DB892 */
-  --c-accent-strong: 110 205 172;  /* hover        #6ECDAC */
-  --c-accent-soft:   33 51 43;     /* green tint   #21332B */
-  --c-hilite:        217 160 63;   /* amber        #D9A03F */
-  --c-hilite-soft:   56 44 26;     /* amber tint   #382C1A */
-  --c-err:           224 109 97;   /* error        #E06D61 */
-  --c-err-soft:      59 33 30;     /* error tint   #3B211E */
+  --c-bg:            14 16 20;     /* graphite     #0E1014 */
+  --c-surface:       23 26 31;     /* card         #171A1F */
+  --c-surface-2:     32 36 42;     /* subtle fill  #20242A */
+  --c-ink:           233 236 240;  /* text         #E9ECF0 */
+  --c-ink-mute:      154 161 170;  /* secondary    #9AA1AA */
+  --c-ink-faint:     106 112 120;  /* tertiary     #6A7078 */
+  --c-line:          38 42 48;     /* hairline     #262A30 */
+  --c-accent:        45 212 191;   /* signal teal  #2DD4BF */
+  --c-accent-strong: 94 234 212;   /* hover        #5EEAD4 */
+  --c-accent-soft:   17 43 41;     /* teal tint    #112B29 */
+  --c-hilite:        234 179 8;    /* amber        #EAB308 */
+  --c-hilite-soft:   41 33 12;     /* amber tint   #29210C */
+  --c-err:           239 109 100;  /* error        #EF6D64 */
+  --c-err-soft:      51 28 26;     /* error tint   #331C1A */
 
-  --shadow-card:   0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(0, 0, 0, 0.3);
-  --shadow-lifted: 0 2px 6px rgba(0, 0, 0, 0.5), 0 10px 28px rgba(0, 0, 0, 0.45);
-  --shadow-accent: 0 4px 14px rgba(77, 184, 146, 0.22);
+  --shadow-card:   0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-lifted: 0 2px 6px rgba(0, 0, 0, 0.5), 0 8px 24px rgba(0, 0, 0, 0.4);
+  --shadow-accent: 0 0 0 1px rgba(45, 212, 191, 0.25);
 }
 
 * { box-sizing: border-box; }
 
 body {
-  font-family: 'Archivo', system-ui, sans-serif;
+  font-family: 'Inter', system-ui, sans-serif;
   background: rgb(var(--c-bg));
   color: rgb(var(--c-ink));
   transition: background-color 200ms ease, color 200ms ease;
 }
 
-/* Paper grain — barely-there texture that sells the editorial feel. Static, zero GPU cost. */
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  pointer-events: none;
-  opacity: 0.035;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
-}
-
 @layer base {
   h1, h2 {
-    font-family: 'Fraunces', Georgia, serif;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
     letter-spacing: -0.01em;
   }
   button, a, input, textarea, select {

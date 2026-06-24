@@ -117,7 +117,7 @@ export default function InterviewChat({ onComplete }) {
             onClick={handleSend}
             aria-label="Send answer"
             disabled={loading || !input.trim()}
-            className="flex-shrink-0 w-9 h-9 rounded-lg bg-primary text-white dark:text-ink flex items-center justify-center hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="flex-shrink-0 w-9 h-9 rounded-lg bg-primary text-white dark:text-surface flex items-center justify-center hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             <Send size={15} />
           </button>

@@ -6,8 +6,8 @@ export default function AuthLayout({ children, title, subtitle }) {
     <div className="min-h-screen flex">
       {/* Brand panel — fixed deep-green "cover board", identical in both themes */}
       <div
-        className="hidden lg:flex w-1/2 flex-col justify-center px-16 text-[#F2EFE6] relative overflow-hidden"
-        style={{ background: 'linear-gradient(165deg, #11523E 0%, #1A6B52 70%, #1F7A5E 100%)' }}
+        className="hidden lg:flex w-1/2 flex-col justify-center px-16 text-[#F8F9FA] relative overflow-hidden"
+        style={{ background: 'linear-gradient(165deg, #0F766E 0%, #0D9488 70%, #14B8A6 100%)' }}
       >
         {/* Dot-grid texture overlay */}
         <div
@@ -23,12 +23,12 @@ export default function AuthLayout({ children, title, subtitle }) {
             <span className="font-display text-2xl font-semibold tracking-tight">ResumeAI</span>
           </Link>
           <h2 className="font-display text-4xl font-semibold leading-tight mb-4">Your resume, set in type that gets you read.</h2>
-          <p className="text-[#CFE8DD] text-lg">Upload once. Score on 4 dimensions. Iterate until perfect. Get hired faster.</p>
+          <p className="text-[#CCFBF1] text-lg">Upload once. Score on 4 dimensions. Iterate until perfect. Get hired faster.</p>
           <div className="mt-12 grid grid-cols-2 gap-4">
             {[['4 AI Scorers','ATS, Impact, Skills, Readability'],['Smart Rewriter','Aligned to your exact JD'],['Job Matching','Nightly scrape of matched roles'],['Real-time Progress','Live pipeline status']].map(([t,d]) => (
               <div key={t} className="bg-white/10 backdrop-blur-sm rounded-xl p-4 hover:bg-white/15 transition-colors">
                 <div className="font-semibold mb-1">{t}</div>
-                <div className="text-[#CFE8DD] text-sm">{d}</div>
+                <div className="text-[#CCFBF1] text-sm">{d}</div>
               </div>
             ))}
           </div>

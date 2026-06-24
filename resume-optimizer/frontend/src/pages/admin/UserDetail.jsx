@@ -90,7 +90,7 @@ export default function UserDetail() {
               onClick={() => patch({ plan })}
               className={`px-4 py-2 rounded-lg text-sm font-medium capitalize transition-colors ${
                 user.plan === plan
-                  ? 'bg-primary text-white dark:text-ink'
+                  ? 'bg-primary text-white dark:text-surface'
                   : 'bg-surface-2 text-ink-mute hover:text-ink'
               } disabled:opacity-60`}
             >
