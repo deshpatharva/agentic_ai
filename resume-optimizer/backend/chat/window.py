@@ -16,7 +16,7 @@ def build_window(
     The system prompt is injected fresh every turn so prompt edits ship without
     touching stored data.
 
-    When a message has .metadata with tool_calls, a brief annotation is appended
+    When a message has .meta with tool_calls, a brief annotation is appended
     to the content so the model knows what actions were taken in prior turns.
     """
     recent = history[-n:] if len(history) > n else history
@@ -34,9 +34,9 @@ def build_window(
             content = m["content"]
         content = content or ""
 
-        meta = getattr(m, "metadata", None)
+        meta = getattr(m, "meta", None)
         if meta is None and isinstance(m, dict):
-            meta = m.get("metadata")
+            meta = m.get("meta")
 
         if meta and isinstance(meta, dict):
             tool_calls = meta.get("tool_calls")

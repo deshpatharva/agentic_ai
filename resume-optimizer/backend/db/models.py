@@ -246,7 +246,7 @@ class ChatMessage(Base):
                            nullable=False, index=True)
     role          = Column(String(16), nullable=False)   # "user" | "assistant"
     content       = Column(Text, nullable=False)
-    metadata      = Column(JSON, nullable=True)          # {"tool_calls": [...]} for tool-call turns
+    meta          = Column("meta", JSON, nullable=True)  # {"tool_calls": [...]} for tool-call turns
     input_tokens  = Column(Integer, nullable=True, default=0)
     output_tokens = Column(Integer, nullable=True, default=0)
     created_at    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)

@@ -1,4 +1,7 @@
-"""add metadata JSON column to chat_messages
+"""add meta JSON column to chat_messages
+
+`metadata` is a reserved attribute name on SQLAlchemy's Declarative base, so the
+column is named `meta` instead.
 
 Revision ID: 0021
 Revises: 0020
@@ -17,9 +20,9 @@ depends_on = None
 def upgrade() -> None:
     op.add_column(
         "chat_messages",
-        sa.Column("metadata", sa.JSON(), nullable=True),
+        sa.Column("meta", sa.JSON(), nullable=True),
     )
 
 
 def downgrade() -> None:
-    op.drop_column("chat_messages", "metadata")
+    op.drop_column("chat_messages", "meta")
