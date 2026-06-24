@@ -89,7 +89,6 @@ _PATCHED_TOOL_MAP = {
     "keyword_inject":    _noop_tool,
     "bullet_strengthen": _noop_tool,
     "skills_rewrite":    _noop_tool,
-    "section_humanize":  _noop_tool,
 }
 
 

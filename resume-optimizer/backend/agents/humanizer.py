@@ -125,6 +125,8 @@ Resume:
 
 - Address every piece of feedback
 - Do NOT change names, dates, companies, or metrics
+- Do NOT add new metrics, numbers, achievements, or facts that aren't already in the resume
+- Do NOT invent placeholder metrics like "[XX%]" or absolute claims like "100% reliability"
 - Keep plain-text structure
 Return ONLY the final resume text.""", MODEL_HUMANIZER)
     final_text = response["text"]

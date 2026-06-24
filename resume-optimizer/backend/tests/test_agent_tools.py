@@ -324,85 +324,6 @@ async def test_skills_rewrite_empty_output_unchanged():
 
 
 # ---------------------------------------------------------------------------
-# section_humanize tests
-# ---------------------------------------------------------------------------
-
-
-async def test_section_humanize_updates_section_and_cost():
-    from agents import tools
-
-    st = tools.ResumeState(sections={"summary": "Responsible for managing projects."})
-
-    with patch.object(tools, "complete", new=_fake_complete):
-        msg = await tools.section_humanize(st, section_name="summary", issues_csv="passive voice")
-
-    assert st.get_section("summary") == FAKE_RESULT["text"]
-    assert st.cost_usd > 0
-    assert st.total_tokens() > 0
-    assert "summary" in msg
-
-
-async def test_section_humanize_budget_guard():
-    from agents import tools
-    from config import AGENT_TOKEN_BUDGET
-
-    st = tools.ResumeState(sections={"summary": "Some text."})
-    st.add_tokens(AGENT_TOKEN_BUDGET, 0, 0.0)
-
-    call_count = 0
-
-    async def fake(prompt, model, **kw):
-        nonlocal call_count
-        call_count += 1
-        return FAKE_RESULT
-
-    with patch.object(tools, "complete", new=fake):
-        msg = await tools.section_humanize(st, section_name="summary")
-
-    assert call_count == 0
-    assert "budget" in msg.lower() or "token" in msg.lower()
-
-
-async def test_section_humanize_section_not_found():
-    from agents import tools
-
-    st = tools.ResumeState(sections={"experience": "Real work."})
-
-    with patch.object(tools, "complete", new=_fake_complete):
-        msg = await tools.section_humanize(st, section_name="summary")
-
-    assert "not found" in msg.lower() or "available" in msg.lower()
-    # experience should be unchanged
-    assert st.get_section("experience") == "Real work."
-
-
-async def test_section_humanize_empty_issues_general_polish():
-    """Calling with no issues_csv should still succeed (general polish)."""
-    from agents import tools
-
-    st = tools.ResumeState(sections={"experience": "Responsible for things."})
-
-    with patch.object(tools, "complete", new=_fake_complete):
-        msg = await tools.section_humanize(st, section_name="experience")
-
-    assert st.get_section("experience") == FAKE_RESULT["text"]
-    assert "general polish" in msg.lower() or "experience" in msg.lower()
-
-
-async def test_section_humanize_empty_output_unchanged():
-    from agents import tools
-
-    original = "Responsible for managing things."
-    st = tools.ResumeState(sections={"summary": original})
-
-    with patch.object(tools, "complete", new=_empty_complete):
-        msg = await tools.section_humanize(st, section_name="summary")
-
-    assert st.get_section("summary") == original
-    assert "empty" in msg.lower() or "unchanged" in msg.lower()
-
-
-# ---------------------------------------------------------------------------
 # Prompt content sanity checks (no fabrication rules carried over)
 # ---------------------------------------------------------------------------
 
@@ -441,24 +362,6 @@ async def test_bullet_strengthen_prompt_contains_no_placeholder_rule():
 
     assert captured_prompts
     assert "XX%" in captured_prompts[0] or "placeholder" in captured_prompts[0].lower()
-
-
-async def test_section_humanize_prompt_forbids_responsible_for():
-    from agents import tools
-
-    st = tools.ResumeState(sections={"summary": "Responsible for things."})
-    captured_prompts = []
-
-    async def capturing_fake(prompt, model, **kw):
-        captured_prompts.append(prompt)
-        return FAKE_RESULT
-
-    with patch.object(tools, "complete", new=capturing_fake):
-        await tools.section_humanize(st, section_name="summary")
-
-    assert captured_prompts
-    prompt_text = captured_prompts[0]
-    assert "responsible for" in prompt_text.lower()
 
 
 # ---------------------------------------------------------------------------

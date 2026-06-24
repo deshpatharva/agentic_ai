@@ -78,7 +78,7 @@ TOOL_DEFS = [
                 "properties": {
                     "weak_bullets_csv": {
                         "type": "string",
-                        "description": "Comma-separated weak bullet texts verbatim from the Impact score",
+                        "description": "Pipe-separated (|) weak bullet texts verbatim from the Impact score's weak_bullets. Use pipe — NOT comma — because bullet text frequently contains commas.",
                     },
                 },
                 "required": ["weak_bullets_csv"],
@@ -172,7 +172,6 @@ def _build_system_stable(jd_keywords: list, available_sections: list,
     return f"""{instruction_block}You are a Resume Optimization Strategist. Your job is to raise all resume scores above {_SCORE_TARGET} using the available tools.
 
 AVAILABLE RESUME SECTIONS: {', '.join(available_sections)}
-JD KEYWORDS (context only): {', '.join(jd_keywords[:20])}
 
 Call tools only for dimensions marked NEEDS WORK. When all needed tools have been called, output a brief summary and stop calling tools."""
 
@@ -348,9 +347,13 @@ async def run_agent(
                 _logger.warning("Re-score failed (%s) — using prior scores for reflection", exc)
 
         overall = current_scores.get("overall", 0)
+        # Readability is excluded — the post-loop humanize stage owns it, and the
+        # optimizer has no tool to raise it. Including it here would block the
+        # done-check indefinitely whenever readability lags the other dimensions.
+        _agent_dims = tuple(d for d in SCORE_DIMENSIONS if d != "readability")
         all_above = all(
             current_scores.get(d, {}).get("score", 0) >= _SCORE_TARGET
-            for d in SCORE_DIMENSIONS
+            for d in _agent_dims
         )
 
         _logger.info(

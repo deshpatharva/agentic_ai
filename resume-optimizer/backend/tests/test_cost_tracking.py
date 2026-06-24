@@ -222,13 +222,13 @@ def test_provider_seed_uses_lowercase():
 
 @pytest.mark.asyncio
 async def test_all_four_tools_accumulate_cost():
-    """All 4 optimizer tools must pass cost_usd to state.add_tokens()."""
+    """All optimizer tools must pass cost_usd to state.add_tokens()."""
     os.environ.setdefault("JWT_SECRET", "test-secret-32-chars-long-enough-x")
     os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./test.db")
 
     from agents.tools import (
         ResumeState, keyword_inject,
-        bullet_strengthen, skills_rewrite, section_humanize,
+        bullet_strengthen, skills_rewrite, bullets_reorder,
     )
 
     COST = 0.005
@@ -253,8 +253,8 @@ async def test_all_four_tools_accumulate_cost():
         await skills_rewrite(state, missing_skills_csv="kubernetes")
     assert state.cost_usd == pytest.approx(COST), f"skills_rewrite cost not tracked: {state.cost_usd}"
 
-    # section_humanize
-    state = ResumeState(sections={"summary": "Responsible for things."})
+    # bullets_reorder
+    state = ResumeState(sections={"experience": "- Did A.\n- Did B."})
     with patch("agents.tools.complete", new_callable=AsyncMock, return_value=fake_llm_result):
-        await section_humanize(state, section_name="summary", issues_csv="passive voice")
-    assert state.cost_usd == pytest.approx(COST), f"section_humanize cost not tracked: {state.cost_usd}"
+        await bullets_reorder(state, section_name="experience", jd_focus_csv="python")
+    assert state.cost_usd == pytest.approx(COST), f"bullets_reorder cost not tracked: {state.cost_usd}"
