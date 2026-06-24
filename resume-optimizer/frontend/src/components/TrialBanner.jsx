@@ -10,7 +10,7 @@ export default function TrialBanner() {
   if (daysLeft <= 0) return null;
 
   return (
-    <div className="mb-3 bg-[#D9A03F]/10 border border-[#D9A03F]/30 rounded-lg px-3 py-2 text-xs text-[#D9A03F]">
+    <div className="mb-3 bg-[#EAB308]/10 border border-[#EAB308]/30 rounded-lg px-3 py-2 text-xs text-[#EAB308]">
       <span className="font-semibold">Pro Trial</span>
       {' — '}{daysLeft} day{daysLeft !== 1 ? 's' : ''} left
     </div>

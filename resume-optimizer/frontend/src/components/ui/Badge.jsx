@@ -8,7 +8,7 @@ const styles = {
   green:      'bg-accent-soft text-primary',
   amber:      'bg-hilite-soft text-hilite',
   red:        'bg-err-soft text-err',
-  blue:       'bg-accent-soft text-primary',
+  blue:       'bg-surface-2 text-ink-mute',
   teal:       'bg-accent-soft text-primary',
 };
 

@@ -56,7 +56,7 @@ export default function ProfilesPage() {
           <h1 className="font-display text-2xl font-semibold text-ink">Profiles</h1>
           <Link
             to="/profiles/new"
-            className="inline-flex items-center gap-1.5 bg-primary text-white dark:text-ink text-sm font-semibold px-4 py-2 rounded-lg hover:bg-primary-dark transition-colors"
+            className="inline-flex items-center gap-1.5 bg-primary text-white dark:text-surface text-sm font-semibold px-4 py-2 rounded-lg hover:bg-primary-dark transition-colors"
           >
             <Plus size={16} />
             New Profile

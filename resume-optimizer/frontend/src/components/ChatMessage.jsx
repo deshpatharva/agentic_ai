@@ -10,7 +10,7 @@ export default function ChatMessage({ role, content, isError = false, action = n
     return (
       <div className="msg-in flex justify-end mb-3">
         <div
-          className="bg-primary text-white dark:text-ink rounded-card rounded-br-sm px-4 py-2.5 text-sm max-w-[75%] shadow-primary"
+          className="bg-primary text-white dark:text-surface rounded-card rounded-br-sm px-4 py-2.5 text-sm max-w-[75%] shadow-primary"
           style={{ whiteSpace: 'pre-wrap' }}
         >
           {content}
@@ -52,7 +52,7 @@ export default function ChatMessage({ role, content, isError = false, action = n
             <a
               href={download.href}
               download
-              className="inline-flex items-center gap-1.5 bg-primary text-white dark:text-ink text-xs font-semibold px-3 py-1.5 rounded-lg shadow-primary hover:bg-primary-dark transition-colors active:scale-95"
+              className="inline-flex items-center gap-1.5 bg-primary text-white dark:text-surface text-xs font-semibold px-3 py-1.5 rounded-lg shadow-primary hover:bg-primary-dark transition-colors active:scale-95"
             >
               <Download className="w-3.5 h-3.5" />
               {download.label || 'Download .docx'}

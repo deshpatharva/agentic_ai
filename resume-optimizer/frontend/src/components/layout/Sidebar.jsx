@@ -36,10 +36,10 @@ export function SidebarContent() {
   const initial = (user?.full_name?.trim() || user?.email || 'U')[0].toUpperCase();
 
   return (
-    <div className="h-full bg-[#1E1A15] text-[#EDE6DA] flex flex-col">
-      <div className="px-6 py-5 border-b border-[#3C342A]">
+    <div className="h-full bg-[#171A1F] text-[#E9ECF0] flex flex-col">
+      <div className="px-6 py-5 border-b border-[#262A30]">
         <Link to="/dashboard" className="flex items-center gap-2">
-          <Feather className="w-5 h-5 text-[#4DB892]" />
+          <Feather className="w-5 h-5 text-[#2DD4BF]" />
           <span className="font-display font-semibold text-lg tracking-tight">ResumeAI</span>
         </Link>
       </div>
@@ -52,8 +52,8 @@ export function SidebarContent() {
               className={clsx(
                 'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-150 border-l-2',
                 active
-                  ? 'border-[#4DB892] bg-[#4DB892]/10 text-[#4DB892]'
-                  : 'border-transparent text-[#B2A99B] hover:bg-white/5 hover:text-[#EDE6DA]'
+                  ? 'border-[#2DD4BF] bg-[#2DD4BF]/10 text-[#2DD4BF]'
+                  : 'border-transparent text-[#9AA1AA] hover:bg-white/5 hover:text-[#E9ECF0]'
               )}>
               <Icon className="w-4 h-4 shrink-0" />
               <span className="flex-1">{label}</span>
@@ -63,7 +63,7 @@ export function SidebarContent() {
         })}
         {isAdmin && (
           <>
-            <div className="pt-3 pb-1 px-3 text-[10px] font-semibold uppercase tracking-widest text-[#7E766A]">Admin</div>
+            <div className="pt-3 pb-1 px-3 text-[10px] font-semibold uppercase tracking-widest text-[#6A7078]">Admin</div>
             {adminNav.map(({ to, icon: Icon, label }) => {
               const active = location.pathname === to || location.pathname.startsWith(to + '/');
               return (
@@ -71,8 +71,8 @@ export function SidebarContent() {
                   className={clsx(
                     'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-150 border-l-2',
                     active
-                      ? 'border-[#D9A03F] bg-[#D9A03F]/10 text-[#D9A03F]'
-                      : 'border-transparent text-[#B2A99B] hover:bg-white/5 hover:text-[#EDE6DA]'
+                      ? 'border-[#EAB308] bg-[#EAB308]/10 text-[#EAB308]'
+                      : 'border-transparent text-[#9AA1AA] hover:bg-white/5 hover:text-[#E9ECF0]'
                   )}>
                   <Icon className="w-4 h-4 shrink-0" />
                   <span className="flex-1">{label}</span>
@@ -83,16 +83,16 @@ export function SidebarContent() {
         )}
       </nav>
 
-      <div className="px-4 py-4 border-t border-[#3C342A]">
+      <div className="px-4 py-4 border-t border-[#262A30]">
         <TrialBanner />
         {user?.plan === 'free' && (
           <Link to="/dashboard/settings"
-            className="flex items-center gap-2 w-full bg-[#4DB892]/10 hover:bg-[#4DB892]/20 text-[#4DB892] px-3 py-2.5 rounded-lg text-sm font-medium mb-3 transition-colors">
+            className="flex items-center gap-2 w-full bg-[#2DD4BF]/10 hover:bg-[#2DD4BF]/20 text-[#2DD4BF] px-3 py-2.5 rounded-lg text-sm font-medium mb-3 transition-colors">
             <Zap className="w-4 h-4" />Upgrade to Pro
           </Link>
         )}
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-full bg-[#4DB892]/20 text-[#4DB892] flex items-center justify-center text-sm font-bold shrink-0">
+          <div className="w-8 h-8 rounded-full bg-[#2DD4BF]/20 text-[#2DD4BF] flex items-center justify-center text-sm font-bold shrink-0">
             {initial}
           </div>
           <div className="flex-1 min-w-0">
@@ -101,8 +101,8 @@ export function SidebarContent() {
               {isAdmin ? 'admin' : (user?.plan || 'free')}
             </Badge>
           </div>
-          <ThemeToggle className="text-[#7E766A] hover:text-[#EDE6DA] hover:bg-white/5" />
-          <button onClick={handleLogout} aria-label="Log out" className="p-2 rounded-lg text-[#7E766A] hover:text-[#EDE6DA] hover:bg-white/5 transition-colors">
+          <ThemeToggle className="text-[#6A7078] hover:text-[#E9ECF0] hover:bg-white/5" />
+          <button onClick={handleLogout} aria-label="Log out" className="p-2 rounded-lg text-[#6A7078] hover:text-[#E9ECF0] hover:bg-white/5 transition-colors">
             <LogOut className="w-4 h-4" />
           </button>
         </div>

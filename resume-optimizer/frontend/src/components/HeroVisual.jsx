@@ -8,16 +8,16 @@ const HeroScene = lazy(() => import('./three/HeroScene'));
 function PaperCard({ className, accent = 'bg-primary', delay = '0s' }) {
   return (
     <div
-      className={`absolute w-44 h-60 rounded-md bg-[#FFFDF8] border border-[#E7DFD2] shadow-lifted p-4 hero-float ${className}`}
+      className={`absolute w-44 h-60 rounded-md bg-[#FFFFFF] border border-[#E4E7EA] shadow-lifted p-4 hero-float ${className}`}
       style={{ animationDelay: delay }}
     >
-      <div className="w-2/3 h-2.5 bg-[#2A2521] rounded-sm mb-2" />
-      <div className="w-1/2 h-1.5 bg-[#8C857D]/60 rounded-sm mb-3" />
+      <div className="w-2/3 h-2.5 bg-[#20242A] rounded-sm mb-2" />
+      <div className="w-1/2 h-1.5 bg-[#6A7078]/60 rounded-sm mb-3" />
       <div className={`w-full h-1 ${accent} rounded-sm mb-3`} />
       {[5, 4.5, 5, 0, 3, 5, 4.5, 4].map((w, i) =>
         w === 0
-          ? <div key={i} className="w-2/5 h-2 bg-[#2A2521]/80 rounded-sm my-2" />
-          : <div key={i} className="h-1.5 bg-[#8C857D]/40 rounded-sm mb-1.5" style={{ width: `${w * 16}%` }} />
+          ? <div key={i} className="w-2/5 h-2 bg-[#20242A]/80 rounded-sm my-2" />
+          : <div key={i} className="h-1.5 bg-[#6A7078]/40 rounded-sm mb-1.5" style={{ width: `${w * 16}%` }} />
       )}
     </div>
   );

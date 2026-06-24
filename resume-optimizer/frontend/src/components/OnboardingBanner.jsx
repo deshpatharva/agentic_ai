@@ -46,7 +46,7 @@ export default function OnboardingBanner() {
           </p>
           <Link
             to="/profiles/new"
-            className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white dark:text-ink shadow-sm hover:bg-primary-dark transition-colors active:scale-95"
+            className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white dark:text-surface shadow-sm hover:bg-primary-dark transition-colors active:scale-95"
           >
             Create Profile
           </Link>

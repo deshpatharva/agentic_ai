@@ -492,7 +492,7 @@ export default function ChatOptimizePage() {
                   'shrink-0 mb-0.5 w-8 h-8 rounded-lg flex items-center justify-center transition-all',
                   sendDisabled
                     ? 'text-ink-faint/50 cursor-not-allowed'
-                    : 'bg-primary text-white dark:text-ink hover:bg-primary-dark shadow-primary active:scale-95'
+                    : 'bg-primary text-white dark:text-surface hover:bg-primary-dark shadow-primary active:scale-95'
                 )}
               >
                 <Send className="w-4 h-4" />

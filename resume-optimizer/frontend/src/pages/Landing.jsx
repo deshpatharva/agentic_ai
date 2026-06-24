@@ -39,7 +39,7 @@ export default function Landing() {
             Upload once. Score on 4 dimensions. Iterate until perfect. Get more interviews.
           </p>
           <div className="reveal reveal-4 flex items-center justify-center lg:justify-start gap-4">
-            <Link to="/register" className="inline-flex items-center gap-2 px-8 py-3.5 rounded-lg font-semibold text-lg text-white dark:text-ink bg-primary hover:bg-primary-dark shadow-primary transition-all active:scale-95">
+            <Link to="/register" className="inline-flex items-center gap-2 px-8 py-3.5 rounded-lg font-semibold text-lg text-white dark:text-surface bg-primary hover:bg-primary-dark shadow-primary transition-all active:scale-95">
               Get started free <ArrowRight className="w-5 h-5" />
             </Link>
             <Link to="/login" className="text-ink-mute hover:text-ink px-6 py-3.5 font-medium transition-colors">
@@ -62,7 +62,7 @@ export default function Landing() {
                 <div className="flex flex-col items-center flex-1">
                   <div className={`w-9 h-9 rounded-full flex items-center justify-center mb-2 font-bold text-sm border-2 ${
                     s.active
-                      ? 'border-primary bg-primary text-white dark:text-ink'
+                      ? 'border-primary bg-primary text-white dark:text-surface'
                       : 'border-primary text-primary bg-card'
                   }`}>
                     {s.n}
@@ -94,31 +94,31 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Pricing — fixed ink band in both themes */}
-      <section className="bg-[#1E1A15] py-24">
+      {/* Pricing — token-driven ink band */}
+      <section className="bg-surface-2 dark:bg-card py-24 border-y border-line">
         <div className="max-w-5xl mx-auto px-6">
-          <h2 className="font-display text-3xl font-semibold text-[#EDE6DA] text-center mb-4">Simple, transparent pricing</h2>
-          <p className="text-[#B2A99B] text-center mb-12">Start free. Upgrade when you need more.</p>
+          <h2 className="font-display text-3xl font-semibold text-ink text-center mb-4">Simple, transparent pricing</h2>
+          <p className="text-ink-mute text-center mb-12">Start free. Upgrade when you need more.</p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
             {plans.map(({ name, price, period, features, highlight }) => (
               <div key={name} className="flex flex-col">
                 <div className="h-7 flex items-center justify-center mb-1">
-                  {highlight && <span className="bg-[#D9A03F] text-[#1E1A15] text-xs font-bold px-3 py-1 rounded-full whitespace-nowrap">Most popular</span>}
+                  {highlight && <span className="bg-hilite text-surface text-xs font-bold px-3 py-1 rounded-full whitespace-nowrap">Most popular</span>}
                 </div>
-                <div className={`rounded-card p-8 ${highlight ? 'bg-[#1A6B52] ring-2 ring-[#4DB892]/50 text-[#F2EFE6]' : 'bg-[#29231C] text-[#D9D2C5]'}`}>
+                <div className={`rounded-card p-8 border ${highlight ? 'bg-accent-soft border-primary/40 text-ink' : 'bg-card border-line text-ink'}`}>
                   <div className="font-semibold text-lg mb-1">{name}</div>
                   <div className="flex items-end gap-1 mb-6">
                     <span className="font-display text-4xl font-semibold">{price}</span>
-                    <span className={`text-sm mb-1 ${highlight ? 'text-[#CFE8DD]' : 'text-[#7E766A]'}`}>{period}</span>
+                    <span className="text-sm mb-1 text-ink-faint">{period}</span>
                   </div>
                   <ul className="space-y-3 mb-8">
                     {features.map(f => (
                       <li key={f} className="flex items-center gap-2 text-sm">
-                        <Check className={`w-4 h-4 shrink-0 ${highlight ? 'text-[#F2EFE6]' : 'text-[#4DB892]'}`} />{f}
+                        <Check className="w-4 h-4 shrink-0 text-primary" />{f}
                       </li>
                     ))}
                   </ul>
-                  <Link to="/register" className={`block text-center py-2.5 rounded-lg font-medium text-sm transition-colors ${highlight ? 'bg-[#F2EFE6] text-[#1A6B52] hover:bg-white' : 'bg-[#3C342A] hover:bg-[#4a4034] text-[#EDE6DA]'}`}>
+                  <Link to="/register" className={`block text-center py-2.5 rounded-lg font-medium text-sm transition-colors ${highlight ? 'bg-primary hover:bg-primary-dark text-white dark:text-surface' : 'bg-surface-2 hover:bg-line text-ink'}`}>
                     Get started
                   </Link>
                 </div>

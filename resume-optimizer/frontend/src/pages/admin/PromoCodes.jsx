@@ -114,7 +114,7 @@ export default function PromoCodes() {
         </div>
         <button
           onClick={() => setShowForm(v => !v)}
-          className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-dark text-white dark:text-ink rounded-lg text-sm font-medium transition-colors"
+          className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-dark text-white dark:text-surface rounded-lg text-sm font-medium transition-colors"
         >
           {showForm ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
           {showForm ? 'Cancel' : 'Create Code'}
@@ -182,7 +182,7 @@ export default function PromoCodes() {
           <button
             type="submit"
             disabled={saving}
-            className="w-full py-2.5 bg-primary hover:bg-primary-dark disabled:opacity-50 text-white dark:text-ink rounded-lg text-sm font-medium transition-colors"
+            className="w-full py-2.5 bg-primary hover:bg-primary-dark disabled:opacity-50 text-white dark:text-surface rounded-lg text-sm font-medium transition-colors"
           >
             {saving ? 'Creating…' : 'Create Promo Code'}
           </button>

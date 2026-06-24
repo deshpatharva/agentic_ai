@@ -33,7 +33,7 @@ export default function JobMatches() {
           </div>
           <h2 className="font-display text-xl font-semibold text-ink mb-2">Job Matching is a Pro feature</h2>
           <p className="text-ink-mute text-sm mb-6">Upgrade to get nightly job matches from Adzuna, RemoteOK, and The Muse.</p>
-          <Link to="/dashboard/settings" className="bg-primary text-white dark:text-ink px-6 py-2.5 rounded-lg font-medium inline-flex items-center gap-2 hover:bg-primary-dark transition-colors">
+          <Link to="/dashboard/settings" className="bg-primary text-white dark:text-surface px-6 py-2.5 rounded-lg font-medium inline-flex items-center gap-2 hover:bg-primary-dark transition-colors">
             <Zap className="w-4 h-4" /> Upgrade to Pro
           </Link>
         </div>

@@ -38,7 +38,7 @@ export default function AppShell({ children, scroll = true }) {
       <Sidebar />
 
       {/* Mobile top bar */}
-      <header className="lg:hidden fixed top-0 inset-x-0 z-30 h-14 bg-[#1E1A15] text-[#EDE6DA] flex items-center gap-3 px-4">
+      <header className="lg:hidden fixed top-0 inset-x-0 z-30 h-14 bg-[#171A1F] text-[#E9ECF0] flex items-center gap-3 px-4">
         <button
           onClick={() => setDrawerOpen(true)}
           aria-label="Open navigation"
@@ -47,7 +47,7 @@ export default function AppShell({ children, scroll = true }) {
           <Menu className="w-5 h-5" />
         </button>
         <Link to="/dashboard" className="flex items-center gap-2">
-          <Feather className="w-4 h-4 text-[#4DB892]" />
+          <Feather className="w-4 h-4 text-[#2DD4BF]" />
           <span className="font-display font-semibold tracking-tight">ResumeAI</span>
         </Link>
       </header>
@@ -65,7 +65,7 @@ export default function AppShell({ children, scroll = true }) {
             <button
               onClick={() => setDrawerOpen(false)}
               aria-label="Close navigation"
-              className="absolute top-4 right-3 p-2 rounded-lg text-[#7E766A] hover:text-[#EDE6DA] hover:bg-white/5 transition-colors"
+              className="absolute top-4 right-3 p-2 rounded-lg text-[#6A7078] hover:text-[#E9ECF0] hover:bg-white/5 transition-colors"
             >
               <X className="w-4 h-4" />
             </button>

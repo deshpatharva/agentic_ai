@@ -4,17 +4,17 @@ import { clsx } from 'clsx';
    classes resolve to the ink palette; charts need literal colors (SVG). */
 
 export const CHART = {
-  green:   '#4DB892',
-  amber:   '#D9A03F',
-  red:     '#E06D61',
-  neutral: '#7E766A',
-  grid:    '#3C342A',
-  tick:    { fontSize: 10, fill: '#7E766A' },
+  green:   '#2DD4BF',
+  amber:   '#EAB308',
+  red:     '#EF6D64',
+  neutral: '#6A7078',
+  grid:    '#262A30',
+  tick:    { fontSize: 10, fill: '#6A7078' },
   tooltip: {
-    background: '#1E1A15',
-    border: '1px solid #3C342A',
+    background: '#171A1F',
+    border: '1px solid #262A30',
     borderRadius: 8,
-    color: '#EDE6DA',
+    color: '#E9ECF0',
     fontSize: 12,
   },
 };

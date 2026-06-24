@@ -4,7 +4,7 @@ export default function Card({ children, className, header, footer }) {
   return (
     <div className={clsx(
       'bg-card rounded-card shadow-card border border-line',
-      'hover:-translate-y-0.5 hover:shadow-lifted transition-all duration-200',
+      'hover:border-ink-faint/40 hover:shadow-lifted transition-all duration-200',
       className
     )}>
       {header && (

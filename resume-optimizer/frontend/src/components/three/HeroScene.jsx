@@ -4,11 +4,11 @@ import { Canvas, useFrame } from '@react-three/fiber';
 /* Floating résumé sheets in warm light. Loaded lazily — never in the
    initial bundle — and only on capable devices (see HeroVisual). */
 
-const PAPER = '#FFFDF8';
-const INK = '#2A2521';
-const INK_SOFT = '#8C857D';
-const GREEN = '#1A6B52';
-const AMBER = '#C4841D';
+const PAPER = '#FFFFFF';
+const INK = '#20242A';
+const INK_SOFT = '#6A7078';
+const GREEN = '#0D9488';
+const AMBER = '#A16207';
 
 function Line({ x = 0, y, w, h = 0.055, color = INK_SOFT }) {
   return (
@@ -68,8 +68,8 @@ function Scene() {
   return (
     <>
       <ambientLight intensity={0.85} />
-      <directionalLight position={[4, 6, 6]} intensity={1.4} color="#FFF4E0" />
-      <directionalLight position={[-6, -2, 4]} intensity={0.35} color="#DDEAE4" />
+      <directionalLight position={[4, 6, 6]} intensity={1.4} color="#FEF9E7" />
+      <directionalLight position={[-6, -2, 4]} intensity={0.35} color="#CCFBF1" />
       <group ref={group}>
         <Sheet position={[-1.15, 0.1, -1.2]} rotation={[0.04, 0.35, 0.06]} phase={2.1} accent={AMBER} />
         <Sheet position={[1.05, -0.15, -0.4]} rotation={[0.02, -0.28, -0.05]} phase={4.2} />

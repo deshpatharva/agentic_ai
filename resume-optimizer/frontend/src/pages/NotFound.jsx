@@ -14,7 +14,7 @@ export default function NotFound() {
       </p>
       <Link
         to={token ? '/optimize' : '/'}
-        className="bg-primary hover:bg-primary-dark text-white dark:text-ink px-6 py-2.5 rounded-lg text-sm font-semibold shadow-primary transition-colors"
+        className="bg-primary hover:bg-primary-dark text-white dark:text-surface px-6 py-2.5 rounded-lg text-sm font-semibold shadow-primary transition-colors"
       >
         {token ? 'Back to Optimize' : 'Back to home'}
       </Link>
