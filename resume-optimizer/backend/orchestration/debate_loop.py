@@ -187,7 +187,7 @@ async def run_debate(
 
         reviewer_prompt = (
             "You are a skeptical resume reviewer. The optimizer just revised this resume.\n\n"
-            f"CURRENT RESUME DRAFT:\n{draft[:2000]}\n\n"
+            f"CURRENT RESUME DRAFT:\n{draft}\n\n"
             f"SCORES: overall={overall}\n\n"
             "Your task: identify ONE specific remaining problem.\n"
             "If you have no more objections, respond EXACTLY: No objections.\n"
