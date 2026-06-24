@@ -82,6 +82,7 @@ MODEL_CRITIQUE           = "groq/llama-3.1-8b-instant"     # Whole-resume critic
 # Phase 2 hard limits
 AGENT_MAX_ITER     = 10       # max CrewAI agent iterations before forced stop
 AGENT_TOKEN_BUDGET = 20_000   # cumulative input+output tokens across all Phase 2 tool calls
+DEBATE_TOKEN_BUDGET = 40_000  # Pro debate gets 2× budget (optimizer + reviewer across rounds)
 
 # Conversational optimize co-pilot. Uses native tool-calling (launch/save/download),
 # so it needs a model with reliable tool-use — and cost matters since this runs every

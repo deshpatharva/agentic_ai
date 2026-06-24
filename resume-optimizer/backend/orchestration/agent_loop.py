@@ -179,9 +179,30 @@ TOOL_MAP: dict[str, Callable] = {
 # ── System prompt builder ─────────────────────────────────────────────────────
 
 
-def _build_system(scores: dict, jd_keywords: list, available_sections: list,
-                  user_instruction: Optional[str] = None) -> str:
-    """Build the system prompt dynamically so each reflection sees fresh scores."""
+def _build_system_stable(jd_keywords: list, available_sections: list,
+                         user_instruction: Optional[str] = None) -> str:
+    """Stable system prompt — stays identical across reflections/rounds so the
+    provider's context cache can hit on it."""
+    instruction_block = ""
+    if user_instruction:
+        instruction_block = (
+            "PRIORITY USER FEEDBACK: The user reviewed their resume and is not happy. "
+            f"They asked you to fix the following: {user_instruction}\n"
+            "Address ONLY what was flagged using the available tools. Do not re-run a full "
+            "optimization or change sections the user did not mention.\n\n"
+        )
+
+    return f"""{instruction_block}You are a Resume Optimization Strategist. Your job is to raise all resume scores above {_SCORE_TARGET} using the available tools.
+
+AVAILABLE RESUME SECTIONS: {', '.join(available_sections)}
+JD KEYWORDS (context only): {', '.join(jd_keywords[:20])}
+
+Call tools only for dimensions marked NEEDS WORK. When all needed tools have been called, output a brief summary and stop calling tools."""
+
+
+def _build_scores_context(scores: dict) -> str:
+    """Volatile scores block — injected as a user message so the system prompt
+    stays cacheable across reflections."""
     ats    = scores.get("ats", {})
     impact = scores.get("impact", {})
     skills = scores.get("skills_gap", {})
@@ -194,18 +215,7 @@ def _build_system(scores: dict, jd_keywords: list, available_sections: list,
     def _flag(d: dict) -> str:
         return "NEEDS WORK" if _s(d) < _SCORE_TARGET else "ok"
 
-    instruction_block = ""
-    if user_instruction:
-        instruction_block = (
-            "PRIORITY USER FEEDBACK: The user reviewed their resume and is not happy. "
-            f"They asked you to fix the following: {user_instruction}\n"
-            "Address ONLY what was flagged using the available tools. Do not re-run a full "
-            "optimization or change sections the user did not mention.\n\n"
-        )
-
-    return f"""{instruction_block}You are a Resume Optimization Strategist. Your job is to raise all resume scores above {_SCORE_TARGET} using the available tools.
-
-CURRENT SCORES:
+    return f"""CURRENT SCORES:
   ATS Match:    {_s(ats):>3}  [{_flag(ats)}]
     missing_keywords: {', '.join(ats.get('missing_keywords', [])[:15])}
   Impact:       {_s(impact):>3}  [{_flag(impact)}]
@@ -218,10 +228,14 @@ CURRENT SCORES:
   JD Tailoring: {_s(tailor):>3}  [{_flag(tailor)}]
     issues: {', '.join(tailor.get('issues', [])[:3])}
 
-AVAILABLE RESUME SECTIONS: {', '.join(available_sections)}
-JD KEYWORDS (context only): {', '.join(jd_keywords[:20])}
+Analyze the scores above. Call tools for dimensions marked NEEDS WORK."""
 
-Call tools only for dimensions marked NEEDS WORK. When all needed tools have been called, output a brief summary and stop calling tools."""
+
+def _build_system(scores: dict, jd_keywords: list, available_sections: list,
+                  user_instruction: Optional[str] = None) -> str:
+    """Full system prompt (backward-compat wrapper)."""
+    return (_build_system_stable(jd_keywords, available_sections, user_instruction)
+            + "\n\n" + _build_scores_context(scores))
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -256,9 +270,12 @@ async def run_agent(
 
     reflections_cap = max_reflections or AGENT_MAX_REFLECTIONS
 
+    _SCORES_IDX = 1
     messages: list[dict] = [
         {"role": "system",
-         "content": _build_system(scores, jd_keywords, state.available_sections(), user_instruction)}
+         "content": _build_system_stable(jd_keywords, state.available_sections(), user_instruction)},
+        {"role": "user",
+         "content": _build_scores_context(scores)},
     ]
 
     current_scores = scores
@@ -384,11 +401,10 @@ async def run_agent(
                 "content": "\n".join(feedback_parts) + "\nPlease continue optimizing.",
             })
 
-            # Refresh system message with updated scores
-            messages[0] = {
-                "role": "system",
-                "content": _build_system(current_scores, jd_keywords,
-                                         state.available_sections(), user_instruction),
+            # Refresh scores context (system prompt stays stable → cache hits)
+            messages[_SCORES_IDX] = {
+                "role": "user",
+                "content": _build_scores_context(current_scores),
             }
 
     # Prefer guard's cleaned text when fabrications were detected

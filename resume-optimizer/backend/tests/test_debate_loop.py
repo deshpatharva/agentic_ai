@@ -44,10 +44,32 @@ def _done_msg(content="Done optimizing."):
     return msg
 
 
+def _tool_call_msg(tool_name="keyword_inject",
+                   args='{"missing_keywords_csv": "docker"}'):
+    """Return a fake assistant message with one tool_call."""
+    tc = MagicMock()
+    tc.function.name = tool_name
+    tc.function.arguments = args
+    tc.id = "tc_1"
+    msg = MagicMock()
+    msg.content = ""
+    msg.tool_calls = [tc]
+    return msg
+
+
 def _fake_complete_with_tools_result(msg=None, in_tok=100, out_tok=50, cost=0.01):
     if msg is None:
         msg = _done_msg()
     return {"message": msg, "input_tokens": in_tok, "output_tokens": out_tok, "cost_usd": cost}
+
+
+_NOOP_TOOL_MAP = {
+    name: AsyncMock(return_value="OK")
+    for name in [
+        "keyword_inject", "bullet_strengthen", "skills_rewrite",
+        "section_humanize", "bullets_reorder", "critique_resume",
+    ]
+}
 
 
 def _clean_guard(generated_text, ledger, source_text):
@@ -74,8 +96,13 @@ async def test_debate_loop_bounded_rounds():
     state = _make_state()
     ledger = _make_ledger()
 
-    # complete_with_tools (optimizer inner loop) returns done immediately
-    async def fake_complete_with_tools(messages, model, tools):
+    # Optimizer: tool call on first call per round, done on second
+    cwt_idx = [0]
+
+    async def fake_complete_with_tools(messages, model, tools, **kwargs):
+        cwt_idx[0] += 1
+        if cwt_idx[0] % 2 == 1:
+            return _fake_complete_with_tools_result(_tool_call_msg())
         return _fake_complete_with_tools_result(_done_msg())
 
     # complete (reviewer): object round 1, clear round 2
@@ -88,6 +115,7 @@ async def test_debate_loop_bounded_rounds():
         return {"text": "No objections.", "input_tokens": 30, "output_tokens": 5, "cost_usd": 0.0005}
 
     with patch.object(debate_loop, "complete_with_tools", side_effect=fake_complete_with_tools), \
+         patch.object(debate_loop, "TOOL_MAP", _NOOP_TOOL_MAP), \
          patch.object(debate_loop, "score_combined", side_effect=_fake_score_combined), \
          patch.object(debate_loop, "complete", side_effect=fake_complete), \
          patch.object(debate_loop, "fabrication_guard", side_effect=_clean_guard):
@@ -115,7 +143,7 @@ async def test_debate_loop_bounded_rounds():
 
 
 async def test_reviewer_objection_triggers_revision():
-    """When reviewer objects in round 1, optimizer's inner loop runs (complete_with_tools called)."""
+    """When reviewer objects in round 1, optimizer's inner loop runs again in round 2."""
     from orchestration import debate_loop
 
     state = _make_state()
@@ -123,8 +151,10 @@ async def test_reviewer_objection_triggers_revision():
 
     optimizer_call_count = [0]
 
-    async def fake_complete_with_tools(messages, model, tools):
+    async def fake_complete_with_tools(messages, model, tools, **kwargs):
         optimizer_call_count[0] += 1
+        if optimizer_call_count[0] % 2 == 1:
+            return _fake_complete_with_tools_result(_tool_call_msg())
         return _fake_complete_with_tools_result(_done_msg())
 
     reviewer_call_count = [0]
@@ -136,6 +166,7 @@ async def test_reviewer_objection_triggers_revision():
         return {"text": "No objections.", "input_tokens": 30, "output_tokens": 5, "cost_usd": 0.0005}
 
     with patch.object(debate_loop, "complete_with_tools", side_effect=fake_complete_with_tools), \
+         patch.object(debate_loop, "TOOL_MAP", _NOOP_TOOL_MAP), \
          patch.object(debate_loop, "score_combined", side_effect=_fake_score_combined), \
          patch.object(debate_loop, "complete", side_effect=fake_complete), \
          patch.object(debate_loop, "fabrication_guard", side_effect=_clean_guard):
@@ -148,9 +179,9 @@ async def test_reviewer_objection_triggers_revision():
             original_resume="Did work.",
         )
 
-    # complete_with_tools must have been called at least once (optimizer ran)
-    assert optimizer_call_count[0] >= 1, (
-        f"Expected optimizer inner loop to run (complete_with_tools >= 1), got {optimizer_call_count[0]}"
+    # Optimizer ran in both rounds (2 tool-call + 2 done = 4 calls)
+    assert optimizer_call_count[0] >= 2, (
+        f"Expected optimizer inner loop to run in multiple rounds, got {optimizer_call_count[0]}"
     )
 
 
@@ -166,7 +197,12 @@ async def test_debate_loop_no_objection_terminates_early():
     state = _make_state()
     ledger = _make_ledger()
 
-    async def fake_complete_with_tools(messages, model, tools):
+    cwt_idx = [0]
+
+    async def fake_complete_with_tools(messages, model, tools, **kwargs):
+        cwt_idx[0] += 1
+        if cwt_idx[0] % 2 == 1:
+            return _fake_complete_with_tools_result(_tool_call_msg())
         return _fake_complete_with_tools_result(_done_msg())
 
     reviewer_call_count = [0]
@@ -176,6 +212,7 @@ async def test_debate_loop_no_objection_terminates_early():
         return {"text": "No objections.", "input_tokens": 30, "output_tokens": 5, "cost_usd": 0.0005}
 
     with patch.object(debate_loop, "complete_with_tools", side_effect=fake_complete_with_tools), \
+         patch.object(debate_loop, "TOOL_MAP", _NOOP_TOOL_MAP), \
          patch.object(debate_loop, "score_combined", side_effect=_fake_score_combined), \
          patch.object(debate_loop, "complete", side_effect=fake_complete), \
          patch.object(debate_loop, "fabrication_guard", side_effect=_clean_guard):
@@ -206,7 +243,7 @@ async def test_debate_loop_sets_pro_debate_call_kind():
     state = _make_state()
     ledger = _make_ledger()
 
-    async def fake_complete_with_tools(messages, model, tools):
+    async def fake_complete_with_tools(messages, model, tools, **kwargs):
         return _fake_complete_with_tools_result(_done_msg())
 
     async def fake_complete(prompt, model, **kwargs):
@@ -241,7 +278,7 @@ async def test_debate_loop_guard_runs_on_final_draft():
     state = _make_state()
     ledger = _make_ledger()
 
-    async def fake_complete_with_tools(messages, model, tools):
+    async def fake_complete_with_tools(messages, model, tools, **kwargs):
         return _fake_complete_with_tools_result(_done_msg())
 
     async def fake_complete(prompt, model, **kwargs):
