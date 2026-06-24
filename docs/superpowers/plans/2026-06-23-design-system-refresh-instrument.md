@@ -15,7 +15,7 @@
 - Keep the CSS-variable token architecture and the Tailwind semantic names unchanged — only change values, fonts, radius, shadows, and the listed components.
 - Keep light/dark toggle, `prefers-reduced-motion` handling, and keyboard focus styles working. `src/theme.js` must not change.
 - **Accent discipline:** teal (`--c-accent`) only on primary CTAs, active nav/tabs, focus rings, links, and score/gauge fills. Amber (`--c-hilite`) rare attention-only. Everything else grayscale.
-- In dark mode the accent is *light*; dark-text-on-teal must use `dark:text-bg` (never `dark:text-ink`).
+- In dark mode the accent is *light*; dark-text-on-teal must use `dark:text-surface` (Tailwind `surface` = `--c-bg`; there is no `bg` color utility). Never `dark:text-ink`.
 - Commit after each task. Branch: `feature/adding_agent` (already checked out).
 - Verification baseline command (used throughout): `npm run build` must exit 0.
 
@@ -255,14 +255,14 @@ In `Button.jsx`, replace the `variants` object with:
 
 ```js
 const variants = {
-  primary:   'bg-primary hover:bg-primary-dark text-white dark:text-bg shadow-primary',
+  primary:   'bg-primary hover:bg-primary-dark text-white dark:text-surface shadow-primary',
   secondary: 'bg-card hover:bg-surface-2 text-ink border border-line shadow-card',
   ghost:     'bg-transparent hover:bg-surface-2 text-ink-mute',
   danger:    'bg-err hover:opacity-90 text-white shadow-sm',
 };
 ```
 
-(Only change: `dark:text-ink` → `dark:text-bg` on `primary`, so dark text lands on the light teal in dark mode.)
+(Only change: `dark:text-ink` → `dark:text-surface` on `primary`, so dark text lands on the light teal in dark mode.)
 
 - [ ] **Step 2: Soften Card hover (border-led, not shadow-led)**
 
@@ -403,7 +403,7 @@ Replace with a mono delta:
 Find the download link `className` containing `text-white dark:text-ink` and replace that token pair so dark text lands on teal:
 
 ```jsx
-          className="reveal reveal-4 flex items-center justify-center gap-2 w-full bg-primary hover:bg-primary-dark text-white dark:text-bg py-3 rounded-lg font-semibold shadow-primary transition-colors active:scale-[0.98]"
+          className="reveal reveal-4 flex items-center justify-center gap-2 w-full bg-primary hover:bg-primary-dark text-white dark:text-surface py-3 rounded-lg font-semibold shadow-primary transition-colors active:scale-[0.98]"
 ```
 
 - [ ] **Step 3: Verify no hardcoded colors remain**
@@ -440,7 +440,7 @@ git commit -m "refactor(ui): ScoreReveal mono delta readout + dark-mode CTA cont
 
 - [ ] **Step 1: Fix the hero CTA dark-mode contrast**
 
-In `Landing.jsx` line ~42, in the "Get started free" `Link`, replace `text-white dark:text-ink` with `text-white dark:text-bg`.
+In `Landing.jsx` line ~42, in the "Get started free" `Link`, replace `text-white dark:text-ink` with `text-white dark:text-surface`.
 
 - [ ] **Step 2: Replace the Pricing section with a token-driven version**
 
@@ -456,7 +456,7 @@ Replace the entire Pricing `<section className="bg-[#1E1A15] py-24"> … </secti
             {plans.map(({ name, price, period, features, highlight }) => (
               <div key={name} className="flex flex-col">
                 <div className="h-7 flex items-center justify-center mb-1">
-                  {highlight && <span className="bg-hilite text-bg text-xs font-bold px-3 py-1 rounded-full whitespace-nowrap">Most popular</span>}
+                  {highlight && <span className="bg-hilite text-surface text-xs font-bold px-3 py-1 rounded-full whitespace-nowrap">Most popular</span>}
                 </div>
                 <div className={`rounded-card p-8 border ${highlight ? 'bg-accent-soft border-primary/40 text-ink' : 'bg-card border-line text-ink'}`}>
                   <div className="font-semibold text-lg mb-1">{name}</div>
@@ -471,7 +471,7 @@ Replace the entire Pricing `<section className="bg-[#1E1A15] py-24"> … </secti
                       </li>
                     ))}
                   </ul>
-                  <Link to="/register" className={`block text-center py-2.5 rounded-lg font-medium text-sm transition-colors ${highlight ? 'bg-primary hover:bg-primary-dark text-white dark:text-bg' : 'bg-surface-2 hover:bg-line text-ink'}`}>
+                  <Link to="/register" className={`block text-center py-2.5 rounded-lg font-medium text-sm transition-colors ${highlight ? 'bg-primary hover:bg-primary-dark text-white dark:text-surface' : 'bg-surface-2 hover:bg-line text-ink'}`}>
                     Get started
                   </Link>
                 </div>
@@ -522,7 +522,7 @@ Expected: no matches. If any appear, migrate them to the matching token (`bg-sur
 - [ ] **Step 2: Sweep for dark-mode text-on-teal contrast bugs**
 
 Run: `grep -rnE "bg-primary[^\"]*dark:text-ink|dark:text-ink[^\"]*bg-primary" src/`
-Expected: no matches. Any hit is light text on light teal — change `dark:text-ink` → `dark:text-bg`.
+Expected: no matches. Any hit is light text on light teal — change `dark:text-ink` → `dark:text-surface`.
 
 - [ ] **Step 3: Confirm fonts and texture fully removed**
 
@@ -574,4 +574,4 @@ git commit -m "refactor(theme): final Instrument refresh sweep + contrast fixes"
 
 **Placeholder scan:** No TBD/TODO; every code step shows full replacement code; every verify step has an exact command + expected result.
 
-**Type/name consistency:** Token names match the spec tables and Task 1 verbatim; `dark:text-bg` used consistently for teal CTAs across Tasks 4/6/7/8; Tailwind semantic names (`bg-primary`, `text-ink`, `bg-surface-2`, `bg-accent-soft`, `text-hilite`) match `tailwind.config.js` mappings unchanged by this plan.
+**Type/name consistency:** Token names match the spec tables and Task 1 verbatim; `dark:text-surface` used consistently for teal CTAs across Tasks 4/6/7/8; Tailwind semantic names (`bg-primary`, `text-ink`, `bg-surface-2`, `bg-accent-soft`, `text-hilite`) match `tailwind.config.js` mappings unchanged by this plan.
