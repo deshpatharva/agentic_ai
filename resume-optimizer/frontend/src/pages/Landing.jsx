@@ -1,24 +1,17 @@
 import { Link } from 'react-router-dom';
-import { Zap, Target, Briefcase, ArrowRight, Check } from 'lucide-react';
+import { Zap, ArrowRight, Check } from 'lucide-react';
 import TopNav from '../components/layout/TopNav';
-import HeroVisual from '../components/HeroVisual';
-
-const features = [
-  { icon: Zap,      title: 'AI Rewriter',    desc: 'AI rewrites your resume to align with every JD keyword.' },
-  { icon: Target,   title: 'Smart Scoring',  desc: '4 scorers: ATS match, impact, skills gap, and readability — all in one call.' },
-  { icon: Briefcase,title: 'Job Matching',   desc: 'Nightly scrape of matched roles from Adzuna, RemoteOK, and The Muse.' },
-];
+import HeroPreview from '../components/landing/HeroPreview';
+import StatsRow from '../components/landing/StatsRow';
+import HowItWorks from '../components/landing/HowItWorks';
+import FAQ from '../components/landing/FAQ';
+import FinalCTA from '../components/landing/FinalCTA';
+import SiteFooter from '../components/landing/SiteFooter';
 
 const plans = [
-  { name: 'Free',       price: '$0',  period: '/mo', features: ['2 uploads / day','1 resume stored','4 AI scorers','PDF + DOCX export'],    highlight: false, plan: 'free' },
-  { name: 'Pro',        price: '$9',  period: '/mo', features: ['20 uploads / day','10 resumes stored','Job matching','Usage history'],      highlight: true,  plan: 'pro' },
-  { name: 'Enterprise', price: '$29', period: '/mo', features: ['Unlimited uploads','Unlimited storage','API access','Priority queue'],      highlight: false, plan: 'enterprise' },
-];
-
-const steps = [
-  { n: '1', label: 'Upload',   desc: 'Drop PDF or DOCX' },
-  { n: '2', label: 'Optimize', desc: 'AI rewrites resume', active: true },
-  { n: '3', label: 'Download', desc: 'Get your .docx' },
+  { name: 'Free',       price: '$0',  period: '/mo', features: ['2 uploads / day','1 resume stored','5 AI scorers','PDF + DOCX export'],   highlight: false },
+  { name: 'Pro',        price: '$9',  period: '/mo', features: ['20 uploads / day','10 resumes stored','Job matching','Usage history'],     highlight: true  },
+  { name: 'Enterprise', price: '$29', period: '/mo', features: ['Unlimited uploads','Unlimited storage','API access','Priority queue'],     highlight: false },
 ];
 
 export default function Landing() {
@@ -33,13 +26,13 @@ export default function Landing() {
             <Zap className="w-3.5 h-3.5" /> Powered by Gemini · Groq · Anthropic
           </div>
           <h1 className="reveal reveal-2 font-display text-5xl lg:text-6xl font-semibold text-ink leading-[1.1] mb-6">
-            Your resume,<br /><span className="text-primary italic">set in type that gets you read.</span>
+            Tailored, scored,<br /><span className="text-primary">and verified — never faked.</span>
           </h1>
           <p className="reveal reveal-3 text-xl text-ink-mute mb-10 max-w-xl mx-auto lg:mx-0">
-            Upload once. Score on 4 dimensions. Iterate until perfect. Get more interviews.
+            Upload once. Score on five dimensions. Iterate until it peaks — with a guard that keeps every claim true.
           </p>
           <div className="reveal reveal-4 flex items-center justify-center lg:justify-start gap-4">
-            <Link to="/register" className="inline-flex items-center gap-2 px-8 py-3.5 rounded-lg font-semibold text-lg text-white dark:text-surface bg-primary hover:bg-primary-dark shadow-primary transition-all active:scale-95">
+            <Link to="/register" className="inline-flex items-center gap-2 px-8 py-3.5 rounded-lg font-semibold text-lg text-white dark:text-surface bg-primary hover:bg-primary-dark shadow-primary transition-all active:scale-95 focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none">
               Get started free <ArrowRight className="w-5 h-5" />
             </Link>
             <Link to="/login" className="text-ink-mute hover:text-ink px-6 py-3.5 font-medium transition-colors">
@@ -47,55 +40,17 @@ export default function Landing() {
             </Link>
           </div>
         </div>
-        <div className="reveal reveal-3 h-[380px] lg:h-[460px] hidden sm:block">
-          <HeroVisual />
+        <div className="reveal reveal-3 hidden sm:block">
+          <HeroPreview />
         </div>
       </section>
 
-      <section className="max-w-5xl mx-auto px-6 pb-8">
-        {/* How it works */}
-        <div className="bg-card rounded-card shadow-card border border-line px-8 py-6 max-w-lg mx-auto">
-          <p className="text-[10px] font-bold tracking-widest text-ink-faint uppercase mb-5">How it works</p>
-          <div className="flex items-center justify-between">
-            {steps.map((s, i) => (
-              <div key={s.n} className="flex items-center flex-1">
-                <div className="flex flex-col items-center flex-1">
-                  <div className={`w-9 h-9 rounded-full flex items-center justify-center mb-2 font-bold text-sm border-2 ${
-                    s.active
-                      ? 'border-primary bg-primary text-white dark:text-surface'
-                      : 'border-primary text-primary bg-card'
-                  }`}>
-                    {s.n}
-                  </div>
-                  <div className="text-xs font-semibold text-ink">{s.label}</div>
-                  <div className="text-[10px] text-ink-faint mt-0.5 text-center">{s.desc}</div>
-                </div>
-                {i < steps.length - 1 && (
-                  <div className="h-px flex-1 mx-2 mb-6 bg-primary/40" />
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+      <StatsRow />
 
-      {/* Features */}
-      <section className="max-w-5xl mx-auto px-6 pb-24">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {features.map(({ icon: Icon, title, desc }) => (
-            <div key={title} className="bg-card rounded-card p-6 shadow-card border border-line hover:-translate-y-0.5 hover:shadow-lifted transition-all duration-200">
-              <div className="w-10 h-10 rounded-lg flex items-center justify-center mb-4 bg-accent-soft text-primary">
-                <Icon className="w-5 h-5" />
-              </div>
-              <h3 className="font-semibold text-ink mb-2">{title}</h3>
-              <p className="text-ink-mute text-sm leading-relaxed">{desc}</p>
-            </div>
-          ))}
-        </div>
-      </section>
+      <HowItWorks />
 
-      {/* Pricing — token-driven ink band */}
-      <section className="bg-surface-2 dark:bg-card py-24 border-y border-line">
+      {/* Pricing */}
+      <section id="pricing" className="bg-surface-2 dark:bg-card py-24 border-y border-line">
         <div className="max-w-5xl mx-auto px-6">
           <h2 className="font-display text-3xl font-semibold text-ink text-center mb-4">Simple, transparent pricing</h2>
           <p className="text-ink-mute text-center mb-12">Start free. Upgrade when you need more.</p>
@@ -127,6 +82,12 @@ export default function Landing() {
           </div>
         </div>
       </section>
+
+      <FAQ />
+
+      <FinalCTA />
+
+      <SiteFooter />
     </div>
   );
 }
