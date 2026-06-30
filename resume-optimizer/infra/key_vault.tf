@@ -80,6 +80,14 @@ resource "azurerm_key_vault_secret" "groq_api_key" {
   tags         = local.tags
 }
 
+resource "azurerm_key_vault_secret" "deepseek_api_key" {
+  name         = "DEEPSEEK-API-KEY"
+  value        = var.deepseek_api_key
+  key_vault_id = azurerm_key_vault.main.id
+  depends_on   = [time_sleep.wait_for_kv_rbac]
+  tags         = local.tags
+}
+
 resource "azurerm_key_vault_secret" "anthropic_api_key" {
   name         = "ANTHROPIC-API-KEY"
   value        = var.anthropic_api_key

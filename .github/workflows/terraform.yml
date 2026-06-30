@@ -52,6 +52,7 @@ jobs:
       TF_VAR_google_ai_api_key: ${{ secrets.TF_VAR_GOOGLE_AI_API_KEY }}
       TF_VAR_groq_api_key:      ${{ secrets.TF_VAR_GROQ_API_KEY }}
       TF_VAR_anthropic_api_key: ${{ secrets.TF_VAR_ANTHROPIC_API_KEY }}
+      TF_VAR_deepseek_api_key:  ${{ secrets.TF_VAR_DEEPSEEK_API_KEY }}
       TF_VAR_bootstrap_secret:  ${{ secrets.TF_VAR_BOOTSTRAP_SECRET }}
 
     steps:
@@ -218,6 +219,7 @@ jobs:
       TF_VAR_google_ai_api_key: ${{ secrets.TF_VAR_GOOGLE_AI_API_KEY }}
       TF_VAR_groq_api_key:      ${{ secrets.TF_VAR_GROQ_API_KEY }}
       TF_VAR_anthropic_api_key: ${{ secrets.TF_VAR_ANTHROPIC_API_KEY }}
+      TF_VAR_deepseek_api_key:  ${{ secrets.TF_VAR_DEEPSEEK_API_KEY }}
       TF_VAR_bootstrap_secret:  ${{ secrets.TF_VAR_BOOTSTRAP_SECRET }}
 
     steps:

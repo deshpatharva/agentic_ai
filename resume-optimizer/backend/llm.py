@@ -17,6 +17,7 @@ To switch a model, change config.py only. To add a provider, no code change need
 
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime, timezone
 from typing import AsyncIterator
@@ -36,6 +37,19 @@ _TRANSIENT = (litellm.exceptions.Timeout, litellm.exceptions.APIConnectionError,
 
 def _provider(model: str) -> str:
     return model.split("/", 1)[0]
+
+
+# DeepSeek V4 thinking effort. LiteLLM's DeepSeek config discards reasoning_effort
+# and always sends thinking:{"type":"enabled"} (litellm #27439), so we pass the
+# value raw via extra_body, which LiteLLM forwards untouched. Remove the extra_body
+# hack once PR #28702 lands and pass reasoning_effort natively.
+_DEEPSEEK_REASONING_EFFORT = os.environ.get("DEEPSEEK_REASONING_EFFORT", "max")
+
+
+def _deepseek_extra_body(model: str) -> dict | None:
+    if _provider(model) != "deepseek":
+        return None
+    return {"reasoning_effort": _DEEPSEEK_REASONING_EFFORT, "thinking": {"type": "enabled"}}
 
 
 async def _record_call(row_kwargs: dict) -> None:
@@ -117,12 +131,17 @@ async def complete(
         provider = _provider(model)
         if provider in ("gemini", "vertex_ai"):
             call_kwargs["response_format"] = response_format
-        elif provider == "groq":
+        elif provider in ("groq", "deepseek"):
+            # Both support json_object but not json_schema.
             if response_format.get("type") == "json_schema":
                 call_kwargs["response_format"] = {"type": "json_object"}
             else:
                 call_kwargs["response_format"] = response_format
         # else: omit entirely — response_format unsupported by this provider
+
+    extra_body = _deepseek_extra_body(model)
+    if extra_body:
+        call_kwargs["extra_body"] = extra_body
 
     # One bounded retry on transient failures (timeout / connection / 5xx).
     try:
@@ -136,6 +155,7 @@ async def complete(
     out_tok = response.usage.completion_tokens
     cached_tok = getattr(response.usage, "prompt_tokens_details", None)
     cached_tok = getattr(cached_tok, "cached_tokens", 0) or 0 if cached_tok else 0
+    cached_tok = cached_tok if isinstance(cached_tok, int) else 0
 
     from utils.cost import resolve_cost
     rates = await _provider_rates()
@@ -202,33 +222,29 @@ async def complete_with_tools(
             ]
         messages[0] = sys_msg
 
+    tool_kwargs: dict = {
+        "model": model,
+        "messages": messages,
+        "tools": tools,
+        "tool_choice": "auto",
+        "timeout": _CALL_TIMEOUT_S,
+    }
+    extra_body = _deepseek_extra_body(model)
+    if extra_body:
+        tool_kwargs["extra_body"] = extra_body
+
     t0 = time.perf_counter()
     try:
-        response = await litellm.acompletion(
-            model=model,
-            messages=messages,
-            tools=tools,
-            tool_choice="auto",
-            timeout=_CALL_TIMEOUT_S,
-        )
+        response = await litellm.acompletion(**tool_kwargs)
     except _TRANSIENT as exc:
         _logger.warning("tool-calling chat to %s failed transiently (%s) — retrying once",
                         model, type(exc).__name__)
-        response = await litellm.acompletion(
-            model=model,
-            messages=messages,
-            tools=tools,
-            tool_choice="auto",
-            timeout=_CALL_TIMEOUT_S,
-        )
+        response = await litellm.acompletion(**tool_kwargs)
     except Exception as exc:
         _logger.warning("tool-calling chat to %s failed (%s) — retrying WITHOUT tools",
                         model, type(exc).__name__)
-        response = await litellm.acompletion(
-            model=model,
-            messages=messages,
-            timeout=_CALL_TIMEOUT_S,
-        )
+        no_tools = {k: v for k, v in tool_kwargs.items() if k not in ("tools", "tool_choice")}
+        response = await litellm.acompletion(**no_tools)
 
     latency_ms = int((time.perf_counter() - t0) * 1000)
     usage = getattr(response, "usage", None)
@@ -236,6 +252,7 @@ async def complete_with_tools(
     out_tok = getattr(usage, "completion_tokens", 0) or 0
     cached_tok = getattr(usage, "prompt_tokens_details", None)
     cached_tok = getattr(cached_tok, "cached_tokens", 0) or 0 if cached_tok else 0
+    cached_tok = cached_tok if isinstance(cached_tok, int) else 0
 
     from utils.cost import resolve_cost
     rates = await _provider_rates()

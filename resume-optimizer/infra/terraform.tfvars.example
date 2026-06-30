@@ -20,6 +20,10 @@ postgres_db_name     = "resumeopt"
 google_ai_api_key = "AIzaSy..."
 groq_api_key      = "gsk_..."
 anthropic_api_key = "sk-ant-..."
+deepseek_api_key  = "sk-..."
+# Optional model toggles (defaults: deepseek/deepseek-v4-pro, max):
+# model_optimizer           = "deepseek/deepseek-v4-pro"
+# deepseek_reasoning_effort = "max"
 
 # Optional — leave as REPLACE_ME to skip
 adzuna_app_id     = "REPLACE_ME"

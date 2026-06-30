@@ -12,9 +12,19 @@ def resolve_cost(
 ) -> tuple[float, str]:
     """Return (cost_usd, source).
 
-    Tries litellm.completion_cost first; falls back to the ProviderCost table
-    rates dict; tags 'zero' when neither works so the audit column surfaces gaps.
+    Prefers LiteLLM's call-time cost from response._hidden_params (works for
+    providers like groq/gpt-oss where the after-the-fact completion_cost() can't
+    re-map the prefix-stripped model name); then completion_cost(); then the
+    ProviderCost table; tags 'zero' when none work so the audit column surfaces gaps.
     """
+    # LiteLLM computes cost during the call with the full provider-prefixed model
+    # name and stashes it here. This populates even when completion_cost() below
+    # raises "model isn't mapped" (e.g. groq/openai/gpt-oss-120b).
+    hidden = getattr(response, "_hidden_params", None)
+    rc = hidden.get("response_cost") if isinstance(hidden, dict) else None
+    if isinstance(rc, (int, float)) and rc > 0:
+        return float(rc), "litellm_hidden"
+
     try:
         c = litellm.completion_cost(completion_response=response)
         if c and c > 0:

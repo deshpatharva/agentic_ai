@@ -76,6 +76,24 @@ variable "groq_api_key" {
   sensitive   = true
 }
 
+variable "deepseek_api_key" {
+  description = "DeepSeek API key — required (optimizer runs on deepseek/*), no default"
+  type        = string
+  sensitive   = true
+}
+
+variable "model_optimizer" {
+  description = "LiteLLM model for the Phase-2 strategist. Env-overridable for rollback."
+  type        = string
+  default     = "deepseek/deepseek-v4-pro"
+}
+
+variable "deepseek_reasoning_effort" {
+  description = "DeepSeek V4 thinking effort: max | high"
+  type        = string
+  default     = "max"
+}
+
 variable "anthropic_api_key" {
   description = "Anthropic API key — required, no default"
   type        = string
