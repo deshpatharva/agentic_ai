@@ -62,25 +62,13 @@ variable "app_service_sku" {
   default     = "B1"
 }
 
-# ── API Keys (written to Key Vault at provision time) ─────────────────────────
+# ── API keys / secrets ────────────────────────────────────────────────────────
+# Externally-sourced secrets (all API keys, Stripe, BOOTSTRAP-SECRET) are NO LONGER
+# Terraform variables. They are seeded directly into Key Vault out-of-band (see
+# seed-secrets.sh) so rotation never requires a terraform apply. Terraform only
+# manages secrets it derives from infra it owns (JWT-SECRET, DATABASE-URL).
 
-variable "google_ai_api_key" {
-  description = "Google AI Studio API key (Gemini) — required, no default"
-  type        = string
-  sensitive   = true
-}
-
-variable "groq_api_key" {
-  description = "Groq API key — required, no default"
-  type        = string
-  sensitive   = true
-}
-
-variable "deepseek_api_key" {
-  description = "DeepSeek API key — required (optimizer runs on deepseek/*), no default"
-  type        = string
-  sensitive   = true
-}
+# ── Non-secret model toggles (plain App Service settings) ─────────────────────
 
 variable "model_optimizer" {
   description = "LiteLLM model for the Phase-2 strategist. Env-overridable for rollback."
@@ -93,56 +81,6 @@ variable "deepseek_reasoning_effort" {
   type        = string
   default     = "max"
 }
-
-variable "anthropic_api_key" {
-  description = "Anthropic API key — required, no default"
-  type        = string
-  sensitive   = true
-}
-
-variable "adzuna_app_id" {
-  description = "Adzuna job scraper App ID (optional)"
-  type        = string
-  sensitive   = true
-  default     = "REPLACE_ME"
-}
-
-variable "adzuna_app_key" {
-  description = "Adzuna job scraper App Key (optional)"
-  type        = string
-  sensitive   = true
-  default     = "REPLACE_ME"
-}
-
-variable "the_muse_api_key" {
-  description = "The Muse API key (optional)"
-  type        = string
-  sensitive   = true
-  default     = "REPLACE_ME"
-}
-
-variable "apify_token" {
-  description = "Apify token for LinkedIn scraper (optional, paid)"
-  type        = string
-  sensitive   = true
-  default     = "REPLACE_ME"
-}
-
-variable "stripe_secret_key" {
-  description = "Stripe secret key (optional, for billing)"
-  type        = string
-  sensitive   = true
-  default     = "REPLACE_ME"
-}
-
-variable "bootstrap_secret" {
-  description = "Bootstrap secret used for initial admin setup — generate with: python -c \"import secrets; print(secrets.token_hex(32))\""
-  type        = string
-  sensitive   = true
-}
-
-
-
 
 # ── Blob lifecycle / retention ────────────────────────────────────────────────
 

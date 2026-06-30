@@ -15,19 +15,13 @@ location    = "eastus"
 postgres_admin_login = "resumeadmin"
 postgres_db_name     = "resumeopt"
 
-# API keys — paste your actual values here
-# These are written to Key Vault at provision time
-google_ai_api_key = "AIzaSy..."
-groq_api_key      = "gsk_..."
-anthropic_api_key = "sk-ant-..."
-deepseek_api_key  = "sk-..."
+# API keys / secrets are NO LONGER Terraform variables. Seed them directly into
+# Key Vault out-of-band so rotation never needs a terraform apply:
+#   ./seed-secrets.sh   (wraps `az keyvault secret set`)
+# Secrets to seed: GOOGLE-AI-STUDIO-API-KEY, GROQ-API-KEY, DEEPSEEK-API-KEY,
+#   ANTHROPIC-API-KEY, BOOTSTRAP-SECRET, and optionally STRIPE-SECRET-KEY,
+#   ADZUNA-APP-ID, ADZUNA-APP-KEY, THE-MUSE-API-KEY, APIFY-TOKEN.
+
 # Optional model toggles (defaults: deepseek/deepseek-v4-pro, max):
 # model_optimizer           = "deepseek/deepseek-v4-pro"
 # deepseek_reasoning_effort = "max"
-
-# Optional — leave as REPLACE_ME to skip
-adzuna_app_id     = "REPLACE_ME"
-adzuna_app_key    = "REPLACE_ME"
-the_muse_api_key  = "REPLACE_ME"
-apify_token       = "REPLACE_ME"
-stripe_secret_key = "REPLACE_ME"

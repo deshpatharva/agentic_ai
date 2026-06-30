@@ -38,10 +38,16 @@ resource "azurerm_role_assignment" "sp_kv_secrets_user" {
 }
 
 # ── Secrets ───────────────────────────────────────────────────────────────────
-# Every secret depends on time_sleep.wait_for_kv_rbac, not directly on the role
-# assignment, so first-apply 403s are avoided.
+# Terraform manages ONLY secrets it derives from infra it owns (JWT, DATABASE-URL,
+# storage/SP identifiers). Externally-sourced secrets (all API keys, Stripe,
+# BOOTSTRAP) are NO LONGER created here — they are seeded out-of-band via
+# `az keyvault secret set` (see seed-secrets.sh) so rotation never needs a
+# terraform apply. App Service references them by name (versionless) in app_service.tf.
 #
-# Secrets NOT stored here (removed from KV):
+# Every TF-managed secret depends on time_sleep.wait_for_kv_rbac, not directly on
+# the role assignment, so first-apply 403s are avoided.
+#
+# Secrets NOT stored here:
 #   AZURE-CLIENT-SECRET      — SP has no password; CI/CD uses OIDC
 #   AZURE-STORAGE-ACCOUNT-KEY — shared key access disabled on the storage account
 
@@ -64,38 +70,6 @@ resource "azurerm_key_vault_secret" "database_url" {
   tags         = local.tags
 }
 
-resource "azurerm_key_vault_secret" "google_ai_api_key" {
-  name         = "GOOGLE-AI-STUDIO-API-KEY"
-  value        = var.google_ai_api_key
-  key_vault_id = azurerm_key_vault.main.id
-  depends_on   = [time_sleep.wait_for_kv_rbac]
-  tags         = local.tags
-}
-
-resource "azurerm_key_vault_secret" "groq_api_key" {
-  name         = "GROQ-API-KEY"
-  value        = var.groq_api_key
-  key_vault_id = azurerm_key_vault.main.id
-  depends_on   = [time_sleep.wait_for_kv_rbac]
-  tags         = local.tags
-}
-
-resource "azurerm_key_vault_secret" "deepseek_api_key" {
-  name         = "DEEPSEEK-API-KEY"
-  value        = var.deepseek_api_key
-  key_vault_id = azurerm_key_vault.main.id
-  depends_on   = [time_sleep.wait_for_kv_rbac]
-  tags         = local.tags
-}
-
-resource "azurerm_key_vault_secret" "anthropic_api_key" {
-  name         = "ANTHROPIC-API-KEY"
-  value        = var.anthropic_api_key
-  key_vault_id = azurerm_key_vault.main.id
-  depends_on   = [time_sleep.wait_for_kv_rbac]
-  tags         = local.tags
-}
-
 resource "azurerm_key_vault_secret" "azure_storage_account_name" {
   name         = "AZURE-STORAGE-ACCOUNT-NAME"
   value        = azurerm_storage_account.main.name
@@ -107,46 +81,6 @@ resource "azurerm_key_vault_secret" "azure_storage_account_name" {
 resource "azurerm_key_vault_secret" "delta_storage_path" {
   name         = "DELTA-STORAGE-PATH"
   value        = local.delta_storage_path
-  key_vault_id = azurerm_key_vault.main.id
-  depends_on   = [time_sleep.wait_for_kv_rbac]
-  tags         = local.tags
-}
-
-resource "azurerm_key_vault_secret" "adzuna_app_id" {
-  name         = "ADZUNA-APP-ID"
-  value        = var.adzuna_app_id
-  key_vault_id = azurerm_key_vault.main.id
-  depends_on   = [time_sleep.wait_for_kv_rbac]
-  tags         = local.tags
-}
-
-resource "azurerm_key_vault_secret" "adzuna_app_key" {
-  name         = "ADZUNA-APP-KEY"
-  value        = var.adzuna_app_key
-  key_vault_id = azurerm_key_vault.main.id
-  depends_on   = [time_sleep.wait_for_kv_rbac]
-  tags         = local.tags
-}
-
-resource "azurerm_key_vault_secret" "the_muse_api_key" {
-  name         = "THE-MUSE-API-KEY"
-  value        = var.the_muse_api_key
-  key_vault_id = azurerm_key_vault.main.id
-  depends_on   = [time_sleep.wait_for_kv_rbac]
-  tags         = local.tags
-}
-
-resource "azurerm_key_vault_secret" "apify_token" {
-  name         = "APIFY-TOKEN"
-  value        = var.apify_token
-  key_vault_id = azurerm_key_vault.main.id
-  depends_on   = [time_sleep.wait_for_kv_rbac]
-  tags         = local.tags
-}
-
-resource "azurerm_key_vault_secret" "stripe_secret_key" {
-  name         = "STRIPE-SECRET-KEY"
-  value        = var.stripe_secret_key
   key_vault_id = azurerm_key_vault.main.id
   depends_on   = [time_sleep.wait_for_kv_rbac]
   tags         = local.tags
@@ -165,14 +99,6 @@ resource "azurerm_key_vault_secret" "sp_tenant_id" {
 resource "azurerm_key_vault_secret" "sp_client_id" {
   name         = "AZURE-CLIENT-ID"
   value        = data.azurerm_client_config.current.client_id
-  key_vault_id = azurerm_key_vault.main.id
-  depends_on   = [time_sleep.wait_for_kv_rbac]
-  tags         = local.tags
-}
-
-resource "azurerm_key_vault_secret" "bootstrap_secret" {
-  name         = "BOOTSTRAP-SECRET"
-  value        = var.bootstrap_secret
   key_vault_id = azurerm_key_vault.main.id
   depends_on   = [time_sleep.wait_for_kv_rbac]
   tags         = local.tags

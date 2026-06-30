@@ -65,20 +65,24 @@ resource "azurerm_linux_web_app" "backend" {
   # App Service resolves @Microsoft.KeyVault(...) references before injecting
   # into the process environment. config.py sees plain os.environ values.
   app_settings = {
+    # TF-managed secrets (derived from infra Terraform owns) — by resource reference.
     JWT_SECRET                 = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.jwt_secret.versionless_id})"
     DATABASE_URL               = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.database_url.versionless_id})"
-    ANTHROPIC_API_KEY          = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.anthropic_api_key.versionless_id})"
-    GOOGLE_AI_STUDIO_API_KEY   = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.google_ai_api_key.versionless_id})"
-    GROQ_API_KEY               = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.groq_api_key.versionless_id})"
-    DEEPSEEK_API_KEY           = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.deepseek_api_key.versionless_id})"
-    BOOTSTRAP_SECRET           = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.bootstrap_secret.versionless_id})"
-    STRIPE_SECRET_KEY          = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.stripe_secret_key.versionless_id})"
-    ADZUNA_APP_ID              = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.adzuna_app_id.versionless_id})"
-    ADZUNA_APP_KEY             = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.adzuna_app_key.versionless_id})"
-    THE_MUSE_API_KEY           = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.the_muse_api_key.versionless_id})"
-    APIFY_TOKEN                = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.apify_token.versionless_id})"
     DELTA_STORAGE_PATH         = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.delta_storage_path.versionless_id})"
     AZURE_STORAGE_ACCOUNT_NAME = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.azure_storage_account_name.versionless_id})"
+
+    # Externally-sourced secrets — seeded out-of-band (seed-secrets.sh), referenced
+    # by name + versionless so rotations are picked up without a terraform apply.
+    ANTHROPIC_API_KEY          = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.main.name};SecretName=ANTHROPIC-API-KEY)"
+    GOOGLE_AI_STUDIO_API_KEY   = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.main.name};SecretName=GOOGLE-AI-STUDIO-API-KEY)"
+    GROQ_API_KEY               = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.main.name};SecretName=GROQ-API-KEY)"
+    DEEPSEEK_API_KEY           = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.main.name};SecretName=DEEPSEEK-API-KEY)"
+    BOOTSTRAP_SECRET           = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.main.name};SecretName=BOOTSTRAP-SECRET)"
+    STRIPE_SECRET_KEY          = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.main.name};SecretName=STRIPE-SECRET-KEY)"
+    ADZUNA_APP_ID              = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.main.name};SecretName=ADZUNA-APP-ID)"
+    ADZUNA_APP_KEY             = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.main.name};SecretName=ADZUNA-APP-KEY)"
+    THE_MUSE_API_KEY           = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.main.name};SecretName=THE-MUSE-API-KEY)"
+    APIFY_TOKEN                = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.main.name};SecretName=APIFY-TOKEN)"
 
     # ── Non-secret bootstrap values ────────────────────────────────────────────
     SCM_DO_BUILD_DURING_DEPLOYMENT      = "true"
