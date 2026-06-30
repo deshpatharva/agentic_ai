@@ -81,8 +81,11 @@ To reach the deployed Azure app, mirror the Groq secret path (not yet implemente
   conscious operator decision. Western-host routing (Fireworks/Together) is the fallback.
 - **Latency variance:** V4 Pro max ~27-31s/run is acceptable; V4 Flash max on the lite
   loop was rejected partly for 9-26s variance.
-- **Gemini key:** the scorer/JD-analyzer need a real `AIza…` AI Studio key (the
-  `AQ.…` OAuth-style token throttles intermittently as a 400).
+- **Gemini key (local only):** the `AQ.…` key is valid and works in the Azure
+  deployment (Google has phased out the `AIza…` format). It 400s *intermittently in
+  local dev only* — most likely a short-lived/refreshed credential whose static copy
+  ages out, or per-IP rate throttling. Not a code/prod issue; only constrains local
+  Gemini testing. The scorer/JD-analyzer json_schema path itself is correct.
 
 ## Rollback
 
