@@ -6,9 +6,10 @@ import ProfileEditor from '../components/ProfileEditor';
 import InterviewChat from '../components/InterviewChat';
 import TiltCard from '../components/TiltCard';
 import useProfileStore from '../store/profileStore';
+import useAuthStore from '../store/authStore';
 import client from '../api/client';
 
-const EMPTY_SECTIONS = { contact: {}, summary: '', experience: [], education: [], skills: [] };
+const EMPTY_SECTIONS = { contact: {}, summary: '', experience: [], education: [], skills: [], additional_sections: [] };
 const EMPTY_LABEL = '';
 
 function UploadZone({ onFileSelect, file, dragActive, onDragOver, onDragLeave, onDrop }) {
@@ -62,6 +63,7 @@ function UploadZone({ onFileSelect, file, dragActive, onDragOver, onDragLeave, o
 export default function ProfileNewPage() {
   const navigate = useNavigate();
   const { createProfile } = useProfileStore();
+  const fetchMe = useAuthStore((s) => s.fetchMe);
 
   const [view, setView] = useState('upload');
   const [file, setFile] = useState(null);
@@ -122,6 +124,7 @@ export default function ProfileNewPage() {
         experience: data.experience ?? [],
         education: data.education ?? [],
         skills: data.skills ?? [],
+        additional_sections: data.additional_sections ?? [],
       });
       setView('editor');
     } catch (err) {
@@ -149,6 +152,10 @@ export default function ProfileNewPage() {
       setSaving(true);
       try {
         await createProfile({ label, label_confirmed: labelConfirmed, raw_text: rawText, sections });
+        // Refresh auth state so user.profile_status flips to 'complete'; without
+        // this the stale 'incomplete' status makes RequireProfile bounce the user
+        // off /optimize back to /profiles/new.
+        await fetchMe();
         navigate('/profiles');
       } catch (err) {
         const msg =
@@ -160,7 +167,7 @@ export default function ProfileNewPage() {
         setSaving(false);
       }
     },
-    [createProfile, navigate, rawText]
+    [createProfile, fetchMe, navigate, rawText]
   );
 
   return (
@@ -247,6 +254,7 @@ export default function ProfileNewPage() {
                     experience: sections.experience || [],
                     education: sections.education || [],
                     skills: sections.skills || [],
+                    additional_sections: sections.additional_sections || [],
                   });
                   setView('editor');
                 }}

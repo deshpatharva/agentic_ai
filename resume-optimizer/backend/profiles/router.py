@@ -158,8 +158,17 @@ Return ONLY valid JSON with this exact shape:
   "education": [
     {{"institution": "", "degree": "", "dates": ""}}
   ],
-  "skills": ["skill1", "skill2"]
+  "skills": ["skill1", "skill2"],
+  "additional_sections": [
+    {{"heading": "<original section heading>", "content": "<full text of that section>"}}
+  ]
 }}
+
+Put any section that is NOT contact, summary, experience, education, or skills into
+"additional_sections" — e.g. certifications, projects, academic projects, academic
+achievements, awards, publications, volunteer work, languages. Preserve the original
+heading and include the section's full text (bullets joined with newlines) as "content".
+Use an empty list when there are no such sections.
 
 Resume text:
 {raw_text[:8000]}"""

@@ -67,4 +67,16 @@ def sections_to_text(sections: dict) -> str:
                     parts.append(", ".join(cat_skills))
         else:
             parts.append(", ".join(sections["skills"]))
+        parts.append("")
+    for sec in sections.get("additional_sections") or []:
+        heading = (sec.get("heading") or "").strip()
+        content = (sec.get("content") or "").strip()
+        # A heading with no content is meaningless — drop it. Content with no
+        # heading is still worth keeping.
+        if not content:
+            continue
+        if heading:
+            parts.append(heading)
+        parts.append(content)
+        parts.append("")
     return "\n".join(parts).strip()
