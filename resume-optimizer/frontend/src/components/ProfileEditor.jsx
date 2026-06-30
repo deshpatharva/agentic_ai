@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus, Trash2 } from 'lucide-react';
 import BulletEditor from './BulletEditor';
 import SkillChips from './SkillChips';
 import Button from './ui/Button';
@@ -29,6 +29,14 @@ export default function ProfileEditor({ initialLabel = '', initialSections = {},
     }))
   );
   const [skills, setSkills] = useState(initialSections.skills || []);
+  // Catch-all sections (certifications, projects, achievements, …) parsed from
+  // the resume but outside the core five. Normalize to {heading, content}.
+  const [additionalSections, setAdditionalSections] = useState(() =>
+    (initialSections.additional_sections || []).map((s) => ({
+      heading: s?.heading || '',
+      content: s?.content || '',
+    }))
+  );
   const [contact, setContact] = useState({
     full_name: '', location: '', email: '', phone: '', linkedin: '', website: '',
     ...(initialSections.contact || {}),
@@ -42,8 +50,15 @@ export default function ProfileEditor({ initialLabel = '', initialSections = {},
   const updateEdu = (idx, patch) =>
     setEducation((prev) => prev.map((e, i) => (i === idx ? { ...e, ...patch } : e)));
 
+  const updateAddl = (idx, patch) =>
+    setAdditionalSections((prev) => prev.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
+
   const handleSave = () => {
-    onSave({ label, labelConfirmed, sections: { contact, summary, experience, education, skills } });
+    onSave({
+      label,
+      labelConfirmed,
+      sections: { contact, summary, experience, education, skills, additional_sections: additionalSections },
+    });
   };
 
   const fieldClass = 'w-full bg-card border border-line rounded-lg px-3 py-2 text-ink text-sm placeholder:text-ink-faint focus:border-primary focus:outline-none transition-colors';
@@ -204,6 +219,46 @@ export default function ProfileEditor({ initialLabel = '', initialSections = {},
       <div>
         <label className={sectionLabel}>Skills</label>
         <SkillChips skills={skills} onChange={setSkills} />
+      </div>
+
+      {/* Additional sections (certifications, projects, achievements, …) */}
+      <div>
+        <label className={sectionLabel}>Additional Sections</label>
+        <div className="space-y-3">
+          {additionalSections.map((sec, idx) => (
+            <div key={idx} className="bg-surface-2/60 border border-line rounded-card p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <input
+                  className="flex-1 bg-card border border-line rounded-lg px-2 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-primary focus:outline-none"
+                  placeholder="Section heading (e.g. Certifications, Projects)"
+                  value={sec.heading}
+                  onChange={(e) => updateAddl(idx, { heading: e.target.value })}
+                />
+                <button
+                  type="button"
+                  aria-label="Remove section"
+                  onClick={() => setAdditionalSections(additionalSections.filter((_, i) => i !== idx))}
+                  className="shrink-0 text-ink-faint hover:text-err transition-colors p-1.5"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+              <textarea
+                className={`${fieldClass} resize-none`}
+                rows={3}
+                placeholder="Section content…"
+                value={sec.content}
+                onChange={(e) => updateAddl(idx, { content: e.target.value })}
+              />
+            </div>
+          ))}
+          <button
+            onClick={() => setAdditionalSections([...additionalSections, { heading: '', content: '' }])}
+            className="text-xs text-ink-faint hover:text-primary flex items-center gap-1 border border-dashed border-line hover:border-primary/50 rounded-xl px-3 py-2.5 w-full justify-center transition-colors"
+          >
+            <Plus className="w-3 h-3" /> Add section
+          </button>
+        </div>
       </div>
 
       {/* Save */}

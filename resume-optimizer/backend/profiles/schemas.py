@@ -24,12 +24,21 @@ class ContactData(BaseModel):
     website: str = ""
 
 
+class AdditionalSection(BaseModel):
+    """Catch-all for resume sections outside the core five (certifications,
+    projects, academic achievements, awards, publications, etc.)."""
+
+    heading: str = ""
+    content: str = ""
+
+
 class SectionsData(BaseModel):
     contact: ContactData = Field(default_factory=ContactData)
     summary: str = ""
     experience: list[ExperienceEntry] = []
     education: list[EducationEntry] = []
     skills: list[str] = []
+    additional_sections: list[AdditionalSection] = []
 
 
 class ProfileCreate(BaseModel):
