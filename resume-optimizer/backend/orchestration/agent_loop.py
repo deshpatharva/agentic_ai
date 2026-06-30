@@ -272,11 +272,18 @@ async def run_agent(
 
             # Append the raw assistant message object; LiteLLM accepts it directly
             # so tool_call IDs stay consistent for the tool role messages below.
-            messages.append({
+            # Preserve reasoning_content when present — DeepSeek V4 thinking models
+            # require the prior turn's reasoning echoed back or the next turn errors
+            # (litellm #26395). Harmless no-op for models that don't emit it.
+            assistant_msg = {
                 "role": "assistant",
                 "content": msg.content or "",
                 "tool_calls": msg.tool_calls or None,
-            })
+            }
+            _rc = getattr(msg, "reasoning_content", None)
+            if _rc:
+                assistant_msg["reasoning_content"] = _rc
+            messages.append(assistant_msg)
 
             if not msg.tool_calls:
                 _logger.debug("agent_loop: model returned no tool_calls — inner loop done")

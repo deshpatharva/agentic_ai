@@ -17,6 +17,11 @@ GOOGLE_AI_STUDIO_API_KEY = (
     or ""
 )
 GROQ_API_KEY             = os.environ.get("GROQ_API_KEY", "")
+# LiteLLM reads DEEPSEEK_API_KEY from the environment for any deepseek/* model.
+DEEPSEEK_API_KEY         = os.environ.get("DEEPSEEK_API_KEY", "")
+# DeepSeek V4 thinking effort ("max"|"high"). Read in llm.py and passed via
+# extra_body (LiteLLM strips reasoning_effort otherwise — litellm #27439).
+DEEPSEEK_REASONING_EFFORT = os.environ.get("DEEPSEEK_REASONING_EFFORT", "max")
 
 # LiteLLM resolves Gemini keys from GEMINI_API_KEY or GOOGLE_API_KEY.
 # Whichever name the operator sets, make both aliases available.
@@ -72,7 +77,10 @@ MODEL_PROFILE_PARSER  = "gemini/gemini-3.1-flash-lite"
 MODEL_INTERVIEW_SYNTH = "gemini/gemini-3.1-flash-lite"
 
 # Agentic Phase 2 models
-MODEL_OPTIMIZER          = "groq/openai/gpt-oss-120b"        # Strategist — needs reasoning
+# Strategist — DeepSeek V4 Pro at max thinking. Benchmarked vs gpt-oss-120b and
+# Haiku 4.5: parallel tool-calling converges in 2-3 turns (vs 12), ~2x faster than
+# gpt-oss-120b and ~4x cheaper than Haiku. Env-overridable for rollback.
+MODEL_OPTIMIZER          = os.environ.get("MODEL_OPTIMIZER", "deepseek/deepseek-v4-pro")
 MODEL_KEYWORD_INJECT     = "gemini/gemini-3.1-flash-lite"   # ATS tool — cheap, fast
 MODEL_BULLET_STRENGTHEN  = "gemini/gemini-3.1-flash-lite"   # Impact tool
 MODEL_SKILLS_REWRITE     = "gemini/gemini-3.1-flash-lite"   # Skills gap tool

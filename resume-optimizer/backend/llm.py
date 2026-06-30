@@ -17,6 +17,7 @@ To switch a model, change config.py only. To add a provider, no code change need
 
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime, timezone
 from typing import AsyncIterator
@@ -26,6 +27,18 @@ import litellm
 litellm.drop_params = True  # silently ignore unsupported provider params
 
 _logger = logging.getLogger(__name__)
+
+# DeepSeek V4 thinking effort. LiteLLM's DeepSeek config discards reasoning_effort
+# and always sends thinking:{"type":"enabled"} (litellm #27439), so we pass the
+# value raw via extra_body, which LiteLLM forwards untouched. Remove the extra_body
+# hack once PR #28702 lands and pass reasoning_effort natively.
+_DEEPSEEK_REASONING_EFFORT = os.environ.get("DEEPSEEK_REASONING_EFFORT", "max")
+
+
+def _deepseek_extra_body(model: str) -> dict | None:
+    if _provider(model) != "deepseek":
+        return None
+    return {"reasoning_effort": _DEEPSEEK_REASONING_EFFORT, "thinking": {"type": "enabled"}}
 
 # A hung provider call would otherwise stall a pipeline run until the
 # 15-minute stuck-job reaper kills it.
@@ -117,12 +130,17 @@ async def complete(
         provider = _provider(model)
         if provider in ("gemini", "vertex_ai"):
             call_kwargs["response_format"] = response_format
-        elif provider == "groq":
+        elif provider in ("groq", "deepseek"):
+            # Both support json_object but not json_schema.
             if response_format.get("type") == "json_schema":
                 call_kwargs["response_format"] = {"type": "json_object"}
             else:
                 call_kwargs["response_format"] = response_format
         # else: omit entirely — response_format unsupported by this provider
+
+    extra_body = _deepseek_extra_body(model)
+    if extra_body:
+        call_kwargs["extra_body"] = extra_body
 
     # One bounded retry on transient failures (timeout / connection / 5xx).
     try:
@@ -177,25 +195,24 @@ async def complete_with_tools(
     free text — eliminating control-token leakage. Records an LlmCallLog row via
     the same fire-and-forget path as complete()/stream_chat().
     """
+    tool_kwargs: dict = {
+        "model": model,
+        "messages": messages,
+        "tools": tools,
+        "tool_choice": "auto",
+        "timeout": _CALL_TIMEOUT_S,
+    }
+    extra_body = _deepseek_extra_body(model)
+    if extra_body:
+        tool_kwargs["extra_body"] = extra_body
+
     t0 = time.perf_counter()
     try:
-        response = await litellm.acompletion(
-            model=model,
-            messages=messages,
-            tools=tools,
-            tool_choice="auto",
-            timeout=_CALL_TIMEOUT_S,
-        )
+        response = await litellm.acompletion(**tool_kwargs)
     except _TRANSIENT as exc:
         _logger.warning("tool-calling chat to %s failed transiently (%s) — retrying once",
                         model, type(exc).__name__)
-        response = await litellm.acompletion(
-            model=model,
-            messages=messages,
-            tools=tools,
-            tool_choice="auto",
-            timeout=_CALL_TIMEOUT_S,
-        )
+        response = await litellm.acompletion(**tool_kwargs)
     except Exception as exc:
         # Some providers/models reject or mishandle the tools/tool_choice params.
         # Degrade gracefully to a plain completion so the user still gets a reply
