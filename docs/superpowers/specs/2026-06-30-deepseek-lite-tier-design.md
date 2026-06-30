@@ -61,15 +61,17 @@ loop is wasteful; even high is only a close backup, not an upgrade.
 - On the optimizer, max ≈ high (structured tool-call output bounds the thinking);
   on free-text lite tasks, max balloons (2,630 tokens for one bullet).
 
-## Infrastructure / secret plumbing (Terraform) — TODO (not yet done)
+## Infrastructure / secret plumbing (Terraform) — DONE (commit fcc0d82)
 
-To reach the deployed Azure app, mirror the Groq secret path (not yet implemented):
-- `infra/variables.tf`: `deepseek_api_key` (sensitive)
-- `infra/key_vault.tf`: secret `DEEPSEEK-API-KEY`
+Mirrors the Groq secret path so the deployed app gets the DeepSeek key:
+- `infra/variables.tf`: `deepseek_api_key` (sensitive) + `model_optimizer` /
+  `deepseek_reasoning_effort` toggles ✅
+- `infra/key_vault.tf`: secret `DEEPSEEK-API-KEY` ✅
 - `infra/app_service.tf`: `DEEPSEEK_API_KEY` KV reference + `MODEL_OPTIMIZER` /
-  `DEEPSEEK_REASONING_EFFORT` app settings
-- `.github/workflows/terraform.yml`: `TF_VAR_deepseek_api_key` in plan + apply jobs
-- GitHub secret `TF_VAR_DEEPSEEK_API_KEY` (operator action)
+  `DEEPSEEK_REASONING_EFFORT` app settings ✅
+- `.github/workflows/terraform.yml`: `TF_VAR_deepseek_api_key` in plan + apply jobs ✅
+- **Operator action still required:** add GitHub secret `TF_VAR_DEEPSEEK_API_KEY`
+  before the next `terraform apply`, or the apply fails on the missing variable.
 
 ## Known issues / follow-ups
 
