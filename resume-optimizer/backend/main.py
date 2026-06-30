@@ -834,6 +834,9 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             except Exception:
                 _logger.exception("job=%s: failed to load/merge stored claims ledger — using fresh ledger", job_id)
 
+        from observability.trace import set_call_kind
+
+        set_call_kind("jd_analysis")
         await emit({"type": "stage", "message": "Analyzing Job Description...", "stage": "jd_analysis"})
         jd_result_dict = await analyze_jd(jd_text)
         jd_result  = jd_result_dict.get("text", jd_result_dict)
@@ -849,6 +852,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
         await emit({"type": "stage", "message": f"JD analyzed — {len(jd_keywords)} keywords extracted.",
                     "stage": "jd_analysis", "keywords": jd_keywords[:20]})
 
+        set_call_kind("baseline_scoring")
         await emit({"type": "stage", "message": "Scoring original resume...", "stage": "score"})
         baseline_dict   = await score_combined(
             resume_text,
@@ -915,6 +919,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             # Final re-score for the UI score event + downstream report. Hits the
             # PR-3 result cache (0 tokens) when the draft is unchanged from the
             # agent's last internal re-score (same scoring params).
+            set_call_kind("final_scoring")
             final_score_dict = await score_combined(
                 current_resume,
                 jd_text,

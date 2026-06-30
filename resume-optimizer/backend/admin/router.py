@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone, time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import func, select
+from sqlalchemy import Integer, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.dependencies import get_admin_user
@@ -960,5 +960,96 @@ async def cost_audit(
                 "total_cost_usd": round(float(r.total_cost_usd), 6),
             }
             for r in rows
+        ],
+    }
+
+
+@router.get("/analytics/cache-efficiency")
+@limiter.limit("10/minute")
+async def cache_efficiency(
+    request: Request,
+    days: int = Query(30, ge=1, le=365),
+    _: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Context caching efficiency: hit rate, tokens saved, and daily breakdown."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    totals = (await db.execute(
+        select(
+            func.count().label("total_calls"),
+            func.coalesce(func.sum(
+                func.cast(LlmCallLog.cache_hit == True, Integer)  # noqa: E712
+            ), 0).label("cache_hits"),
+            func.coalesce(func.sum(LlmCallLog.input_tokens), 0).label("total_input_tokens"),
+            func.coalesce(func.sum(LlmCallLog.cached_input_tokens), 0).label("total_cached_tokens"),
+            func.coalesce(func.sum(LlmCallLog.cost_usd), 0.0).label("total_cost_usd"),
+        )
+        .where(LlmCallLog.created_at >= cutoff)
+    )).one()
+
+    by_kind = (await db.execute(
+        select(
+            LlmCallLog.call_kind,
+            func.count().label("calls"),
+            func.coalesce(func.sum(
+                func.cast(LlmCallLog.cache_hit == True, Integer)  # noqa: E712
+            ), 0).label("cache_hits"),
+            func.coalesce(func.sum(LlmCallLog.cached_input_tokens), 0).label("cached_tokens"),
+            func.coalesce(func.sum(LlmCallLog.input_tokens), 0).label("input_tokens"),
+            func.coalesce(func.sum(LlmCallLog.cost_usd), 0.0).label("cost_usd"),
+        )
+        .where(LlmCallLog.created_at >= cutoff)
+        .group_by(LlmCallLog.call_kind)
+        .order_by(func.sum(LlmCallLog.cached_input_tokens).desc())
+    )).all()
+
+    daily = (await db.execute(
+        select(
+            func.date(LlmCallLog.created_at).label("day"),
+            func.count().label("total_calls"),
+            func.coalesce(func.sum(
+                func.cast(LlmCallLog.cache_hit == True, Integer)  # noqa: E712
+            ), 0).label("cache_hits"),
+            func.coalesce(func.sum(LlmCallLog.cached_input_tokens), 0).label("cached_tokens"),
+        )
+        .where(LlmCallLog.created_at >= cutoff)
+        .group_by(func.date(LlmCallLog.created_at))
+        .order_by(func.date(LlmCallLog.created_at))
+    )).all()
+
+    total_calls = int(totals.total_calls)
+    cache_hits = int(totals.cache_hits)
+    total_cached = int(totals.total_cached_tokens)
+
+    return {
+        "window_days": days,
+        "total_calls": total_calls,
+        "cache_hits": cache_hits,
+        "cache_hit_rate_pct": round(100.0 * cache_hits / total_calls, 1) if total_calls else 0.0,
+        "total_input_tokens": int(totals.total_input_tokens),
+        "total_cached_tokens": total_cached,
+        "estimated_savings_usd": round(total_cached * 0.75 / 1_000_000 * 0.30, 4),
+        "by_call_kind": [
+            {
+                "call_kind":   r.call_kind or "unknown",
+                "calls":       r.calls,
+                "cache_hits":  int(r.cache_hits),
+                "hit_rate_pct": round(100.0 * int(r.cache_hits) / r.calls, 1) if r.calls else 0.0,
+                "cached_tokens": int(r.cached_tokens),
+                "input_tokens":  int(r.input_tokens),
+                "cost_usd":      round(float(r.cost_usd), 6),
+            }
+            for r in by_kind
+        ],
+        "daily": [
+            {
+                "date":          str(r.day),
+                "total_calls":   r.total_calls,
+                "cache_hits":    int(r.cache_hits),
+                "hit_rate_pct":  round(100.0 * int(r.cache_hits) / r.total_calls, 1) if r.total_calls else 0.0,
+                "cached_tokens": int(r.cached_tokens),
+            }
+            for r in daily
         ],
     }

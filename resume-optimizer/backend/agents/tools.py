@@ -42,13 +42,14 @@ from typing import Dict
 
 from config import (
     AGENT_TOKEN_BUDGET,
+    DEBATE_TOKEN_BUDGET,
     MODEL_BULLET_STRENGTHEN,
+    MODEL_CRITIQUE,
     MODEL_KEYWORD_INJECT,
-    MODEL_OPTIMIZER,
-    MODEL_SECTION_HUMANIZE,
     MODEL_SKILLS_REWRITE,
 )
 from llm import complete
+from observability.trace import current_call_kind
 from utils.section_parser import reassemble as _reassemble_sections
 
 
@@ -129,11 +130,16 @@ class ResumeState:
 
 
 def _budget_ok(state: ResumeState) -> tuple:
-    """Return (True, '') if budget available, (False, message) if exceeded."""
+    """Return (True, '') if budget available, (False, message) if exceeded.
+
+    Picks the budget based on the active call kind so debate gets its larger
+    cap (40K) instead of the single-agent cap (20K).
+    """
+    budget = DEBATE_TOKEN_BUDGET if current_call_kind() == "pro_debate" else AGENT_TOKEN_BUDGET
     total = state.total_tokens()
-    if total >= AGENT_TOKEN_BUDGET:
+    if total >= budget:
         return False, (
-            f"Token budget reached ({total:,}/{AGENT_TOKEN_BUDGET:,}). "
+            f"Token budget reached ({total:,}/{budget:,}). "
             f"Optimization complete — remaining sections unchanged."
         )
     return True, ""
@@ -233,7 +239,8 @@ async def bullet_strengthen(
 
     Args:
         state: The ResumeState for this optimisation session.
-        weak_bullets_csv: The weak bullet texts verbatim from the Impact score's weak_bullets.
+        weak_bullets_csv: Pipe-separated (|) weak bullet texts verbatim from the Impact score.
+            Pipe delimiter is used because bullets frequently contain commas.
 
     Returns:
         Short status string. Resume state is updated in-place.
@@ -250,7 +257,9 @@ async def bullet_strengthen(
             f"Try keyword_inject on summary instead."
         )
 
-    weak = [b.strip() for b in weak_bullets_csv.split(",") if b.strip()]
+    # Accept either pipe-separated (preferred) or comma-separated input.
+    delimiter = "|" if "|" in weak_bullets_csv else ","
+    weak = [b.strip() for b in weak_bullets_csv.split(delimiter) if b.strip()]
     if not weak:
         return "No weak bullets provided — nothing to strengthen."
     metrics_note = (
@@ -269,6 +278,7 @@ Weak bullets to rewrite:
 
 Rules:
 - Only change the listed bullets — all other text stays IDENTICAL
+- If a listed bullet does NOT appear in the section, skip it — do NOT guess which bullet was intended
 - Strong past-tense action verb at the start of each bullet
 - No fabricated companies, titles, dates, or metrics
 - NEVER insert placeholder metrics like "[XX%]", "[N]", or "[number]". If a bullet has no
@@ -364,79 +374,7 @@ Return ONLY the complete updated skills section text."""
     return "Skills rewrite returned empty output — section unchanged."
 
 
-# ── Tool 4: Section humanizer (fixes low Readability score) ──────────────────
-
-
-async def section_humanize(
-    state: ResumeState,
-    section_name: str,
-    issues_csv: str = "",
-) -> str:
-    """
-    Polish language and readability of one resume section.
-
-    Args:
-        state: The ResumeState for this optimisation session.
-        section_name: Section to polish: summary, experience, skills, or education.
-        issues_csv: Comma-separated issues from the Readability score's issues field.
-            Leave empty for general polish.
-
-    Returns:
-        Short status string. Resume state is updated in-place.
-    """
-    ok, msg = _budget_ok(state)
-    if not ok:
-        return msg
-
-    section_text = state.get_section(section_name)
-    if not section_text.strip():
-        available = state.available_sections()
-        return (
-            f"Section '{section_name}' not found. "
-            f"Available sections: {', '.join(available)}. "
-            f"Retry with one of those names."
-        )
-
-    issues_note = (
-        f"Specifically fix: {issues_csv}"
-        if issues_csv.strip()
-        else "Apply general language polish."
-    )
-
-    prompt = f"""Polish the {section_name} section below for readability and professional tone.
-{issues_note}
-
-Rules:
-- Remove robotic phrases ('responsible for', 'assisted in', 'helped with', 'worked on')
-- Strong action verbs, varied sentence structure
-- Preserve ALL facts — no changes to names, dates, companies, or metrics
-- NEVER insert placeholder metrics ("[XX%]") or invent/inflate numbers
-- Plain text ONLY — no markdown, and NO LaTeX or "$" math wrappers (write "100M+ events/day"
-  and "$500K" as plain text, never "$(100M+events/day$")
-
-{section_name.title()} section:
-\"\"\"
-{section_text}
-\"\"\"
-
-Return ONLY the complete updated {section_name} section text."""
-
-    try:
-        result = await complete(prompt, MODEL_SECTION_HUMANIZE)
-    except Exception as exc:
-        return f"LLM call failed: {exc}"
-    state.add_tokens(
-        result.get("input_tokens", 0),
-        result.get("output_tokens", 0),
-        result.get("cost_usd", 0.0),
-    )
-    if result.get("text"):
-        state.update_section(section_name, result["text"])
-        return f"'{section_name}' polished. Issues addressed: {issues_csv or 'general polish'}."
-    return f"Humanization of '{section_name}' returned empty output — section unchanged."
-
-
-# ── Tool 5: Bullet reorder (fixes low JD Tailoring score) ────────────────────
+# ── Tool 4: Bullet reorder (fixes low JD Tailoring score) ────────────────────
 
 
 async def bullets_reorder(
@@ -488,7 +426,7 @@ Rules:
 Return ONLY the complete {section_name} section text with bullets reordered."""
 
     try:
-        result = await complete(prompt, MODEL_OPTIMIZER)
+        result = await complete(prompt, MODEL_BULLET_STRENGTHEN)
     except Exception as exc:
         return f"LLM call failed: {exc}"
     state.add_tokens(
@@ -500,3 +438,98 @@ Return ONLY the complete {section_name} section text with bullets reordered."""
         state.update_section(section_name, result["text"])
         return f"Reordered bullets in '{section_name}' by JD relevance."
     return f"Bullet reorder of '{section_name}' returned empty output — section unchanged."
+
+
+# ── Tool 5: Resume critique (qualitative feedback on the whole draft) ────────
+
+
+async def critique_resume(
+    state: ResumeState,
+    focus_areas_csv: str = "",
+) -> str:
+    """
+    Run a critic over the full resume draft and return structured feedback.
+
+    The strategist can call this at any point to get qualitative feedback
+    on what still reads weak, robotic, or generic — then decide which
+    fix tools to call based on the critique.
+
+    Args:
+        state: The ResumeState for this optimisation session.
+        focus_areas_csv: Optional comma-separated areas to focus critique on
+            (e.g. "robotic language,weak bullets,keyword stuffing"). Empty
+            means critique everything.
+
+    Returns:
+        Structured feedback string the strategist can act on.
+    """
+    ok, msg = _budget_ok(state)
+    if not ok:
+        return msg
+
+    draft = state.reassemble()
+    if not draft.strip():
+        return "Resume draft is empty — nothing to critique."
+
+    focus_note = (
+        f"Focus your critique on: {focus_areas_csv}"
+        if focus_areas_csv.strip()
+        else "Critique on dimensions the optimizer can act on: weak bullets, missing keywords, missing skills, bullet ordering."
+    )
+
+    prompt = f"""You are a senior hiring manager reviewing a resume. Be specific and actionable.
+
+{focus_note}
+
+For each issue you find, quote the exact phrase from the resume that needs fixing.
+
+The optimizer has tools that can only fix these dimensions — only return issues that map to one:
+- "weak_bullets" → fixed by bullet_strengthen
+- "missing_keywords" → fixed by keyword_inject
+- "missing_skills" → fixed by skills_rewrite
+- "ordering_issues" → fixed by bullets_reorder
+
+Do NOT raise issues about tone, robotic language, or wording — a separate humanize stage handles those.
+
+Return ONLY a JSON object with these keys (omit any key with an empty list):
+- "weak_bullets": list of bullet texts that lack impact or measurable outcomes
+- "missing_keywords": list of JD keywords the resume should include but doesn't
+- "missing_skills": list of required skills missing from the skills section
+- "ordering_issues": list of sections where the most JD-relevant bullets are not first
+
+Resume:
+\"\"\"
+{draft}
+\"\"\"
+
+JSON:"""
+
+    try:
+        result = await complete(prompt, MODEL_CRITIQUE, response_format={"type": "json_object"})
+    except Exception as exc:
+        return f"Critique LLM call failed: {exc}"
+
+    state.add_tokens(
+        result.get("input_tokens", 0),
+        result.get("output_tokens", 0),
+        result.get("cost_usd", 0.0),
+    )
+
+    import json
+    raw = result.get("text", "").strip()
+    try:
+        feedback = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return f"Critique returned non-JSON: {raw[:300]}"
+
+    parts = []
+    for key in ("weak_bullets", "missing_keywords", "missing_skills", "ordering_issues"):
+        items = feedback.get(key, [])
+        if items:
+            label = key.replace("_", " ").title()
+            parts.append(f"{label}: {'; '.join(str(i) for i in items[:5])}")
+
+    if not parts:
+        return "Critique found no issues — resume reads well."
+
+    return " | ".join(parts)

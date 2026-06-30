@@ -29,8 +29,8 @@ from agents.tools import (
     ResumeState,
     bullet_strengthen,
     bullets_reorder,
+    critique_resume,
     keyword_inject,
-    section_humanize,
     skills_rewrite,
 )
 from config import AGENT_MAX_ITER, AGENT_TOKEN_BUDGET, MODEL_OPTIMIZER, SCORE_DIMENSIONS, SCORE_TARGET
@@ -78,7 +78,7 @@ TOOL_DEFS = [
                 "properties": {
                     "weak_bullets_csv": {
                         "type": "string",
-                        "description": "Comma-separated weak bullet texts verbatim from the Impact score",
+                        "description": "Pipe-separated (|) weak bullet texts verbatim from the Impact score's weak_bullets. Use pipe — NOT comma — because bullet text frequently contains commas.",
                     },
                 },
                 "required": ["weak_bullets_csv"],
@@ -105,27 +105,6 @@ TOOL_DEFS = [
     {
         "type": "function",
         "function": {
-            "name": "section_humanize",
-            "description": "Polish language and readability in a specific resume section. Call when Readability score is below target.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "section_name": {
-                        "type": "string",
-                        "description": "Section to polish: summary, experience, skills, or education",
-                    },
-                    "issues_csv": {
-                        "type": "string",
-                        "description": "Comma-separated issues from Readability score. Leave empty for general polish.",
-                    },
-                },
-                "required": ["section_name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "bullets_reorder",
             "description": "Reorder bullets in an experience section so the most JD-relevant bullets appear first. Call when JD Tailoring score is below target due to bullet ordering.",
             "parameters": {
@@ -144,6 +123,23 @@ TOOL_DEFS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "critique_resume",
+            "description": "Run a critic over the full resume draft to get qualitative feedback on what still reads weak, robotic, or generic. Returns structured issues (robotic phrases, weak bullets, keyword stuffing, tone issues, structural issues). Call this to understand what needs fixing before deciding which tools to use.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "focus_areas_csv": {
+                        "type": "string",
+                        "description": "Optional comma-separated areas to focus on (e.g. 'robotic language,weak bullets'). Leave empty for full critique.",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 # ── Tool dispatch table ───────────────────────────────────────────────────────
@@ -152,29 +148,18 @@ TOOL_MAP: dict[str, Callable] = {
     "keyword_inject":    keyword_inject,
     "bullet_strengthen": bullet_strengthen,
     "skills_rewrite":    skills_rewrite,
-    "section_humanize":  section_humanize,
     "bullets_reorder":   bullets_reorder,
+    "critique_resume":   critique_resume,
 }
 
 
 # ── System prompt builder ─────────────────────────────────────────────────────
 
 
-def _build_system(scores: dict, jd_keywords: list, available_sections: list,
-                  user_instruction: Optional[str] = None) -> str:
-    """Build the system prompt dynamically so each reflection sees fresh scores."""
-    ats    = scores.get("ats", {})
-    impact = scores.get("impact", {})
-    skills = scores.get("skills_gap", {})
-    read   = scores.get("readability", {})
-    tailor = scores.get("jd_tailoring", {})
-
-    def _s(d: dict) -> int:
-        return d.get("score", 0)
-
-    def _flag(d: dict) -> str:
-        return "NEEDS WORK" if _s(d) < _SCORE_TARGET else "ok"
-
+def _build_system_stable(jd_keywords: list, available_sections: list,
+                         user_instruction: Optional[str] = None) -> str:
+    """Stable system prompt — stays identical across reflections/rounds so the
+    provider's context cache can hit on it."""
     instruction_block = ""
     if user_instruction:
         instruction_block = (
@@ -186,23 +171,48 @@ def _build_system(scores: dict, jd_keywords: list, available_sections: list,
 
     return f"""{instruction_block}You are a Resume Optimization Strategist. Your job is to raise all resume scores above {_SCORE_TARGET} using the available tools.
 
-CURRENT SCORES:
+AVAILABLE RESUME SECTIONS: {', '.join(available_sections)}
+
+Call tools only for dimensions marked NEEDS WORK. When all needed tools have been called, output a brief summary and stop calling tools."""
+
+
+def _build_scores_context(scores: dict) -> str:
+    """Volatile scores block — injected as a user message so the system prompt
+    stays cacheable across reflections.
+
+    Readability is intentionally omitted — a dedicated humanize stage runs
+    after the agent loop and handles language polish, so the optimizer should
+    not waste tool calls trying to fix readability.
+    """
+    ats    = scores.get("ats", {})
+    impact = scores.get("impact", {})
+    skills = scores.get("skills_gap", {})
+    tailor = scores.get("jd_tailoring", {})
+
+    def _s(d: dict) -> int:
+        return d.get("score", 0)
+
+    def _flag(d: dict) -> str:
+        return "NEEDS WORK" if _s(d) < _SCORE_TARGET else "ok"
+
+    return f"""CURRENT SCORES:
   ATS Match:    {_s(ats):>3}  [{_flag(ats)}]
     missing_keywords: {', '.join(ats.get('missing_keywords', [])[:15])}
   Impact:       {_s(impact):>3}  [{_flag(impact)}]
     weak_bullets: {', '.join(impact.get('weak_bullets', [])[:8])}
   Skills Gap:   {_s(skills):>3}  [{_flag(skills)}]
     missing_skills: {', '.join(skills.get('missing_skills', [])[:15])}
-  Readability:  {_s(read):>3}  [{_flag(read)}]
-    worst_section: {read.get('worst_section', 'experience')}
-    issues: {', '.join(read.get('issues', [])[:4])}
   JD Tailoring: {_s(tailor):>3}  [{_flag(tailor)}]
     issues: {', '.join(tailor.get('issues', [])[:3])}
 
-AVAILABLE RESUME SECTIONS: {', '.join(available_sections)}
-JD KEYWORDS (context only): {', '.join(jd_keywords[:20])}
+Analyze the scores above. Call tools for dimensions marked NEEDS WORK."""
 
-Call tools only for dimensions marked NEEDS WORK. When all needed tools have been called, output a brief summary and stop calling tools."""
+
+def _build_system(scores: dict, jd_keywords: list, available_sections: list,
+                  user_instruction: Optional[str] = None) -> str:
+    """Full system prompt (backward-compat wrapper)."""
+    return (_build_system_stable(jd_keywords, available_sections, user_instruction)
+            + "\n\n" + _build_scores_context(scores))
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -237,9 +247,12 @@ async def run_agent(
 
     reflections_cap = max_reflections or AGENT_MAX_REFLECTIONS
 
+    _SCORES_IDX = 1
     messages: list[dict] = [
         {"role": "system",
-         "content": _build_system(scores, jd_keywords, state.available_sections(), user_instruction)}
+         "content": _build_system_stable(jd_keywords, state.available_sections(), user_instruction)},
+        {"role": "user",
+         "content": _build_scores_context(scores)},
     ]
 
     current_scores = scores
@@ -260,7 +273,7 @@ async def run_agent(
                 )
                 break
 
-            result = await complete_with_tools(messages, MODEL_OPTIMIZER, TOOL_DEFS)
+            result = await complete_with_tools(messages, MODEL_OPTIMIZER, TOOL_DEFS, cache_system=True)
             state.add_tokens(
                 result["input_tokens"],
                 result["output_tokens"],
@@ -334,9 +347,13 @@ async def run_agent(
                 _logger.warning("Re-score failed (%s) — using prior scores for reflection", exc)
 
         overall = current_scores.get("overall", 0)
+        # Readability is excluded — the post-loop humanize stage owns it, and the
+        # optimizer has no tool to raise it. Including it here would block the
+        # done-check indefinitely whenever readability lags the other dimensions.
+        _agent_dims = tuple(d for d in SCORE_DIMENSIONS if d != "readability")
         all_above = all(
             current_scores.get(d, {}).get("score", 0) >= _SCORE_TARGET
-            for d in SCORE_DIMENSIONS
+            for d in _agent_dims
         )
 
         _logger.info(
@@ -365,11 +382,10 @@ async def run_agent(
                 "content": "\n".join(feedback_parts) + "\nPlease continue optimizing.",
             })
 
-            # Refresh system message with updated scores
-            messages[0] = {
-                "role": "system",
-                "content": _build_system(current_scores, jd_keywords,
-                                         state.available_sections(), user_instruction),
+            # Refresh scores context (system prompt stays stable → cache hits)
+            messages[_SCORES_IDX] = {
+                "role": "user",
+                "content": _build_scores_context(current_scores),
             }
 
     # Prefer guard's cleaned text when fabrications were detected

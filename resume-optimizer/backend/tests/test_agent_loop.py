@@ -89,7 +89,6 @@ _PATCHED_TOOL_MAP = {
     "keyword_inject":    _noop_tool,
     "bullet_strengthen": _noop_tool,
     "skills_rewrite":    _noop_tool,
-    "section_humanize":  _noop_tool,
 }
 
 
@@ -114,7 +113,7 @@ async def test_loop_calls_tools_then_terminates():
 
     tool_call_count = [0]
 
-    async def fake_complete_with_tools(messages, model, tools):
+    async def fake_complete_with_tools(messages, model, tools, **kwargs):
         if tool_call_count[0] == 0:
             tool_call_count[0] += 1
             msg = _tool_msg("keyword_inject", {"missing_keywords_csv": "docker"})
@@ -167,7 +166,7 @@ async def test_loop_terminates_on_budget_exceeded():
 
     call_count = [0]
 
-    async def fake_complete_with_tools(messages, model, tools):
+    async def fake_complete_with_tools(messages, model, tools, **kwargs):
         call_count[0] += 1
         return _fake_result(_done_msg())
 
@@ -206,7 +205,7 @@ async def test_loop_handles_unknown_tool_gracefully():
 
     call_count = [0]
 
-    async def fake_complete_with_tools(messages, model, tools):
+    async def fake_complete_with_tools(messages, model, tools, **kwargs):
         if call_count[0] == 0:
             call_count[0] += 1
             # Return a call to a tool that doesn't exist
@@ -257,7 +256,7 @@ async def test_reflection_feeds_back_guard_flags():
     all_message_batches: list[list] = []
     call_count = [0]
 
-    async def fake_complete_with_tools(messages, model, tools):
+    async def fake_complete_with_tools(messages, model, tools, **kwargs):
         all_message_batches.append(list(messages))
         call_count[0] += 1
         return _fake_result(_done_msg(f"Done (call {call_count[0]})"))
@@ -339,7 +338,7 @@ async def test_on_event_callback_invoked():
 
     call_count = [0]
 
-    async def fake_complete_with_tools(messages, model, tools):
+    async def fake_complete_with_tools(messages, model, tools, **kwargs):
         if call_count[0] == 0:
             call_count[0] += 1
             return _fake_result(_tool_msg("keyword_inject", {"missing_keywords_csv": "docker"}))
