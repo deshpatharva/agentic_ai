@@ -84,7 +84,6 @@ MODEL_OPTIMIZER          = os.environ.get("MODEL_OPTIMIZER", "deepseek/deepseek-
 MODEL_KEYWORD_INJECT     = "gemini/gemini-3.1-flash-lite"   # ATS tool — cheap, fast
 MODEL_BULLET_STRENGTHEN  = "gemini/gemini-3.1-flash-lite"   # Impact tool
 MODEL_SKILLS_REWRITE     = "gemini/gemini-3.1-flash-lite"   # Skills gap tool
-MODEL_SECTION_HUMANIZE   = "gemini/gemini-3.1-flash-lite"   # Readability tool
 MODEL_CRITIQUE           = "groq/llama-3.1-8b-instant"     # Whole-resume critic — cheap structured feedback
 
 # Phase 2 hard limits
