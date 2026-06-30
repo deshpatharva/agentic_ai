@@ -95,6 +95,20 @@ async def run_optimization_async(
         job_id, plan, config.PRO_DEBATE_ENABLED, driver.__name__,
     )
 
+    if on_event:
+        if use_debate:
+            on_event({
+                "type":    "stage",
+                "message": f"Pro debate mode active — running {driver.__name__} (plan={plan}, PRO_DEBATE_ENABLED={config.PRO_DEBATE_ENABLED})",
+                "stage":   "agent",
+            })
+        else:
+            on_event({
+                "type":    "stage",
+                "message": f"Standard mode — running {driver.__name__} (plan={plan}, PRO_DEBATE_ENABLED={config.PRO_DEBATE_ENABLED})",
+                "stage":   "agent",
+            })
+
     # ── Run selected driver ───────────────────────────────────────────────────
     try:
         result = await driver(
@@ -157,6 +171,33 @@ async def _with_verifier(pipeline_result: dict, ledger: ClaimsLedger) -> dict:
     }
 
 
+def _format_scores_feedback(scores: dict) -> str:
+    """Turn the raw scores dict into a human-readable feedback block for the rewriter.
+
+    Without this, ``f"{scores}"`` dumps the Python repr (``{'ats': {...}}``) into the
+    prompt — far less useful than a list of concrete weaknesses.
+    """
+    if not isinstance(scores, dict):
+        return str(scores)
+
+    lines: list[str] = []
+    ats = scores.get("ats", {}) or {}
+    if ats.get("missing_keywords"):
+        lines.append(f"- Add missing ATS keywords: {', '.join(ats['missing_keywords'][:10])}")
+    impact = scores.get("impact", {}) or {}
+    if impact.get("weak_bullets"):
+        lines.append("- Strengthen weak bullets: " + "; ".join(impact["weak_bullets"][:5]))
+    skills = scores.get("skills_gap", {}) or {}
+    crit = skills.get("critical_missing") or skills.get("missing_skills") or []
+    if crit:
+        lines.append(f"- Add missing required skills: {', '.join(crit[:10])}")
+    tailor = scores.get("jd_tailoring", {}) or {}
+    if tailor.get("issues"):
+        lines.append("- Fix tailoring issues: " + "; ".join(tailor["issues"][:3]))
+
+    return "\n".join(lines) if lines else ""
+
+
 async def _deterministic_fallback(
     resume_text: str,
     jd_keywords: list,
@@ -167,7 +208,7 @@ async def _deterministic_fallback(
     result = await rewrite_resume(
         resume_text=resume_text,
         jd_keywords=jd_keywords,
-        consolidated_feedback=scores,
+        consolidated_feedback=_format_scores_feedback(scores),
         claims_ledger=claims_ledger,
     )
     return {

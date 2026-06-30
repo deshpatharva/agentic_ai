@@ -19,10 +19,10 @@ from agents.fabrication_guard import fabrication_guard
 from agents.fact_extractor import ClaimsLedger
 from agents.scorer import score_combined
 from agents.tools import ResumeState
-from config import AGENT_MAX_ITER, AGENT_TOKEN_BUDGET, MODEL_OPTIMIZER, MODEL_REVIEWER
+from config import AGENT_MAX_ITER, DEBATE_TOKEN_BUDGET, MODEL_OPTIMIZER, MODEL_REVIEWER
 from llm import complete, complete_with_tools
 from observability.trace import set_call_kind
-from orchestration.agent_loop import TOOL_DEFS, TOOL_MAP, _build_system
+from orchestration.agent_loop import TOOL_DEFS, TOOL_MAP, _build_system_stable, _build_scores_context
 
 _logger = logging.getLogger(__name__)
 
@@ -65,6 +65,9 @@ async def run_debate(
     # Tag all LlmCallLog rows from this driver as "pro_debate"
     set_call_kind("pro_debate")
 
+    # Stable system prompt — shared across rounds so the provider cache hits.
+    stable_system = _build_system_stable(jd_keywords, state.available_sections())
+
     current_scores = scores
     iterations = 0
     last_objection: str | None = None
@@ -75,30 +78,44 @@ async def run_debate(
     for round_idx in range(DEBATE_MAX_ROUNDS):
         _logger.info("debate_loop: starting round %d/%d", round_idx + 1, DEBATE_MAX_ROUNDS)
 
+        # Budget gate — skip round entirely if already exhausted
+        if state.total_tokens() >= DEBATE_TOKEN_BUDGET:
+            _logger.info(
+                "debate_loop: budget exhausted (%d/%d) before round %d — stopping",
+                state.total_tokens(), DEBATE_TOKEN_BUDGET, round_idx + 1,
+            )
+            break
+
         # ── Optimizer inner tool-calling loop ──────────────────────────────
         messages: list[dict] = [
-            {
-                "role": "system",
-                "content": _build_system(current_scores, jd_keywords, state.available_sections()),
-            }
+            {"role": "system", "content": stable_system},
+            {"role": "user", "content": _build_scores_context(current_scores)},
         ]
 
         # Feed reviewer objection from previous round as user context (round > 0)
         if round_idx > 0 and last_objection:
             messages.append({
                 "role": "user",
-                "content": f"The reviewer raised this objection: {last_objection}\nPlease address it.",
+                "content": (
+                    f"The reviewer raised this objection: {last_objection}\n\n"
+                    "Address ONLY this objection. Call at most 1-2 tools that directly "
+                    "target the issue raised. Do NOT re-run a full optimization. Pick the "
+                    "tool that matches the objection (keyword_inject for missing keywords, "
+                    "bullet_strengthen for weak bullets, skills_rewrite for missing skills, "
+                    "bullets_reorder for ordering). When the targeted fix is applied, stop."
+                ),
             })
 
+        round_tool_calls = 0
         for _ in range(AGENT_MAX_ITER):
-            if state.total_tokens() >= AGENT_TOKEN_BUDGET:
+            if state.total_tokens() >= DEBATE_TOKEN_BUDGET:
                 _logger.info(
                     "debate_loop: token budget reached (%d/%d), stopping optimizer",
-                    state.total_tokens(), AGENT_TOKEN_BUDGET,
+                    state.total_tokens(), DEBATE_TOKEN_BUDGET,
                 )
                 break
 
-            result = await complete_with_tools(messages, MODEL_OPTIMIZER, TOOL_DEFS)
+            result = await complete_with_tools(messages, MODEL_OPTIMIZER, TOOL_DEFS, cache_system=True)
             state.add_tokens(
                 result["input_tokens"],
                 result["output_tokens"],
@@ -124,6 +141,8 @@ async def run_debate(
             if not msg.tool_calls:
                 _logger.debug("debate_loop: optimizer returned no tool_calls — inner loop done")
                 break
+
+            round_tool_calls += len(msg.tool_calls)
 
             # Dispatch each tool call and collect observations
             for tc in msg.tool_calls:
@@ -151,9 +170,16 @@ async def run_debate(
                         "message": f"[Debate round {round_idx + 1}] Tool {tool_name}: {obs[:100]}",
                         "stage": "debate",
                         "tokens_used": state.total_tokens(),
-                        "budget": AGENT_TOKEN_BUDGET,
+                        "budget": DEBATE_TOKEN_BUDGET,
                         "round": round_idx + 1,
                     })
+
+        # If the optimizer couldn't make any tool calls this round (budget hit
+        # or model chose not to), skip the reviewer — no point critiquing a
+        # draft that wasn't changed.
+        if round_tool_calls == 0:
+            _logger.info("debate_loop: optimizer made 0 tool calls in round %d — skipping reviewer", round_idx + 1)
+            break
 
         # ── Re-score the draft so round N+1 (and the reviewer) see fresh scores ──
         draft = state.reassemble()
@@ -174,12 +200,22 @@ async def run_debate(
         overall = current_scores.get("overall", 0)
 
         reviewer_prompt = (
-            "You are a skeptical resume reviewer. The optimizer just revised this resume.\n\n"
-            f"CURRENT RESUME DRAFT:\n{draft[:2000]}\n\n"
+            "You are a skeptical resume reviewer. The optimizer just revised this resume "
+            "and can run more tools to address objections.\n\n"
+            f"CURRENT RESUME DRAFT:\n{draft}\n\n"
             f"SCORES: overall={overall}\n\n"
-            "Your task: identify ONE specific remaining problem.\n"
-            "If you have no more objections, respond EXACTLY: No objections.\n"
-            "Otherwise respond EXACTLY: OBJECTION: <one specific issue, 20 words or less>"
+            "The optimizer can only fix issues with these tools:\n"
+            "  - keyword_inject: add missing ATS keywords\n"
+            "  - bullet_strengthen: rewrite weak bullets with stronger verbs/metrics\n"
+            "  - skills_rewrite: add missing skills to the skills section\n"
+            "  - bullets_reorder: reorder bullets by JD relevance\n\n"
+            "Raise ONE objection that is fixable by these tools. Do NOT raise objections about:\n"
+            "  - tone, density, robotic language, metric inflation, wording — a dedicated humanize "
+            "stage runs after the debate completes and handles all language polish\n"
+            "  - employment gaps, timeline, dates, missing certifications, lack of specific projects, "
+            "or anything requiring new factual information — the optimizer cannot fabricate facts\n\n"
+            "If you have no more fixable objections, respond EXACTLY: No objections.\n"
+            "Otherwise respond EXACTLY: OBJECTION: <one fixable issue, 20 words or less>"
         )
 
         try:

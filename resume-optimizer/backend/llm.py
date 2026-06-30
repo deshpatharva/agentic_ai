@@ -28,6 +28,17 @@ litellm.drop_params = True  # silently ignore unsupported provider params
 
 _logger = logging.getLogger(__name__)
 
+# A hung provider call would otherwise stall a pipeline run until the
+# 15-minute stuck-job reaper kills it.
+_CALL_TIMEOUT_S = 120
+_TRANSIENT = (litellm.exceptions.Timeout, litellm.exceptions.APIConnectionError,
+              litellm.exceptions.InternalServerError, asyncio.TimeoutError)
+
+
+def _provider(model: str) -> str:
+    return model.split("/", 1)[0]
+
+
 # DeepSeek V4 thinking effort. LiteLLM's DeepSeek config discards reasoning_effort
 # and always sends thinking:{"type":"enabled"} (litellm #27439), so we pass the
 # value raw via extra_body, which LiteLLM forwards untouched. Remove the extra_body
@@ -39,16 +50,6 @@ def _deepseek_extra_body(model: str) -> dict | None:
     if _provider(model) != "deepseek":
         return None
     return {"reasoning_effort": _DEEPSEEK_REASONING_EFFORT, "thinking": {"type": "enabled"}}
-
-# A hung provider call would otherwise stall a pipeline run until the
-# 15-minute stuck-job reaper kills it.
-_CALL_TIMEOUT_S = 120
-_TRANSIENT = (litellm.exceptions.Timeout, litellm.exceptions.APIConnectionError,
-              litellm.exceptions.InternalServerError, asyncio.TimeoutError)
-
-
-def _provider(model: str) -> str:
-    return model.split("/", 1)[0]
 
 
 async def _record_call(row_kwargs: dict) -> None:
@@ -152,10 +153,15 @@ async def complete(
     latency_ms = int((time.perf_counter() - t0) * 1000)
     in_tok  = response.usage.prompt_tokens
     out_tok = response.usage.completion_tokens
+    cached_tok = getattr(response.usage, "prompt_tokens_details", None)
+    cached_tok = getattr(cached_tok, "cached_tokens", 0) or 0 if cached_tok else 0
+    cached_tok = cached_tok if isinstance(cached_tok, int) else 0
 
     from utils.cost import resolve_cost
     rates = await _provider_rates()
     cost_usd, cost_source = resolve_cost(response, model, in_tok, out_tok, rates)
+
+    cache_hit = cached_tok > 0
 
     from observability.trace import current_trace, current_call_kind
     asyncio.create_task(_record_call({
@@ -165,9 +171,11 @@ async def complete(
         "call_kind":     current_call_kind() or None,
         "input_tokens":  in_tok,
         "output_tokens": out_tok,
+        "cached_input_tokens": cached_tok,
         "cost_usd":      cost_usd,
         "cost_source":   cost_source,
         "latency_ms":    latency_ms,
+        "cache_hit":     cache_hit,
         "created_at":    datetime.now(timezone.utc),
     }))
 
@@ -183,18 +191,37 @@ async def complete_with_tools(
     messages: list[dict],
     model: str,
     tools: list[dict],
+    cache_system: bool = False,
 ) -> dict:
     """Multi-turn completion with native tool-calling (non-streaming).
+
+    Args:
+        messages: Conversation messages (system + user/assistant/tool turns).
+        model:    LiteLLM model name with provider prefix.
+        tools:    Tool definitions (JSON schema for LiteLLM).
+        cache_system: When True, mark the system message with cache_control
+                      so providers that support context caching (Gemini 2.5+,
+                      Anthropic) can cache the prefix and bill at reduced rates.
 
     Returns:
         dict with:
           - message:       the raw assistant message (has .content and .tool_calls)
-          - input_tokens / output_tokens / cost_usd
+          - input_tokens / output_tokens / cached_input_tokens / cost_usd
 
     Tool calls come back as structured, validated arguments — never parsed from
     free text — eliminating control-token leakage. Records an LlmCallLog row via
     the same fire-and-forget path as complete()/stream_chat().
     """
+    if cache_system and messages and messages[0].get("role") == "system":
+        messages = list(messages)
+        sys_msg = dict(messages[0])
+        sys_content = sys_msg.get("content", "")
+        if isinstance(sys_content, str):
+            sys_msg["content"] = [
+                {"type": "text", "text": sys_content, "cache_control": {"type": "ephemeral"}},
+            ]
+        messages[0] = sys_msg
+
     tool_kwargs: dict = {
         "model": model,
         "messages": messages,
@@ -214,25 +241,24 @@ async def complete_with_tools(
                         model, type(exc).__name__)
         response = await litellm.acompletion(**tool_kwargs)
     except Exception as exc:
-        # Some providers/models reject or mishandle the tools/tool_choice params.
-        # Degrade gracefully to a plain completion so the user still gets a reply
-        # (the action just won't fire on this turn).
         _logger.warning("tool-calling chat to %s failed (%s) — retrying WITHOUT tools",
                         model, type(exc).__name__)
-        response = await litellm.acompletion(
-            model=model,
-            messages=messages,
-            timeout=_CALL_TIMEOUT_S,
-        )
+        no_tools = {k: v for k, v in tool_kwargs.items() if k not in ("tools", "tool_choice")}
+        response = await litellm.acompletion(**no_tools)
 
     latency_ms = int((time.perf_counter() - t0) * 1000)
     usage = getattr(response, "usage", None)
     in_tok = getattr(usage, "prompt_tokens", 0) or 0
     out_tok = getattr(usage, "completion_tokens", 0) or 0
+    cached_tok = getattr(usage, "prompt_tokens_details", None)
+    cached_tok = getattr(cached_tok, "cached_tokens", 0) or 0 if cached_tok else 0
+    cached_tok = cached_tok if isinstance(cached_tok, int) else 0
 
     from utils.cost import resolve_cost
     rates = await _provider_rates()
     cost_usd, cost_source = resolve_cost(response, model, in_tok, out_tok, rates)
+
+    cache_hit = cached_tok > 0
 
     from observability.trace import current_trace, current_call_kind
     asyncio.create_task(_record_call({
@@ -242,17 +268,20 @@ async def complete_with_tools(
         "call_kind":     current_call_kind() or None,
         "input_tokens":  in_tok,
         "output_tokens": out_tok,
+        "cached_input_tokens": cached_tok,
         "cost_usd":      cost_usd,
         "cost_source":   cost_source,
         "latency_ms":    latency_ms,
+        "cache_hit":     cache_hit,
         "created_at":    datetime.now(timezone.utc),
     }))
 
     return {
-        "message":       response.choices[0].message,
-        "input_tokens":  in_tok,
-        "output_tokens": out_tok,
-        "cost_usd":      float(cost_usd),
+        "message":              response.choices[0].message,
+        "input_tokens":         in_tok,
+        "output_tokens":        out_tok,
+        "cached_input_tokens":  cached_tok,
+        "cost_usd":             float(cost_usd),
     }
 
 

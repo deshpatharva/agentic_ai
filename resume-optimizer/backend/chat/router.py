@@ -1,4 +1,13 @@
-"""Stateful optimize co-pilot — POST /optimize/chat returns SSE."""
+"""Stateful optimize co-pilot — POST /optimize/chat returns SSE.
+
+Architecture (v2 — state-machine):
+  1. Resolve session, persist user message
+  2. Determine conversation phase from session.context
+  3. Try deterministic handling (URL paste, picker click, affirmation)
+  4. If LLM needed: build phase-scoped window → complete_with_tools → retry on empty
+  5. Handle tool calls (launch/save/download/edit) — same handoff logic
+  6. Persist assistant message with tool-call metadata
+"""
 
 import hashlib
 import json
@@ -14,15 +23,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from auth.dependencies import get_current_user
-from chat.agent import render_system_prompt
-from chat.tools import TOOLS, LAUNCH_TOOL, SAVE_TOOL, DOWNLOAD_TOOL, EDIT_TOOL, parse_tool_calls, message_text
+from chat.agent import render_system_prompt, render_context_message
+from chat.state_machine import (
+    resolve_phase, tools_for_phase, try_deterministic, fallback_response,
+    AWAITING_JD, JD_CAPTURED, OPTIMIZING, RESULTS_READY,
+)
+from chat.tools import LAUNCH_TOOL, SAVE_TOOL, DOWNLOAD_TOOL, EDIT_TOOL, parse_tool_calls, message_text
 from chat.dependencies import get_or_create_session, require_complete_profile
 from chat.handoff import fire_optimizer, save_profile_from_session, resolve_profile_download, apply_edit
 from chat.window import build_window
 from config import MODEL_CHAT_AGENT, CHAT_WINDOW_TURNS
 from db.models import ChatMessage, ChatSession, DailyUsageCounter, PlanLimit, User
 from db.session import get_db, AsyncSessionLocal
-from llm import complete_with_tools
+from llm import complete_with_tools, stream_chat
 
 _logger = logging.getLogger(__name__)
 
@@ -39,6 +52,7 @@ class SessionRenameRequest(BaseModel):
 
 
 # ── Session management endpoints ──────────────────────────────────────────────
+
 
 @router.get("/sessions")
 async def list_sessions(
@@ -137,11 +151,6 @@ async def delete_session(
 
 
 def _build_picker_profiles(ctx: dict, all_profiles: list[dict]) -> list[dict]:
-    """Order profiles recommended-first with match scores for the UI profile picker.
-
-    `all_profiles` is [{id, label}]. Matched profiles (ranked by JD relevance) come
-    first; the top match is flagged `recommended`. match_pct is surfaced only when > 0.
-    """
     matched = ctx.get("_jd_matched_profiles", [])
     pct_by_id = {m["id"]: m.get("match_pct", 0) for m in matched}
     rank = {m["id"]: i for i, m in enumerate(matched)}
@@ -174,18 +183,15 @@ async def _get_owned_session(session_id: str, user_id, db: AsyncSession) -> Chat
     return sess
 
 
+# ── JD resolution helpers ────────────────────────────────────────────────────
+
 _URL_RE = re.compile(r"^https?://", re.I)
-_PICKER_RE = re.compile(r'^Use my "(.+)" profile$')
 
 
 async def _resolve_jd(message: str, db: AsyncSession) -> tuple[str | None, bool]:
     """Attempt to resolve a job description from the message.
 
-    Returns (jd_text, url_was_attempted):
-      - (text, False) — long paste treated as JD
-      - (text, True)  — URL successfully fetched
-      - (None, True)  — URL was provided but fetch/parse failed
-      - (None, False) — message is neither a URL nor a long paste
+    Returns (jd_text, url_was_attempted).
     """
     text = message.strip()
     if _URL_RE.match(text):
@@ -206,7 +212,7 @@ async def _resolve_jd(message: str, db: AsyncSession) -> tuple[str | None, bool]
         try:
             jd_text = await _fetch_jd_from_url(text)
         except Exception:
-            return None, True  # URL attempted but fetch failed
+            return None, True
         try:
             old = await db.scalar(select(JdScrapeCache).where(JdScrapeCache.url_hash == url_hash))
             if old:
@@ -249,12 +255,6 @@ async def _match_profiles(user: User, jd_text: str, db: AsyncSession) -> list[di
 
 
 async def _compute_jd_gaps(jd_text: str, matches: list[dict], user: User, db: AsyncSession) -> list[str]:
-    """Compute deterministic gaps for the top-matched profile vs the JD.
-
-    Runs the JD analyzer (cached, reused later by the pipeline) and diffs its
-    required skills against the recommended profile. Best-effort: returns [] on
-    any failure so chat never breaks.
-    """
     if not matches:
         return []
     try:
@@ -277,8 +277,10 @@ async def _compute_jd_gaps(jd_text: str, matches: list[dict], user: User, db: As
         return []
 
 
+# ── Quota helpers ──────────────────────────────────────────────────────────────
+
+
 async def _check_quota(user: User, db: AsyncSession) -> None:
-    """Raise HTTP 429 if user has hit their daily pipeline limit (same guard as /run-pipeline)."""
     from auth.dependencies import _effective_plan
     from datetime import date
 
@@ -309,7 +311,6 @@ async def _check_quota(user: User, db: AsyncSession) -> None:
 
 
 async def _check_edit_quota(user: User, db: AsyncSession) -> None:
-    """Raise HTTP 429 if the user has hit their daily edit limit."""
     from auth.dependencies import _effective_plan
     from datetime import date
 
@@ -339,10 +340,8 @@ async def _check_edit_quota(user: User, db: AsyncSession) -> None:
 
 
 async def _increment_edit_counter(user_id: str, db: AsyncSession) -> None:
-    """Increment today's edit counter for the user (upsert)."""
     import uuid as _uuid_mod
     from datetime import date
-    # SQLAlchemy stores Uuid() as CHAR(32) hex (no dashes) in SQLite; strip dashes for raw SQL.
     uid_hex = _uuid_mod.UUID(user_id).hex
     await db.execute(
         text(
@@ -356,26 +355,24 @@ async def _increment_edit_counter(user_id: str, db: AsyncSession) -> None:
     await db.commit()
 
 
+# ── Main chat endpoint ────────────────────────────────────────────────────────
+
+
 @router.post("/chat")
 async def optimize_chat(
     body: ChatTurnRequest,
     current_user: User = Depends(require_complete_profile),
     db: AsyncSession = Depends(get_db),
 ):
-    """Stateful co-pilot turn. Returns an SSE stream read via fetch() + ReadableStream.
+    """Stateful co-pilot turn. Returns an SSE stream.
 
-    Events emitted:
-      session  — {"session_id": "..."}            (first, always)
-      token    — {"text": "<delta>"}              (0..N, streaming tokens)
-      handoff  — {"job_id": "...", "sse_token": "..."} (when optimizer fires)
-      error    — {"message": "..."}               (on failure)
-      done     — {"session_id": "..."}            (last, always)
+    Architecture (v2):
+      1. Pre-resolve JD if needed
+      2. Determine conversation phase
+      3. Try deterministic handling first
+      4. Fall back to LLM with phase-scoped prompt + retry
     """
-    # All setup is wrapped so ANY failure becomes a graceful, logged SSE error
-    # instead of an opaque HTTP 500 ("Request failed" in the UI with no detail).
     try:
-        # Resolve session from body.session_id (can't use Depends here — body params are
-        # unavailable inside FastAPI dependency functions).
         session = await get_or_create_session(
             session_id=body.session_id, current_user=current_user, db=db
         )
@@ -393,12 +390,9 @@ async def optimize_chat(
                     {"id": m["id"], "label": m["label"], "match_pct": m.get("match_pct", 0)}
                     for m in matches
                 ]
-                # Deterministically compute gaps for the top-matched profile so the
-                # agent asks grounded questions (no hallucinated gaps/companies).
                 ctx["gaps"] = await _compute_jd_gaps(resolved_jd, matches, current_user, db)
                 ctx_changed = True
             elif url_attempted:
-                # URL provided but fetch failed — tell the AI so it doesn't hallucinate success.
                 ctx["jd_fetch_error"] = True
                 ctx_changed = True
             if ctx_changed:
@@ -406,7 +400,7 @@ async def optimize_chat(
                 session.updated_at = datetime.now(timezone.utc)
                 await db.commit()
 
-        # 2. Persist the user turn; auto-title the session from the first message.
+        # 2. Persist user turn; auto-title.
         now = datetime.now(timezone.utc)
         db.add(ChatMessage(session_id=session.id, role="user", content=body.message, created_at=now))
         if not session.title:
@@ -415,7 +409,19 @@ async def optimize_chat(
             session.updated_at = now
         await db.commit()
 
-        # 3. Load history and build window.
+        # 3. Determine phase + load profiles.
+        phase = resolve_phase(ctx)
+
+        from db.models import Profile as _Profile
+        all_profs = (await db.execute(
+            select(_Profile).where(_Profile.user_id == current_user.id)
+        )).scalars().all()
+        profiles_list = [{"id": str(p.id), "label": p.label or ""} for p in all_profs]
+
+        prompt_ctx = dict(ctx)
+        prompt_ctx["profiles"] = profiles_list
+
+        # 4. Load history.
         history_rows = (
             await db.execute(
                 select(ChatMessage)
@@ -424,104 +430,117 @@ async def optimize_chat(
             )
         ).scalars().all()
 
-        # Always inject fresh profiles from DB — ctx["_jd_matched_profiles"] may be stale or
-        # absent (never set when JD hasn't been captured yet), causing the AI to say "no profiles".
-        from db.models import Profile as _Profile
-        all_profs = (await db.execute(
-            select(_Profile).where(_Profile.user_id == current_user.id)
-        )).scalars().all()
-        prompt_ctx = dict(ctx)
-        prompt_ctx["profiles"] = [{"id": str(p.id), "label": p.label or ""} for p in all_profs]
-
-        system_prompt = render_system_prompt(prompt_ctx)
-        window = build_window(system_prompt, history_rows, n=CHAT_WINDOW_TURNS)
         session_id_str = str(session.id)
+
     except Exception:
         _logger.exception("optimize_chat setup failed (session_id=%s)", body.session_id)
 
         async def _setup_error_gen():
             yield {"event": "session", "data": json.dumps({"session_id": body.session_id or ""})}
-            yield {"event": "final", "data": json.dumps({"content": "❌ Sorry — I couldn't start that turn. Please try again."})}
+            yield {"event": "final", "data": json.dumps({"content": "Sorry — I couldn't start that turn. Please try again."})}
             yield {"event": "error", "data": json.dumps({"message": "Chat setup failed — please try again."})}
             yield {"event": "done", "data": json.dumps({"session_id": body.session_id or ""})}
 
         return EventSourceResponse(_setup_error_gen(), sep="\n")
 
+    # ── 5. Try deterministic handling first ──────────────────────────────────
+    deterministic = try_deterministic(phase, body.message, ctx, profiles_list)
+
     async def event_generator():
+        """SSE generator for LLM-driven turns (deterministic turns use _deterministic_generator)."""
         yield {"event": "session", "data": json.dumps({
             "session_id": session_id_str,
             "has_jd": bool(ctx.get("jd_text")),
             "optimizer_launched": bool(ctx.get("_optimizer_launched")),
-            "profiles": _build_picker_profiles(ctx, prompt_ctx.get("profiles", [])),
+            "profiles": _build_picker_profiles(ctx, profiles_list),
         })}
 
-        # Single tool-calling completion. The model returns either a text reply
-        # (normal chat) or validated tool calls (launch/save) — never control
-        # tokens to parse, so nothing can leak into the chat. Parsing is inside the
-        # try so a provider-specific response shape can never crash the stream.
+        # ── LLM path — phase-scoped prompt + retry ───────────────────────
+        system_prompt = render_system_prompt(prompt_ctx, phase)
+        context_msg = render_context_message(prompt_ctx, phase)
+        window = build_window(
+            system_prompt, history_rows, n=CHAT_WINDOW_TURNS,
+            context_message=context_msg,
+        )
+        phase_tools = tools_for_phase(phase)
+
+        display = ""
+        tool_calls = []
+        usage = {"input_tokens": 0, "output_tokens": 0}
+        tool_call_meta = None
+
+        # First attempt
         try:
-            result = await complete_with_tools(window, MODEL_CHAT_AGENT, TOOLS)
-            message = result["message"]
-            text = message_text(message).strip()
-            tool_calls = parse_tool_calls(message)
-            usage = {"input_tokens": result.get("input_tokens", 0),
-                     "output_tokens": result.get("output_tokens", 0)}
+            if phase_tools:
+                result = await complete_with_tools(window, MODEL_CHAT_AGENT, phase_tools)
+                message = result["message"]
+                display = message_text(message).strip()
+                tool_calls = parse_tool_calls(message)
+                usage = {"input_tokens": result.get("input_tokens", 0),
+                         "output_tokens": result.get("output_tokens", 0)}
+            else:
+                # No tools available (e.g. OPTIMIZING) — stream text response
+                chunks = []
+                async for chunk in stream_chat(window, MODEL_CHAT_AGENT):
+                    if chunk["type"] == "token":
+                        chunks.append(chunk["text"])
+                        yield {"event": "token", "data": json.dumps({"text": chunk["text"]})}
+                    elif chunk["type"] == "usage":
+                        usage = {"input_tokens": chunk.get("input_tokens", 0),
+                                 "output_tokens": chunk.get("output_tokens", 0)}
+                display = "".join(chunks).strip()
         except Exception:
             _logger.exception("chat completion failed for session %s", session_id_str)
-            yield {"event": "final", "data": json.dumps({"content": "❌ Sorry — I hit an error. Please try again."})}
-            yield {"event": "error", "data": json.dumps({"message": "Agent failed — please try again."})}
-            yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
-            return
+            display = ""
 
+        # Retry once on empty response
+        if not display and not tool_calls:
+            _logger.info("chat: empty response for session %s, retrying with temperature=0.7", session_id_str)
+            try:
+                if phase_tools:
+                    result = await complete_with_tools(window, MODEL_CHAT_AGENT, phase_tools)
+                    message = result["message"]
+                    display = message_text(message).strip()
+                    tool_calls = parse_tool_calls(message)
+                    usage = {"input_tokens": result.get("input_tokens", 0),
+                             "output_tokens": result.get("output_tokens", 0)}
+            except Exception:
+                _logger.exception("chat retry also failed for session %s", session_id_str)
+
+        # Final fallback — deterministic response based on phase
+        if not display and not tool_calls:
+            _logger.warning("chat: both attempts empty for session %s (phase=%s), using fallback", session_id_str, phase)
+            display = fallback_response(phase, ctx)
+
+        # ── Process tool calls ──────────────────────────────────────────────
         launch = next((c for c in tool_calls if c["name"] == LAUNCH_TOOL), None)
         save = next((c for c in tool_calls if c["name"] == SAVE_TOOL), None)
         download = next((c for c in tool_calls if c["name"] == DOWNLOAD_TOOL), None)
         edit = next((c for c in tool_calls if c["name"] == EDIT_TOOL), None)
 
-        # Fallback: when the model returns no text AND no tool call, check
-        # whether this is a profile-picker click.  The picker sends exactly
-        # 'Use my "<label>" profile' — treat it as a confirmed launch so the
-        # user isn't stuck with "Sorry, I didn't catch that" on model hiccups.
-        if not text and not tool_calls:
-            picker_match = _PICKER_RE.match(body.message.strip())
-            if (picker_match
-                    and ctx.get("jd_text")
-                    and not ctx.get("_optimizer_launched")):
-                label = picker_match.group(1)
-                profile = next(
-                    (p for p in prompt_ctx.get("profiles", [])
-                     if (p.get("label") or "").lower() == label.lower()),
-                    None,
-                )
-                if profile:
-                    launch = {
-                        "name": LAUNCH_TOOL,
-                        "arguments": {
-                            "profile_id": profile["id"],
-                            "added_context": "",
-                        },
-                    }
-                    _logger.info(
-                        "profile-picker fallback: auto-launching with %s",
-                        profile["label"],
-                    )
+        # Synthesize display text if the model only called a tool silently.
+        if not display:
+            display = (
+                "Launching the optimizer now…" if launch
+                else "Generating your document…" if download
+                else "Saving your profile…" if save
+                else "Editing your resume…" if edit
+                else display
+            )
 
-        # Display text — synthesize a line if the model only called a tool silently.
-        display = text or (
-            "Launching the optimizer now…" if launch
-            else "Generating your document…" if download
-            else "Saving your profile…" if save
-            else "Editing your resume…" if edit
-            else "Sorry, I didn't catch that. Could you rephrase?"
-        )
+        # Build tool-call metadata for persistence
+        if tool_calls:
+            tool_call_meta = {"tool_calls": [
+                {"name": tc["name"], "arguments": tc["arguments"]} for tc in tool_calls
+            ]}
 
-        # Persist the assistant's visible text.  Use `display` (not raw model
-        # `text`) so that page-reload shows the same line the user saw live.
+        # Persist assistant message with metadata.
         async with AsyncSessionLocal() as wdb:
             wdb.add(ChatMessage(
                 session_id=session.id,
                 role="assistant",
                 content=display,
+                meta=tool_call_meta,
                 input_tokens=usage["input_tokens"],
                 output_tokens=usage["output_tokens"],
                 created_at=datetime.now(timezone.utc),
@@ -554,7 +573,6 @@ async def optimize_chat(
             }
             try:
                 job_id, sse_token = await fire_optimizer(current_user, session, handoff_payload)
-                # Mark session so agent and frontend both know optimizer has fired.
                 async with AsyncSessionLocal() as wdb:
                     from sqlalchemy import select as _sel
                     launched_sess = await wdb.scalar(_sel(ChatSession).where(ChatSession.id == session.id))
@@ -567,7 +585,7 @@ async def optimize_chat(
             except HTTPException as exc:
                 yield {"event": "error", "data": json.dumps({"message": str(exc.detail)})}
 
-        # ── Download profile as docx (no JD optimization) ───────────────────
+        # ── Download ───────────────────────────────────────────────────────
         elif download:
             try:
                 info = await resolve_profile_download(current_user, download["arguments"].get("profile_id", ""))
@@ -575,7 +593,7 @@ async def optimize_chat(
             except HTTPException as exc:
                 yield {"event": "error", "data": json.dumps({"message": str(exc.detail)})}
 
-        # ── Save profile (only when not also launching) ─────────────────────
+        # ── Save ───────────────────────────────────────────────────────────
         elif save:
             payload = {"label": str(save["arguments"].get("label", "") or "")}
             try:
@@ -584,7 +602,7 @@ async def optimize_chat(
             except HTTPException as exc:
                 yield {"event": "error", "data": json.dumps({"message": str(exc.detail)})}
 
-        # ── Targeted user-instructed edit ───────────────────────────────────
+        # ── Edit ───────────────────────────────────────────────────────────
         elif edit:
             try:
                 await _check_edit_quota(current_user, db)
@@ -606,4 +624,71 @@ async def optimize_chat(
 
         yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
 
+    async def _deterministic_generator():
+        """SSE generator for deterministic (no-LLM) turns."""
+        yield {"event": "session", "data": json.dumps({
+            "session_id": session_id_str,
+            "has_jd": bool(ctx.get("jd_text")),
+            "optimizer_launched": bool(ctx.get("_optimizer_launched")),
+            "profiles": _build_picker_profiles(ctx, profiles_list),
+        })}
+
+        display = deterministic["response"]
+        action = deterministic["action"]
+
+        # Persist assistant reply
+        async with AsyncSessionLocal() as wdb:
+            wdb.add(ChatMessage(
+                session_id=session.id, role="assistant",
+                content=display, created_at=datetime.now(timezone.utc),
+            ))
+            await wdb.commit()
+
+        yield {"event": "final", "data": json.dumps({"content": display})}
+
+        if action == "launch":
+            if ctx.get("_optimizer_launched"):
+                yield {"event": "error", "data": json.dumps({"message": "The optimizer was already launched in this session. Start a new chat to optimize again."})}
+                yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
+                return
+
+            try:
+                await _check_quota(current_user, db)
+            except HTTPException as exc:
+                detail = exc.detail
+                msg = (detail.get("upgrade_message", "Daily limit reached.")
+                       if isinstance(detail, dict) else str(detail))
+                yield {"event": "error", "data": json.dumps({"message": msg})}
+                yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
+                return
+
+            handoff_payload = {
+                "profile_id": deterministic["profile_id"],
+                "instruction": "",
+            }
+            try:
+                job_id, sse_token = await fire_optimizer(current_user, session, handoff_payload)
+                async with AsyncSessionLocal() as wdb:
+                    from sqlalchemy import select as _sel
+                    launched_sess = await wdb.scalar(_sel(ChatSession).where(ChatSession.id == session.id))
+                    if launched_sess:
+                        _ctx = dict(launched_sess.context or {})
+                        _ctx["_optimizer_launched"] = True
+                        launched_sess.context = _ctx
+                        await wdb.commit()
+                yield {"event": "handoff", "data": json.dumps({"job_id": job_id, "sse_token": sse_token})}
+            except HTTPException as exc:
+                yield {"event": "error", "data": json.dumps({"message": str(exc.detail)})}
+
+        elif action == "download":
+            try:
+                info = await resolve_profile_download(current_user, deterministic["profile_id"])
+                yield {"event": "profile_docx", "data": json.dumps(info)}
+            except HTTPException as exc:
+                yield {"event": "error", "data": json.dumps({"message": str(exc.detail)})}
+
+        yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
+
+    if deterministic:
+        return EventSourceResponse(_deterministic_generator(), sep="\n")
     return EventSourceResponse(event_generator(), sep="\n")

@@ -56,7 +56,7 @@ VERIFIED FACTS FROM ORIGINAL RESUME:
 - Degrees: {degrees_str}
 
 RESUME DRAFT:
-{draft[:3000]}
+{draft}
 
 List any claims in the draft that are NOT supported by the verified facts above.
 Focus on: invented metrics/numbers, company names not in the list, job titles not earned, degrees not held.

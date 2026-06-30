@@ -20,9 +20,9 @@ def resolve_cost(
     # LiteLLM computes cost during the call with the full provider-prefixed model
     # name and stashes it here. This populates even when completion_cost() below
     # raises "model isn't mapped" (e.g. groq/openai/gpt-oss-120b).
-    hidden = getattr(response, "_hidden_params", None) or {}
-    rc = hidden.get("response_cost")
-    if rc and rc > 0:
+    hidden = getattr(response, "_hidden_params", None)
+    rc = hidden.get("response_cost") if isinstance(hidden, dict) else None
+    if isinstance(rc, (int, float)) and rc > 0:
         return float(rc), "litellm_hidden"
 
     try:

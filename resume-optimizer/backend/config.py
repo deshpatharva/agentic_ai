@@ -58,10 +58,10 @@ MODEL_REWRITER_FAST = "gemini/gemini-3.1-flash-lite"
 MODEL_HUMANIZER     = "gemini/gemini-3.1-flash-lite"
 
 # Humanizer critic — Llama 3.1 8B via Groq (structured feedback, near-free)
-MODEL_CRITIC        = "groq/llama-3.3-70b-versatile"
+MODEL_CRITIC        = "groq/llama-3.1-8b-instant"
 
 # LLM-based final draft verifier — cheap single-pass check against claims ledger
-MODEL_VERIFIER      = "groq/llama-3.3-70b-versatile"
+MODEL_VERIFIER      = "groq/llama-3.1-8b-instant"
 
 # Pro-tier debate Reviewer — short single-objection critique; cheap model is plenty
 # (no need for the strategist-grade MODEL_OPTIMIZER used by the optimizer agent).
@@ -85,10 +85,12 @@ MODEL_KEYWORD_INJECT     = "gemini/gemini-3.1-flash-lite"   # ATS tool — cheap
 MODEL_BULLET_STRENGTHEN  = "gemini/gemini-3.1-flash-lite"   # Impact tool
 MODEL_SKILLS_REWRITE     = "gemini/gemini-3.1-flash-lite"   # Skills gap tool
 MODEL_SECTION_HUMANIZE   = "gemini/gemini-3.1-flash-lite"   # Readability tool
+MODEL_CRITIQUE           = "groq/llama-3.1-8b-instant"     # Whole-resume critic — cheap structured feedback
 
 # Phase 2 hard limits
 AGENT_MAX_ITER     = 10       # max CrewAI agent iterations before forced stop
 AGENT_TOKEN_BUDGET = 20_000   # cumulative input+output tokens across all Phase 2 tool calls
+DEBATE_TOKEN_BUDGET = 40_000  # Pro debate gets 2× budget (optimizer + reviewer across rounds)
 
 # Conversational optimize co-pilot. Uses native tool-calling (launch/save/download),
 # so it needs a model with reliable tool-use — and cost matters since this runs every
@@ -155,5 +157,5 @@ STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
 
 # ── Tier gating ──────────────────────────────────────────────────────────────
 # Pro-tier 2-agent debate loop. Env-driven so it can be toggled per environment;
-# default OFF for beta (set PRO_DEBATE_ENABLED=true to enable).
-PRO_DEBATE_ENABLED  = os.environ.get("PRO_DEBATE_ENABLED", "false").lower() in ("1", "true", "yes")
+# default ON — set PRO_DEBATE_ENABLED=false to disable.
+PRO_DEBATE_ENABLED  = os.environ.get("PRO_DEBATE_ENABLED", "true").lower() in ("1", "true", "yes")

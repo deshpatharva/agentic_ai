@@ -246,6 +246,7 @@ class ChatMessage(Base):
                            nullable=False, index=True)
     role          = Column(String(16), nullable=False)   # "user" | "assistant"
     content       = Column(Text, nullable=False)
+    meta          = Column("meta", JSON, nullable=True)  # {"tool_calls": [...]} for tool-call turns
     input_tokens  = Column(Integer, nullable=True, default=0)
     output_tokens = Column(Integer, nullable=True, default=0)
     created_at    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
@@ -264,13 +265,14 @@ class LlmCallLog(Base):
     model         = Column(String(100), nullable=False, index=True)
     provider      = Column(String(50),  nullable=False, index=True)
     call_kind     = Column(String(40),  nullable=True)
-    input_tokens  = Column(Integer, nullable=False, default=0)
-    output_tokens = Column(Integer, nullable=False, default=0)
-    cost_usd      = Column(Float,   nullable=False, default=0.0)
-    cost_source   = Column(String(20), nullable=False, default="litellm")
-    latency_ms    = Column(Integer, nullable=True)
-    ttft_ms       = Column(Integer, nullable=True)
-    cache_hit     = Column(Boolean, nullable=False, default=False)
+    input_tokens        = Column(Integer, nullable=False, default=0)
+    output_tokens       = Column(Integer, nullable=False, default=0)
+    cached_input_tokens = Column(Integer, nullable=False, default=0)
+    cost_usd            = Column(Float,   nullable=False, default=0.0)
+    cost_source         = Column(String(20), nullable=False, default="litellm")
+    latency_ms          = Column(Integer, nullable=True)
+    ttft_ms             = Column(Integer, nullable=True)
+    cache_hit           = Column(Boolean, nullable=False, default=False)
     created_at    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
                            nullable=False, index=True)
 
