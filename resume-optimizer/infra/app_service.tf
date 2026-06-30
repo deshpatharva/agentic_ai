@@ -70,6 +70,7 @@ resource "azurerm_linux_web_app" "backend" {
     ANTHROPIC_API_KEY          = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.anthropic_api_key.versionless_id})"
     GOOGLE_AI_STUDIO_API_KEY   = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.google_ai_api_key.versionless_id})"
     GROQ_API_KEY               = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.groq_api_key.versionless_id})"
+    DEEPSEEK_API_KEY           = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.deepseek_api_key.versionless_id})"
     BOOTSTRAP_SECRET           = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.bootstrap_secret.versionless_id})"
     STRIPE_SECRET_KEY          = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.stripe_secret_key.versionless_id})"
     ADZUNA_APP_ID              = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.adzuna_app_id.versionless_id})"
@@ -86,6 +87,10 @@ resource "azurerm_linux_web_app" "backend" {
     WEBSITES_CONTAINER_START_TIME_LIMIT = "1800" # spaCy + CrewAI import takes 500-700s on B1
     WEBSITE_SKIP_SECRETRESOLUTION_CACHE = "1"    # KV secret updates take effect immediately
     PYTHONUNBUFFERED                    = "1"    # flush stdout/stderr immediately so crash tracebacks appear in logs
+
+    # ── Model toggles (override config.py defaults per-deployment, no code change) ─
+    MODEL_OPTIMIZER           = var.model_optimizer
+    DEEPSEEK_REASONING_EFFORT = var.deepseek_reasoning_effort
   }
 
   tags = local.tags
