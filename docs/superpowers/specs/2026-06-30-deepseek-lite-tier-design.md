@@ -1,4 +1,4 @@
-# DeepSeek-capable, configurable "lite tier" — design
+# DeepSeek V4 Flash (max-effort) configurable "lite tier" — design
 
 **Date:** 2026-06-30
 **Status:** Approved (design), pending implementation plan
@@ -7,52 +7,54 @@
 ## Problem
 
 Every cheap/fast task in the pipeline is hardcoded to `gemini/gemini-3.1-flash-lite`
-in `config.py` (~13 constants). We want the ability to run that whole tier on
-DeepSeek V3.2 (`deepseek/deepseek-chat`) — or any other LiteLLM model — without
-editing code, and to evaluate DeepSeek's latency/cost/quality against Gemini Flash
-Lite using the data we already log (`LlmCallLog`).
-
-The motivation is exploratory: make switching the lite tier a one-env-var,
-fully reversible operation, then measure before committing.
+in `config.py` (~13 constants). We want to run that whole tier on
+**DeepSeek V4 Flash with thinking enabled at max reasoning effort**
+(`deepseek/deepseek-v4-flash`) — trading latency for output quality — switchable
+via env without code changes, and reversible. The change must reach the **deployed
+Azure app**, not just local dev: the API key flows through Terraform → Key Vault →
+App Service, mirroring the existing Groq/Anthropic/Google secrets.
 
 ## Goals
 
-- Flip the entire flash-lite tier to DeepSeek (or back) via a single env var.
-- Keep per-task overrides possible without code changes.
-- Make DeepSeek a first-class provider in the structured-output and cost paths.
-- No regression for the existing Gemini default.
+- Flip the entire lite tier to DeepSeek V4 Flash (or back to Gemini) via env vars.
+- Drive DeepSeek thinking at **max** effort, and have that actually reach the API.
+- Provision `DEEPSEEK_API_KEY` end-to-end through Terraform/Key Vault to the app.
+- Keep per-task model overrides possible; no regression for the Gemini default.
 
 ## Non-goals
 
 - Changing the chat agent (`MODEL_CHAT_AGENT = gemini-2.5-flash`) or the
-  groq-based critic/verifier/optimizer. Those are not lite-tier.
-- Routing DeepSeek through a Western inference host. We use the direct DeepSeek
-  API (operator already holds a `DEEPSEEK_API_KEY`). Hosting/data-residency is
-  noted as a known consideration but out of scope for this change.
-- A full 13-call cutover decision. This change *enables* the switch; whether to
-  leave it on in production is a follow-up driven by measured results.
+  groq-based critic/verifier/optimizer. Not lite-tier.
+- Western-host routing for DeepSeek. We use the direct DeepSeek API (operator
+  holds a `DEEPSEEK_API_KEY`). Data-residency is a noted consideration, not in scope.
+- Multi-turn DeepSeek flows (would require echoing `reasoning_content` back —
+  litellm #26395). The lite tier is single-shot `complete()` calls only.
+
+## Key facts (verified against current docs, June 2026)
+
+- **Model id:** `deepseek/deepseek-v4-flash` (13B active, released 2026-04-24).
+  The legacy `deepseek-chat` / `deepseek-reasoner` names are **hard-retired
+  2026-07-24 15:59 UTC** — must not be used.
+- **Max effort does NOT pass through stock LiteLLM** (litellm #27439): its
+  DeepSeek config discards `reasoning_effort` and always sends
+  `thinking:{"type":"enabled"}`, throwing the level away. No released fix yet
+  (PR #28702 open). **Workaround:** send the field raw via `extra_body`, which
+  LiteLLM forwards untouched to DeepSeek's OpenAI-compatible endpoint.
+- Thinking mode **silently ignores** `temperature`/`top_p`/`presence_penalty`/
+  `frequency_penalty` — fine, we don't set them on lite calls.
 
 ## Design
 
-### 1. Key wiring (`config.py`, `.env.example`)
+### 1. Configurable lite tier (`config.py`)
 
-Add:
 ```python
-DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+DEEPSEEK_API_KEY  = os.environ.get("DEEPSEEK_API_KEY", "")
+MODEL_LITE        = os.environ.get("MODEL_LITE", "gemini/gemini-3.1-flash-lite")
+MODEL_LITE_EFFORT = os.environ.get("MODEL_LITE_EFFORT", "max")   # deepseek reasoning_effort
 ```
-LiteLLM reads `DEEPSEEK_API_KEY` from the environment for any `deepseek/...`
-model, so no client plumbing beyond the existing `load_dotenv()` is required.
-Document `DEEPSEEK_API_KEY` and `MODEL_LITE` in `.env.example`
-(`resume-optimizer/.env.example`).
-
-### 2. Configurable lite tier (`config.py`)
-
-Introduce a single switch the whole flash-lite tier defaults to:
-```python
-MODEL_LITE = os.environ.get("MODEL_LITE", "gemini/gemini-3.1-flash-lite")
-```
-Repoint each existing flash-lite constant to default to `MODEL_LITE`, while
-preserving an individual env override per task:
+LiteLLM auto-reads `DEEPSEEK_API_KEY` for `deepseek/...` models; no client
+plumbing beyond `load_dotenv()`. Repoint each flash-lite constant to default to
+`MODEL_LITE`, each still individually env-overridable:
 ```python
 MODEL_REWRITER       = os.environ.get("MODEL_REWRITER", MODEL_LITE)
 MODEL_REWRITER_FAST  = os.environ.get("MODEL_REWRITER_FAST", MODEL_LITE)
@@ -67,68 +69,118 @@ MODEL_BULLET_STRENGTHEN = os.environ.get("MODEL_BULLET_STRENGTHEN", MODEL_LITE)
 MODEL_SKILLS_REWRITE    = os.environ.get("MODEL_SKILLS_REWRITE", MODEL_LITE)
 MODEL_SECTION_HUMANIZE  = os.environ.get("MODEL_SECTION_HUMANIZE", MODEL_LITE)
 ```
-Flip the whole tier with `MODEL_LITE=deepseek/deepseek-chat` (V3.2 non-thinking —
-correct for these fast, narrow tasks; `deepseek-reasoner` is not used).
-
+Flip the whole tier with `MODEL_LITE=deepseek/deepseek-v4-flash`.
 **Untouched** (not lite-tier): `MODEL_CRITIC`, `MODEL_VERIFIER`,
 `MODEL_OPTIMIZER` (groq), `MODEL_CHAT_AGENT` (gemini-2.5-flash).
 
 Decision: `MODEL_LITE` is a full LiteLLM model string (default Gemini), not a
-`LITE_PROVIDER=deepseek|gemini` enum — consistent with how `config.py` already
-treats models and works with any LiteLLM model without code changes.
+provider enum — consistent with how `config.py` already treats models.
 
-### 3. Structured-output branch (`llm.py`)
+### 2. Reasoning-effort + structured-output handling (`llm.py`)
 
-In `complete()` (currently `llm.py:116-125`), `response_format` only passes
-through for `gemini`/`vertex_ai`; `groq` is downgraded to `json_object`; every
-other provider falls into `else: omit entirely`. DeepSeek supports `json_object`
-but **not** `json_schema`, so add a `deepseek` case mirroring groq (merging the
-two branches is acceptable):
-```python
-elif provider in ("groq", "deepseek"):
-    if response_format.get("type") == "json_schema":
-        call_kwargs["response_format"] = {"type": "json_object"}
-    else:
-        call_kwargs["response_format"] = response_format
-```
-Without this, the scorer (all four scores in one JSON call) and JD analyzer lose
-structured-output enforcement on DeepSeek and rely solely on prompt + parse
-retries.
+In `complete()` (currently `llm.py:116-125`), add a `deepseek` provider branch:
 
-**DeepSeek json_object precondition:** the prompt must contain the literal word
-"json". Verified present in the scorer prompt (`scorer.py:140,143,163`). Confirm
-the JD analyzer prompt likewise during implementation.
+- **Max effort (workaround for litellm #27439):**
+  ```python
+  if provider == "deepseek":
+      call_kwargs["extra_body"] = {
+          "reasoning_effort": MODEL_LITE_EFFORT,   # "max"
+          "thinking": {"type": "enabled"},
+      }
+  ```
+  `extra_body` bypasses LiteLLM's param mapper so `reasoning_effort:"max"` lands
+  in the request body. Revisit once PR #28702 ships (then pass `reasoning_effort`
+  natively and drop `extra_body`).
+- **Structured output:** DeepSeek supports `json_object` but not `json_schema`,
+  so fold it into the groq downgrade branch:
+  ```python
+  elif provider in ("groq", "deepseek"):
+      if response_format.get("type") == "json_schema":
+          call_kwargs["response_format"] = {"type": "json_object"}
+      else:
+          call_kwargs["response_format"] = response_format
+  ```
+  json_object requires the literal word "json" in the prompt — verified in the
+  scorer prompt (`scorer.py:140,143,163`); confirm the JD analyzer prompt too.
 
-### 4. Cost tracking
+`config.MODEL_LITE_EFFORT` is imported into `llm.py` (or read at call time) to
+drive the effort value.
 
-`resolve_cost` (`utils/cost.py`) calls `litellm.completion_cost` first, and
-LiteLLM ships built-in DeepSeek pricing, so cost resolves automatically with
-source `litellm`. As a fallback, a `deepseek` row can be added to the
-`ProviderCost` table through the existing admin route
-(`POST /admin/provider-costs`) — no migration required. Note: `resolve_cost`
-maps `gemini -> google` for the table lookup; `deepseek` needs no such alias
-(provider prefix == table key).
+### 3. Cost tracking
+
+`resolve_cost` (`utils/cost.py`) calls `litellm.completion_cost` first; LiteLLM
+ships DeepSeek V4 pricing, so cost resolves automatically (source `litellm`).
+Thinking-mode output tokens (reasoning) are billed and counted in
+`completion_tokens`, so spend is captured. Optional fallback: a `deepseek` row in
+`ProviderCost` via the existing admin route — no migration. No `gemini->google`
+style alias needed (prefix == table key).
+
+### 4. Infrastructure / secret plumbing (Terraform)
+
+Mirror the existing Groq secret path exactly so the key reaches the deployed app:
+
+- **`infra/variables.tf`** — add:
+  ```hcl
+  variable "deepseek_api_key" {
+    description = "DeepSeek API key — required, no default"
+    type        = string
+    sensitive   = true
+  }
+  ```
+- **`infra/key_vault.tf`** — add secret `DEEPSEEK-API-KEY`:
+  ```hcl
+  resource "azurerm_key_vault_secret" "deepseek_api_key" {
+    name         = "DEEPSEEK-API-KEY"
+    value        = var.deepseek_api_key
+    key_vault_id = azurerm_key_vault.main.id
+    depends_on   = [time_sleep.wait_for_kv_rbac]
+    tags         = local.tags
+  }
+  ```
+- **`infra/app_service.tf`** (`app_settings`) — add the KV reference plus the
+  non-secret toggles so the provider can be flipped per-deployment via Terraform:
+  ```hcl
+  DEEPSEEK_API_KEY  = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.deepseek_api_key.versionless_id})"
+  MODEL_LITE        = var.model_lite
+  MODEL_LITE_EFFORT = var.model_lite_effort
+  ```
+  with `variable "model_lite"` (default `"gemini/gemini-3.1-flash-lite"`) and
+  `variable "model_lite_effort"` (default `"max"`) in `variables.tf`.
+- **`infra/terraform.tfvars.example`** — add `deepseek_api_key = "sk-..."` and
+  optional `model_lite` / `model_lite_effort` placeholders.
+- **`.github/workflows/terraform.yml`** — add
+  `TF_VAR_deepseek_api_key: ${{ secrets.TF_VAR_DEEPSEEK_API_KEY }}` to **both**
+  the plan job (~line 52) and the apply job (~line 218).
+- **GitHub repo secret** `TF_VAR_DEEPSEEK_API_KEY` must be created (operator
+  action, documented in the plan).
 
 ### 5. Tests + docs
 
-- Extend `tests/test_llm.py` with a DeepSeek structured-output case mirroring the
-  existing groq test: assert a `json_schema` `response_format` is downgraded to
-  `{"type": "json_object"}` for a `deepseek/...` model.
-- Update the `MODEL_LITE` / model-block comments in `config.py` to document the
-  toggle, and add `DEEPSEEK_API_KEY` + `MODEL_LITE` to `.env.example`.
+- `tests/test_llm.py`: a DeepSeek case asserting (a) `json_schema` is downgraded
+  to `{"type":"json_object"}` and (b) `extra_body` carries
+  `reasoning_effort == MODEL_LITE_EFFORT` and `thinking.type == "enabled"` for a
+  `deepseek/...` model.
+- Update `config.py` comments to document `MODEL_LITE` / `MODEL_LITE_EFFORT`; add
+  `DEEPSEEK_API_KEY`, `MODEL_LITE`, `MODEL_LITE_EFFORT` to
+  `resume-optimizer/.env.example`.
 
 ## Risks / considerations
 
-- **Latency:** DeepSeek V3.2 (single-region 671B MoE) has more variable TTFT than
-  Flash Lite. The rewriter loop (`MAX_ITERATIONS=4`) makes many sequential lite
-  calls, so latency compounds. The configurable design makes rollback a one-var
-  change; measure via `LlmCallLog.latency_ms` before leaving it on in prod.
-- **Data residency / PII:** the direct DeepSeek API is China-hosted; resumes are
-  PII. Conscious operator decision; Western-host routing is the documented
-  fallback if needed.
+- **Latency + cost (accepted):** max-effort thinking on *every* lite call —
+  including all 4 rewriter iterations and the scorer — is materially slower and
+  spends reasoning tokens each call. Configurable design makes rollback a one-var
+  change; watch `LlmCallLog.latency_ms` / `cost_usd` after rollout.
+- **LiteLLM passthrough bug (litellm #27439):** max effort relies on the
+  `extra_body` workaround until PR #28702 ships; add a code comment linking both
+  so the hack is removed when upstream lands.
+- **Legacy-name retirement:** never use `deepseek-chat`/`deepseek-reasoner`
+  (retired 2026-07-24); use `deepseek-v4-flash`.
 - **json_object precondition:** prompts must mention "json" (verified for scorer).
+- **Data residency / PII:** direct DeepSeek API is China-hosted; resumes are PII —
+  conscious operator decision.
 
 ## Rollback
 
-Set/unset `MODEL_LITE` (or a per-task `MODEL_*` override). No code revert needed
-once merged; default remains `gemini/gemini-3.1-flash-lite`.
+Set `MODEL_LITE` back to `gemini/gemini-3.1-flash-lite` (env or the
+`model_lite` tfvar) — no code revert. Default remains Gemini, so an unset
+environment is unaffected.
