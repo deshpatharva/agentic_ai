@@ -148,19 +148,36 @@ def fallback_response(phase: str, ctx: dict) -> str:
 
 
 def _find_profile_by_label(text: str, profiles: list[dict]) -> dict | None:
-    """Match user input to a profile by label (case-insensitive, flexible)."""
+    """Match user input to a profile by label (case-insensitive, flexible).
+
+    A deterministic match here can silently launch the optimizer or a download
+    (see try_deterministic), so the contains-match is guarded against
+    false positives: a short generic message like "hi" must not match a profile
+    labeled "Machine Learning Engineer". We only allow a substring match when the
+    needle is itself a substantial fraction of the label (and vice-versa), never
+    when a tiny needle happens to appear inside a long label.
+    """
     needle = text.strip().strip('"').strip("'").lower()
     if not needle:
         return None
-    # Exact match first
+    # Exact match first — always safe.
     for p in profiles:
         if (p.get("label") or "").strip().lower() == needle:
             return p
-    # Contains match (either direction)
+    # Substring match — only when the shorter string is a meaningful fraction of
+    # the longer one, so incidental substrings ("hi" in "Machine...") don't fire.
+    _MIN_MATCH_LEN = 4
+    _MIN_RATIO = 0.6
+    if len(needle) < _MIN_MATCH_LEN:
+        return None
     for p in profiles:
         pl = (p.get("label") or "").strip().lower()
-        if pl and (needle in pl or pl in needle):
-            return p
+        if not pl:
+            continue
+        if needle in pl or pl in needle:
+            shorter, longer = sorted((len(needle), len(pl)))
+            if longer and shorter / longer >= _MIN_RATIO:
+                return p
     return None
 
 

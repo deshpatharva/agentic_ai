@@ -29,8 +29,10 @@ async def summary(
     """Return overview: user info, today's usage, plan limits, resume stats, unread matches."""
     user_id = str(user.id)
 
-    # Plan limits
-    lim_res = await db.execute(select(PlanLimit).where(PlanLimit.plan == user.plan.value))
+    # Plan limits — use the enforced plan (pro during an active trial) so the
+    # quota bar matches what check_plan_limit actually allows.
+    from auth.dependencies import _effective_plan
+    lim_res = await db.execute(select(PlanLimit).where(PlanLimit.plan == _effective_plan(user)))
     limits = lim_res.scalar_one_or_none()
 
     # Resume stats

@@ -13,12 +13,18 @@ from agents.fact_extractor import extract_claims
 from agents.jd_analyzer import analyze_jd
 from agents.scorer import score_combined
 from agents.tools import ResumeState
+from config import SCORE_DIMENSIONS
 from db.models import ChatSession, JobStatus, PipelineJob, Profile, User
 from db.session import AsyncSessionLocal
 from orchestration.agent_loop import run_agent
 from utils.optimization_report import build_report
 from utils.profile_utils import sections_to_text
 from utils.section_parser import detect_sections
+
+# Strong refs to fire-and-forget pipeline tasks so the event loop doesn't
+# garbage-collect them mid-run (per asyncio docs) — a dropped task would silently
+# abort the user's optimization.
+_background_tasks: set = set()
 
 
 async def _parse_sections(raw_text: str) -> dict:
@@ -132,7 +138,9 @@ async def fire_optimizer(
 
     # Enqueue using the same background task the legacy route uses.
     from main import _run_pipeline_task  # noqa: PLC0415 — intentional late import (circular)
-    asyncio.create_task(_run_pipeline_task(job_id, str(user.id)))
+    _task = asyncio.create_task(_run_pipeline_task(job_id, str(user.id)))
+    _background_tasks.add(_task)
+    _task.add_done_callback(_background_tasks.discard)
 
     sse_token = _mint_sse_token(str(user.id))
     return job_id, sse_token
@@ -215,17 +223,21 @@ async def save_profile_from_session(
 
 
 def _flat_scores(scores: dict) -> dict:
-    """Pull the 5 dimension scores into a flat {dim: int} dict."""
+    """Pull the scoring dimensions into a flat {dim: int} dict."""
     return {
         d: (scores[d]["score"] if isinstance(scores.get(d), dict) else int(scores.get(d, 0) or 0))
-        for d in ("ats", "impact", "skills_gap", "readability", "jd_tailoring")
+        for d in SCORE_DIMENSIONS
     }
 
 
-def _avg4(flat: dict) -> int:
-    """Average of the 4 pipeline dimensions (keeps final_score comparable to the pipeline)."""
-    keys = ("ats", "impact", "skills_gap", "readability")
-    return round(sum(flat.get(k, 0) for k in keys) / len(keys))
+def _avg_dims(flat: dict) -> int:
+    """Average across all canonical scoring dimensions.
+
+    Must iterate the same SCORE_DIMENSIONS tuple the pipeline uses (config.py) so
+    an edit-path final_score is computed identically to a pipeline final_score —
+    otherwise the two are silently incomparable.
+    """
+    return round(sum(flat.get(k, 0) for k in SCORE_DIMENSIONS) / len(SCORE_DIMENSIONS))
 
 
 async def apply_edit(user, session, arguments: dict) -> dict:
@@ -331,13 +343,13 @@ async def apply_edit(user, session, arguments: dict) -> dict:
     )
     new_scores = new_dict.get("text", {}) or {}
     new_flat = _flat_scores(new_scores)
-    new_scores_for_report = {**new_scores, "average": _avg4(new_flat)}
+    new_scores_for_report = {**new_scores, "average": _avg_dims(new_flat)}
 
     report = build_report(
         jd_result=jd_result,
         original_text=source_text,
         optimized_text=edited_text,
-        baseline_score=_avg4(scores_before),
+        baseline_score=_avg_dims(scores_before),
         final_scores=new_scores_for_report,
         iterations=agent_result.get("iterations", 1),
     )

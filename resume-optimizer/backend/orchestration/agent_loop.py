@@ -18,6 +18,7 @@ Architecture:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Callable, Optional
@@ -333,7 +334,9 @@ async def run_agent(
 
         # ── Reflection ────────────────────────────────────────────────────────
         draft = state.reassemble()
-        guard = fabrication_guard(draft, ledger, original_resume)
+        # CPU-bound (spaCy NER + difflib) — offload so concurrent SSE streams and
+        # requests aren't stalled during the pass over the full resume.
+        guard = await asyncio.to_thread(fabrication_guard, draft, ledger, original_resume)
 
         # Re-score the current draft — skip the LLM call when the inner loop changed
         # nothing (draft identical to what we last scored), reusing current_scores.

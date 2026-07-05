@@ -18,7 +18,7 @@ from limiter import limiter
 from db.models import PlanLimit, PlanType, PromoCode, User, UserPromoRedemption, TokenBlocklist
 from utils.time_utils import ensure_utc
 from db.session import get_db
-from auth.dependencies import get_current_user, oauth2_scheme
+from auth.dependencies import get_current_user, oauth2_scheme, _effective_plan
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 user_router = APIRouter(prefix="/user", tags=["user"])
@@ -141,7 +141,13 @@ async def register(request: Request, body: RegisterRequest, db: AsyncSession = D
         trial_expires_at=datetime.now(timezone.utc) + timedelta(days=TRIAL_DAYS),
     )
     db.add(user)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Concurrent registration won the unique-email race between our SELECT
+        # above and this INSERT — surface the same 400 as the pre-check.
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="Email already registered.")
     await db.refresh(user)
 
     token = _make_token(str(user.id))
@@ -160,7 +166,8 @@ async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends
             detail="Invalid email or password.",
         )
 
-    result2 = await db.execute(select(PlanLimit).where(PlanLimit.plan == user.plan.value))
+    # Show the limits actually enforced — _effective_plan grants pro during trial.
+    result2 = await db.execute(select(PlanLimit).where(PlanLimit.plan == _effective_plan(user)))
     limits = result2.scalar_one_or_none()
 
     token = _make_token(str(user.id))
@@ -170,7 +177,8 @@ async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends
 @router.get("/me")
 async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     from profiles.status import compute_profile_status
-    result = await db.execute(select(PlanLimit).where(PlanLimit.plan == user.plan.value))
+    # Limits reflect the enforced plan (pro during an active trial), matching check_plan_limit.
+    result = await db.execute(select(PlanLimit).where(PlanLimit.plan == _effective_plan(user)))
     limits = result.scalar_one_or_none()
     prof_status = await compute_profile_status(user, db)
     return _user_dict(user, limits, profile_status=prof_status)

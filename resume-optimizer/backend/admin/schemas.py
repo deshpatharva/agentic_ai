@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Literal, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class BootstrapRequest(BaseModel):
@@ -89,6 +89,22 @@ class PromoCodeCreate(BaseModel):
     discount_percent: Optional[int] = Field(None, ge=1, le=100)
     max_uses: int = Field(ge=1)
     expires_at: Optional[datetime] = None
+
+    @model_validator(mode="after")
+    def _require_fields_for_type(self) -> "PromoCodeCreate":
+        # Redemption (auth/router.redeem_promo_code) does PlanType(target_plan) for
+        # plan_upgrade and timedelta(days=days_to_add) for trial_extension. Missing
+        # values there raise 500s at redeem time, so reject them at creation instead.
+        if self.type == "plan_upgrade":
+            if self.target_plan not in ("free", "pro", "enterprise"):
+                raise ValueError("plan_upgrade requires target_plan to be one of: free, pro, enterprise")
+        elif self.type == "trial_extension":
+            if self.days_to_add is None:
+                raise ValueError("trial_extension requires days_to_add")
+        elif self.type == "discount":
+            if self.discount_percent is None:
+                raise ValueError("discount requires discount_percent")
+        return self
 
 
 class ProviderCostCreate(BaseModel):
