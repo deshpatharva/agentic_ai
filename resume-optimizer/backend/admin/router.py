@@ -685,8 +685,8 @@ async def create_provider_cost(
     db: AsyncSession = Depends(get_db),
 ):
     """Create or update provider pricing. Marks previous active rate as inactive."""
-    if body.provider not in ["anthropic", "google", "groq"]:
-        raise HTTPException(status_code=400, detail="provider must be one of: anthropic, google, groq")
+    if body.provider not in ["anthropic", "google", "groq", "deepseek"]:
+        raise HTTPException(status_code=400, detail="provider must be one of: anthropic, google, groq, deepseek")
     if body.input_cost_per_1m_tokens < 0 or body.output_cost_per_1m_tokens < 0:
         raise HTTPException(status_code=400, detail="costs must be non-negative")
 

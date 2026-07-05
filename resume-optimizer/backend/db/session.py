@@ -126,23 +126,35 @@ async def init_db() -> None:
             _dbg(f"init_db: provider_costs count={count}")
             if count == 0:
                 _dbg("init_db: inserting provider_costs")
+                # These are ONLY a fallback: resolve_cost() prefers LiteLLM's
+                # native per-call cost (response._hidden_params.response_cost, then
+                # completion_cost()) and reaches this table only when LiteLLM can't
+                # price a call — most notably deepseek/deepseek-v4-pro, whose custom
+                # model name LiteLLM may not map, which would otherwise record $0.
+                # Values are USD per 1,000,000 tokens (the column name), not per 1K.
                 provider_costs = [
                     ProviderCost(
                         provider="anthropic",
-                        input_cost_per_1m_tokens=0.003,
-                        output_cost_per_1m_tokens=0.009,
+                        input_cost_per_1m_tokens=3.0,
+                        output_cost_per_1m_tokens=15.0,
                         active=True,
                     ),
                     ProviderCost(
                         provider="google",
-                        input_cost_per_1m_tokens=0.0005,
-                        output_cost_per_1m_tokens=0.0015,
+                        input_cost_per_1m_tokens=0.10,
+                        output_cost_per_1m_tokens=0.40,
                         active=True,
                     ),
                     ProviderCost(
                         provider="groq",
-                        input_cost_per_1m_tokens=0.0001,
-                        output_cost_per_1m_tokens=0.0001,
+                        input_cost_per_1m_tokens=0.05,
+                        output_cost_per_1m_tokens=0.08,
+                        active=True,
+                    ),
+                    ProviderCost(
+                        provider="deepseek",
+                        input_cost_per_1m_tokens=0.28,
+                        output_cost_per_1m_tokens=1.10,
                         active=True,
                     ),
                 ]
