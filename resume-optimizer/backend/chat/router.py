@@ -22,7 +22,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
-from auth.dependencies import get_current_user
+from auth.dependencies import get_current_user, reserve_run_quota, refund_run_quota
 from chat.agent import render_system_prompt, render_context_message
 from chat.state_machine import (
     resolve_phase, tools_for_phase, try_deterministic, fallback_response,
@@ -279,36 +279,6 @@ async def _compute_jd_gaps(jd_text: str, matches: list[dict], user: User, db: As
 # ── Quota helpers ──────────────────────────────────────────────────────────────
 
 
-async def _check_quota(user: User, db: AsyncSession) -> None:
-    from auth.dependencies import _effective_plan
-    from datetime import date
-
-    plan = _effective_plan(user)
-    limits = await db.scalar(select(PlanLimit).where(PlanLimit.plan == plan))
-    if not limits:
-        return
-
-    today_str = date.today().isoformat()
-    used = await db.scalar(
-        select(DailyUsageCounter.runs).where(
-            DailyUsageCounter.user_id == user.id,
-            DailyUsageCounter.date == today_str,
-        )
-    ) or 0
-
-    if used >= limits.daily_uploads:
-        raise HTTPException(
-            status_code=429,
-            detail={
-                "error": "limit_reached",
-                "limit": limits.daily_uploads,
-                "used": used,
-                "plan": user.plan.value,
-                "upgrade_message": "Upgrade to Pro for 20 uploads/day",
-            },
-        )
-
-
 async def _check_edit_quota(user: User, db: AsyncSession) -> None:
     from auth.dependencies import _effective_plan
     from datetime import date
@@ -555,13 +525,12 @@ async def optimize_chat(
                 yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
                 return
 
-            try:
-                await _check_quota(current_user, db)
-            except HTTPException as exc:
-                detail = exc.detail
-                msg = (detail.get("upgrade_message", "Daily limit reached.")
-                       if isinstance(detail, dict) else str(detail))
-                yield {"event": "error", "data": json.dumps({"message": msg})}
+            # Atomically reserve a run slot (own session — the request db may be
+            # closed by the time this streaming generator runs).
+            async with AsyncSessionLocal() as qdb:
+                reserved = await reserve_run_quota(current_user, qdb)
+            if not reserved:
+                yield {"event": "error", "data": json.dumps({"message": "You've reached your daily limit. Upgrade to Pro for more runs/day."})}
                 yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
                 return
 
@@ -582,6 +551,9 @@ async def optimize_chat(
                         await wdb.commit()
                 yield {"event": "handoff", "data": json.dumps({"job_id": job_id, "sse_token": sse_token})}
             except HTTPException as exc:
+                # The pipeline task never started — return the reserved slot.
+                async with AsyncSessionLocal() as qdb:
+                    await refund_run_quota(str(current_user.id), qdb)
                 yield {"event": "error", "data": json.dumps({"message": str(exc.detail)})}
 
         # ── Download ───────────────────────────────────────────────────────
@@ -651,13 +623,10 @@ async def optimize_chat(
                 yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
                 return
 
-            try:
-                await _check_quota(current_user, db)
-            except HTTPException as exc:
-                detail = exc.detail
-                msg = (detail.get("upgrade_message", "Daily limit reached.")
-                       if isinstance(detail, dict) else str(detail))
-                yield {"event": "error", "data": json.dumps({"message": msg})}
+            async with AsyncSessionLocal() as qdb:
+                reserved = await reserve_run_quota(current_user, qdb)
+            if not reserved:
+                yield {"event": "error", "data": json.dumps({"message": "You've reached your daily limit. Upgrade to Pro for more runs/day."})}
                 yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
                 return
 
@@ -677,6 +646,8 @@ async def optimize_chat(
                         await wdb.commit()
                 yield {"event": "handoff", "data": json.dumps({"job_id": job_id, "sse_token": sse_token})}
             except HTTPException as exc:
+                async with AsyncSessionLocal() as qdb:
+                    await refund_run_quota(str(current_user.id), qdb)
                 yield {"event": "error", "data": json.dumps({"message": str(exc.detail)})}
 
         elif action == "download":

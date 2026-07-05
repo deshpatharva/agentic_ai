@@ -8,7 +8,7 @@ from datetime import date, datetime, timezone
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import JWT_ALGORITHM, JWT_SECRET
@@ -158,3 +158,67 @@ async def check_plan_limit(
             },
         )
     return user
+
+
+async def reserve_run_quota(user: User, db: AsyncSession) -> bool:
+    """Atomically reserve one pipeline run against the user's daily limit.
+
+    Returns True if a slot was reserved (the counter was incremented), False if the
+    user is already at their limit. Reserving up-front — rather than incrementing
+    only after a run finishes — closes the race where many concurrent submissions
+    each pass a read-only check at used=0 and every one burns real LLM spend.
+    Failed runs are returned to the pool via refund_run_quota, so the
+    "failures never consume quota" guarantee still holds.
+
+    Uses the stored UUID hex form (no dashes) so the ON CONFLICT target matches the
+    row SQLAlchemy writes — a dashed string silently creates a phantom row on SQLite.
+    """
+    limits = await db.scalar(select(PlanLimit).where(PlanLimit.plan == _effective_plan(user)))
+    uid_hex = _uuid_module.UUID(str(user.id)).hex
+    today_str = date.today().isoformat()
+
+    if limits is None:
+        # No configured limit — count the run for analytics but never reject.
+        await db.execute(
+            text(
+                "INSERT INTO daily_usage_counters (user_id, date, runs, edits) "
+                "VALUES (:uid, :date, 1, 0) "
+                "ON CONFLICT (user_id, date) DO UPDATE "
+                "SET runs = daily_usage_counters.runs + 1"
+            ),
+            {"uid": uid_hex, "date": today_str},
+        )
+        await db.commit()
+        return True
+
+    if limits.daily_uploads <= 0:
+        return False
+
+    # The WHERE guards the DO UPDATE branch; the first insert of the day (no
+    # conflict) is unconditional but safe because daily_uploads >= 1 here.
+    result = await db.execute(
+        text(
+            "INSERT INTO daily_usage_counters (user_id, date, runs, edits) "
+            "VALUES (:uid, :date, 1, 0) "
+            "ON CONFLICT (user_id, date) DO UPDATE "
+            "SET runs = daily_usage_counters.runs + 1 "
+            "WHERE daily_usage_counters.runs < :limit"
+        ),
+        {"uid": uid_hex, "date": today_str, "limit": limits.daily_uploads},
+    )
+    await db.commit()
+    return result.rowcount == 1
+
+
+async def refund_run_quota(user_id, db: AsyncSession) -> None:
+    """Return one reserved run to the pool (used when a run fails), flooring at 0."""
+    uid_hex = _uuid_module.UUID(str(user_id)).hex
+    today_str = date.today().isoformat()
+    await db.execute(
+        text(
+            "UPDATE daily_usage_counters SET runs = runs - 1 "
+            "WHERE user_id = :uid AND date = :date AND runs > 0"
+        ),
+        {"uid": uid_hex, "date": today_str},
+    )
+    await db.commit()

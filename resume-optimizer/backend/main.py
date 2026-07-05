@@ -67,7 +67,7 @@ from db.session import get_db, init_db, AsyncSessionLocal
 from db.models import JobStatus, PipelineEvent, PipelineJob, Profile, Resume, User, TokenBlocklist
 from utils.profile_utils import sections_to_text as _sections_to_text
 from auth.router import router as auth_router, user_router
-from auth.dependencies import decode_token_checked, decode_sse_token, get_current_user, check_plan_limit, _effective_plan
+from auth.dependencies import decode_token_checked, decode_sse_token, get_current_user, check_plan_limit, _effective_plan, reserve_run_quota, refund_run_quota
 from dashboard.router import router as dashboard_router
 from admin.router import router as admin_router
 from profiles.router import router as profiles_router, profile_ops as profile_ops_router
@@ -314,6 +314,21 @@ async def run_pipeline(
 
     if not request.jd_text.strip():
         raise HTTPException(status_code=400, detail="jd_text cannot be empty.")
+
+    # Atomically reserve a run slot BEFORE dispatching. check_plan_limit above is a
+    # fast pre-check, but only this atomic reserve closes the concurrency window
+    # where many parallel submissions each pass the read-only check at used<limit
+    # and every one burns real LLM spend. Refunded in _run_pipeline_task on failure
+    # so failed runs stay free.
+    if not await reserve_run_quota(current_user, db):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "limit_reached",
+                "plan": current_user.plan.value,
+                "upgrade_message": "You've reached your daily limit. Upgrade to Pro for more runs/day.",
+            },
+        )
 
     if request.profile_id:
         try:
@@ -1108,22 +1123,8 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             output_tokens=total_output_tokens,
         )
 
-        # ── Increment quota counter — only on success so failures are free ──
-        if user_id:
-            try:
-                async with AsyncSessionLocal() as db:
-                    await db.execute(
-                        text(
-                            "INSERT INTO daily_usage_counters (user_id, date, runs) "
-                            "VALUES (:uid, :date, 1) "
-                            "ON CONFLICT (user_id, date) DO UPDATE "
-                            "SET runs = daily_usage_counters.runs + 1"
-                        ),
-                        {"uid": user_id, "date": date_type.today().isoformat()},
-                    )
-                    await db.commit()
-            except Exception:
-                _logger.exception("job=%s: failed to increment usage counter", job_id)
+        # Quota is reserved up-front at submission (reserve_run_quota) and only
+        # refunded on failure, so a successful run needs no counter write here.
 
         # ── Write Delta analytics (fire-and-forget, not rate limiting) ─────
         if user_id:
@@ -1204,4 +1205,11 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
 
     except Exception as e:
         await update_job(status=JobStatus.error, error_message=str(e))
+        # Refund the run reserved at submission — failed runs must not consume quota.
+        if user_id:
+            try:
+                async with AsyncSessionLocal() as db:
+                    await refund_run_quota(user_id, db)
+            except Exception:
+                _logger.exception("job=%s: quota refund failed", job_id)
         await emit({"type": "error", "message": f"Pipeline error: {str(e)}"})
