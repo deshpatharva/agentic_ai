@@ -137,6 +137,14 @@ def fabrication_guard(
     Runs one spaCy pass on the full generated text (not per-line) then
     does O(n) string checks per line — no additional LLM calls.
     """
+    # Metrics are attested against the original resume AND the claims ledger, whose
+    # metrics may include figures remembered from earlier runs (long-term fact
+    # memory, merged in main.py). Without the ledger, a legitimately-remembered
+    # metric absent from THIS run's source_text would be wrongly flagged.
+    metric_source = source_text
+    if ledger.metrics:
+        metric_source = source_text + "\n" + "\n".join(ledger.metrics)
+
     # Single NLP pass to find ORG entities in the generated text
     doc = nlp(generated_text)
     gen_companies = {ent.text.strip() for ent in doc.ents if ent.label_ == "ORG"}
@@ -167,10 +175,10 @@ def fabrication_guard(
 
         bare = _BULLET_STRIP_RE.sub("", line).strip()
 
-        # Which metrics on this line are NOT attested in the source?
+        # Which metrics on this line are NOT attested in the source or the ledger?
         bad_metrics = [
             m.group(0) for m in METRIC_RE.finditer(bare)
-            if not _metric_attested(m.group(0), source_text)
+            if not _metric_attested(m.group(0), metric_source)
         ]
 
         # Which fabricated companies appear on this line (simple substring check)?
