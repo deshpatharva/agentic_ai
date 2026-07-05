@@ -26,7 +26,6 @@ from auth.dependencies import get_current_user
 from chat.agent import render_system_prompt, render_context_message
 from chat.state_machine import (
     resolve_phase, tools_for_phase, try_deterministic, fallback_response,
-    AWAITING_JD, JD_CAPTURED, OPTIMIZING, RESULTS_READY,
 )
 from chat.tools import LAUNCH_TOOL, SAVE_TOOL, DOWNLOAD_TOOL, EDIT_TOOL, parse_tool_calls, message_text
 from chat.dependencies import get_or_create_session, require_complete_profile
