@@ -159,35 +159,38 @@ async def _fetch_jd_from_url(url: str) -> str:
     """Fetch URL and extract job description text via HTML parsing.
 
     Follows redirects manually, re-validating each hop against the SSRF allowlist,
-    so a public URL cannot redirect into private/internal address space.
+    so a public URL cannot redirect into private/internal address space. Streams
+    the body and stops at _MAX_JD_FETCH_BYTES so a huge response can't exhaust
+    memory (the body is never fully buffered before the cap is applied).
     """
     current = url
+    headers = {"User-Agent": "Mozilla/5.0 ResumeOptimizer/1.0"}
     # follow_redirects=False: we resolve each hop ourselves and re-validate its
     # target before making the next request.
     async with httpx.AsyncClient(follow_redirects=False, timeout=15.0) as client:
-        response = None
         for _ in range(_MAX_REDIRECTS + 1):
             await asyncio.to_thread(_assert_public_url, current)
-            response = await client.get(
-                current, headers={"User-Agent": "Mozilla/5.0 ResumeOptimizer/1.0"}
-            )
-            if response.is_redirect and response.headers.get("location"):
-                # Resolve relative redirects against the current URL.
-                current = str(response.url.join(response.headers["location"]))
-                continue
-            break
-        else:
-            raise ValueError("Too many redirects.")
+            async with client.stream("GET", current, headers=headers) as response:
+                if response.is_redirect and response.headers.get("location"):
+                    # Resolve relative redirects against the current URL; skip
+                    # reading the (empty) redirect body.
+                    current = str(response.url.join(response.headers["location"]))
+                    continue
 
-        response.raise_for_status()
-        # Cap total size so a huge/streamed body can't exhaust memory.
-        body = response.content
-        if len(body) > _MAX_JD_FETCH_BYTES:
-            body = body[:_MAX_JD_FETCH_BYTES]
-        html = body.decode(response.encoding or "utf-8", errors="replace")
+                response.raise_for_status()
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in response.aiter_bytes():
+                    chunks.append(chunk)
+                    total += len(chunk)
+                    if total >= _MAX_JD_FETCH_BYTES:
+                        break  # stop pulling — don't buffer beyond the cap
+                body = b"".join(chunks)[:_MAX_JD_FETCH_BYTES]
+                html = body.decode(response.encoding or "utf-8", errors="replace")
+                # Parsing multi-MB job pages can stall other requests — off-thread it.
+                return await asyncio.to_thread(_extract_jd_text, html)
 
-    # Parsing multi-MB job pages can take long enough to stall other requests.
-    return await asyncio.to_thread(_extract_jd_text, html)
+    raise ValueError("Too many redirects.")
 
 
 async def _score_profiles(profile_dicts: list[dict], jd_text: str) -> list[dict]:
