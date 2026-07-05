@@ -112,12 +112,26 @@ async def _reap_once(db: AsyncSession) -> list[str]:
         return []
     now = datetime.now(timezone.utc)
     ids = []
+    reaped_user_ids = []
     for job in stuck:
         job.status = JobStatus.error
         job.error_message = "Job timed out — worker may have restarted."
         job.updated_at = now
         ids.append(str(job.id))
+        if job.user_id is not None:
+            reaped_user_ids.append(job.user_id)
     await db.commit()
+
+    # Refund the run each reaped job reserved at submission. A run killed by a
+    # worker restart never reaches _run_pipeline_task's own refund path, so
+    # without this a deploy would permanently consume the user's quota. Reaped
+    # jobs are still 'running', so a task that already failed and refunded (now
+    # 'error') is never seen here — no double refund.
+    for uid in reaped_user_ids:
+        try:
+            await refund_run_quota(uid, db)
+        except Exception:
+            _logger.exception("reaper: quota refund failed for user %s", uid)
     return ids
 
 
@@ -311,6 +325,15 @@ async def run_pipeline(
     # Return 404 (not 403) to avoid leaking whether the job exists at all
     if not job or str(job.user_id) != str(current_user.id):
         raise HTTPException(status_code=404, detail="Job not found. Upload a resume first.")
+
+    # Reject resubmission of a job that is already in flight or finished — otherwise
+    # it restarts the pipeline AND reserves a second quota slot for the same job.
+    # 'pending' (freshly uploaded) and 'error' (retry after failure) are allowed.
+    if job.status in (JobStatus.running, JobStatus.done):
+        raise HTTPException(
+            status_code=409,
+            detail="This job is already running or completed. Upload a new resume to optimize again.",
+        )
 
     if not request.jd_text.strip():
         raise HTTPException(status_code=400, detail="jd_text cannot be empty.")

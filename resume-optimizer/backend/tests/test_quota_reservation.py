@@ -124,3 +124,39 @@ async def test_refund_floors_at_zero(db_tables):
     async with AsyncSessionLocal() as db:
         await refund_run_quota(user.id, db)
     assert await _runs(user.id) == 0
+
+
+@pytest.mark.asyncio
+async def test_reaper_refunds_quota_for_killed_runs(db_tables):
+    """A run reserved at submission but killed mid-flight (worker restart) must be
+    refunded when the stuck-job reaper marks it error — otherwise a deploy
+    permanently consumes the user's quota."""
+    from datetime import datetime, timedelta, timezone
+    from auth.dependencies import reserve_run_quota
+    from db.models import JobStatus, PipelineJob
+    from db.session import AsyncSessionLocal
+    from main import _reap_once
+
+    user = await _make_user(daily_uploads=2)
+
+    # Reserve a slot (as /run-pipeline does at submission).
+    async with AsyncSessionLocal() as db:
+        assert await reserve_run_quota(user, db) is True
+    assert await _runs(user.id) == 1
+
+    # A running job whose worker died: updated_at older than the stuck cutoff.
+    stale = datetime.now(timezone.utc) - timedelta(hours=1)
+    async with AsyncSessionLocal() as db:
+        db.add(PipelineJob(
+            user_id=user.id, status=JobStatus.running,
+            original_filename="r", resume_text="x", jd_text="y",
+            created_at=stale, updated_at=stale,
+        ))
+        await db.commit()
+
+    async with AsyncSessionLocal() as db:
+        reaped = await _reap_once(db)
+    assert len(reaped) == 1
+
+    # Slot returned to the pool.
+    assert await _runs(user.id) == 0
