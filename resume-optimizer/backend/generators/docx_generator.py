@@ -140,19 +140,28 @@ def _clean_ai_annotations(text: str) -> str:
 def _is_name_line(line: str, seq_idx: int) -> bool:
     if seq_idx != 0:
         return False
-    if SECTION_HEADERS.match(line.strip()):
+    stripped = line.strip()
+    if SECTION_HEADERS.match(stripped):
         return False
-    if BULLET_PATTERN.match(line.strip()):
+    if BULLET_PATTERN.match(stripped):
         return False
     if len(line) > 60 or "@" in line or "http" in line.lower():
+        return False
+    # A person's name has no digits (phones, ZIPs, years, "5+ years" do) and is
+    # only a few words — so an opening address/summary/"5+ Years of Experience"
+    # line isn't rendered as the big blue name.
+    if any(ch.isdigit() for ch in stripped):
+        return False
+    if len(stripped.split()) > 6:
         return False
     return True
 
 
 _CONTACT_PATTERNS = re.compile(
     r"(@|linkedin\.com|github\.com|http|www\.|"
-    r"\+?[\d][\d\s\-\(\)]{7,}|"
-    r"\d{5})",
+    r"\+?[\d][\d\s\-\(\)]{7,}|"          # phone-like digit run
+    r"\d{5}-\d{4}|"                       # ZIP+4 (unambiguous US ZIP)
+    r",\s*[A-Za-z]{2}\.?\s+\d{5}\b)",     # 'City, ST 12345' location + ZIP
     re.IGNORECASE,
 )
 
