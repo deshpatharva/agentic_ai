@@ -35,7 +35,12 @@ resource "azurerm_linux_web_app" "backend" {
       python_version = "3.12"
     }
 
-    app_command_line = "uvicorn main:app --host 0.0.0.0 --port 8000"
+    # --proxy-headers + trusted forwarded IPs so request.client.host reflects the
+    # real client (from X-Forwarded-For) instead of the App Service front-end's
+    # internal IP. Without this, slowapi's per-IP rate limits collapse into one
+    # shared bucket for every user. Only the platform front-end can reach the
+    # container, so trusting all forwarded IPs here is safe.
+    app_command_line = "uvicorn main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips=*"
 
     cors {
       allowed_origins     = ["https://${azurerm_static_web_app.frontend.default_host_name}"]

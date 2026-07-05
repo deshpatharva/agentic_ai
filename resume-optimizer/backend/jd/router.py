@@ -1,8 +1,11 @@
 import asyncio
 import hashlib
+import ipaddress
 import json as _json
 import logging
+import socket
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -120,14 +123,71 @@ def _extract_jd_text(html: str) -> str:
     return soup.get_text(separator="\n", strip=True)[:15000]
 
 
+_MAX_JD_FETCH_BYTES = 5 * 1024 * 1024  # 5 MB cap on fetched HTML
+_MAX_REDIRECTS = 5
+
+
+def _assert_public_url(url: str) -> None:
+    """Reject non-http(s) schemes and hosts that resolve to private/loopback/
+    link-local address space, so an attacker can't use JD fetching for SSRF
+    against the VNet, cloud metadata (169.254.169.254), or localhost.
+
+    Raises ValueError on any disallowed URL. Runs blocking DNS — call via to_thread.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("Only http/https URLs are allowed.")
+    host = parsed.hostname
+    if not host:
+        raise ValueError("URL has no host.")
+
+    # Resolve every A/AAAA record — reject if ANY is non-public (defends against
+    # a hostname with both a public and a private record).
+    try:
+        infos = socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80), proto=socket.IPPROTO_TCP)
+    except socket.gaierror as exc:
+        raise ValueError(f"Could not resolve host: {exc}") from exc
+
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            raise ValueError("URL resolves to a non-public address.")
+
+
 async def _fetch_jd_from_url(url: str) -> str:
-    """Fetch URL and extract job description text via HTML parsing."""
-    async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
-        response = await client.get(url, headers={"User-Agent": "Mozilla/5.0 ResumeOptimizer/1.0"})
+    """Fetch URL and extract job description text via HTML parsing.
+
+    Follows redirects manually, re-validating each hop against the SSRF allowlist,
+    so a public URL cannot redirect into private/internal address space.
+    """
+    current = url
+    # follow_redirects=False: we resolve each hop ourselves and re-validate its
+    # target before making the next request.
+    async with httpx.AsyncClient(follow_redirects=False, timeout=15.0) as client:
+        response = None
+        for _ in range(_MAX_REDIRECTS + 1):
+            await asyncio.to_thread(_assert_public_url, current)
+            response = await client.get(
+                current, headers={"User-Agent": "Mozilla/5.0 ResumeOptimizer/1.0"}
+            )
+            if response.is_redirect and response.headers.get("location"):
+                # Resolve relative redirects against the current URL.
+                current = str(response.url.join(response.headers["location"]))
+                continue
+            break
+        else:
+            raise ValueError("Too many redirects.")
+
         response.raise_for_status()
+        # Cap total size so a huge/streamed body can't exhaust memory.
+        body = response.content
+        if len(body) > _MAX_JD_FETCH_BYTES:
+            body = body[:_MAX_JD_FETCH_BYTES]
+        html = body.decode(response.encoding or "utf-8", errors="replace")
 
     # Parsing multi-MB job pages can take long enough to stall other requests.
-    return await asyncio.to_thread(_extract_jd_text, response.text)
+    return await asyncio.to_thread(_extract_jd_text, html)
 
 
 async def _score_profiles(profile_dicts: list[dict], jd_text: str) -> list[dict]:

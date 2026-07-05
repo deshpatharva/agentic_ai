@@ -33,6 +33,28 @@ def decode_token(token: str) -> str:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
 
 
+async def decode_token_checked(token: str, db: AsyncSession) -> str:
+    """Decode a session JWT AND verify it has not been revoked (logout blocklist).
+
+    Used by query-param auth paths (downloads) where the token travels in the URL
+    and is therefore the most likely to leak into logs/history — so honouring the
+    logout blocklist here matters most. Raises HTTP 401 on invalid or revoked tokens.
+    """
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except JWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+    user_id: str = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    jti: str = payload.get("jti")
+    if jti:
+        blocked = await db.scalar(select(TokenBlocklist).where(TokenBlocklist.jti == jti))
+        if blocked:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+    return user_id
+
+
 def decode_sse_token(token: str) -> str:
     """Decode a short-lived SSE token and return user_id. Raises HTTP 401 on failure.
 

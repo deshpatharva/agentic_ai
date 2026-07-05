@@ -67,7 +67,7 @@ from db.session import get_db, init_db, AsyncSessionLocal
 from db.models import JobStatus, PipelineEvent, PipelineJob, Profile, Resume, User, TokenBlocklist
 from utils.profile_utils import sections_to_text as _sections_to_text
 from auth.router import router as auth_router, user_router
-from auth.dependencies import decode_token, decode_sse_token, get_current_user, check_plan_limit, _effective_plan
+from auth.dependencies import decode_token_checked, decode_sse_token, get_current_user, check_plan_limit, _effective_plan
 from dashboard.router import router as dashboard_router
 from admin.router import router as admin_router
 from profiles.router import router as profiles_router, profile_ops as profile_ops_router
@@ -86,10 +86,13 @@ async def _cleanup_events():
     """Periodically delete PipelineEvent rows older than EVENT_TTL_HOURS."""
     while True:
         await asyncio.sleep(3600)
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=_EVENT_TTL_HOURS)
-        async with AsyncSessionLocal() as db:
-            await db.execute(delete(PipelineEvent).where(PipelineEvent.created_at < cutoff))
-            await db.commit()
+        try:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=_EVENT_TTL_HOURS)
+            async with AsyncSessionLocal() as db:
+                await db.execute(delete(PipelineEvent).where(PipelineEvent.created_at < cutoff))
+                await db.commit()
+        except Exception:
+            _logger.exception("event cleanup cycle failed — will retry in 1 hour")
 
 
 _logger = logging.getLogger(__name__)
@@ -457,9 +460,10 @@ async def download_resume(
     if not raw_token:
         raise HTTPException(status_code=401, detail="Authentication required.")
 
-    user_id = decode_token(raw_token)  # raises 401 on invalid token
-
     async with AsyncSessionLocal() as db:
+        # Verify the token is valid AND not revoked (logout blocklist) — the token
+        # rides in the URL here, so honouring revocation matters most on this path.
+        user_id = await decode_token_checked(raw_token, db)
         user_result = await db.execute(
             select(User).where(User.id == uuid.UUID(user_id), User.is_active.is_(True))
         )
@@ -523,8 +527,6 @@ async def download_profile_docx(
     if not raw_token:
         raise HTTPException(status_code=401, detail="Authentication required.")
 
-    user_id = decode_token(raw_token)
-
     try:
         pid = uuid.UUID(profile_id)
     except ValueError:
@@ -533,6 +535,8 @@ async def download_profile_docx(
     from db.models import Profile as _Profile
     from utils.profile_utils import sections_to_text as _sections_to_text
     async with AsyncSessionLocal() as db:
+        # Verify + revocation check on the URL-borne token before doing any work.
+        user_id = await decode_token_checked(raw_token, db)
         prof = await db.scalar(
             select(_Profile).where(_Profile.id == pid, _Profile.user_id == uuid.UUID(user_id))
         )
