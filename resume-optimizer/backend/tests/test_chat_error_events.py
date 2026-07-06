@@ -113,3 +113,26 @@ async def test_empty_response_still_uses_fallback_not_error(client, monkeypatch)
     assert "event: error" not in body
     rows = await _assistant_messages()
     assert len(rows) == 1  # the deterministic fallback is a real (persisted) reply
+
+
+async def test_partial_result_from_raising_attempt_not_leaked(client, monkeypatch):
+    from chat import router as chat_router
+
+    async def _text_then_boom(*args, **kwargs):
+        return {
+            "message": types.SimpleNamespace(content="Real text", tool_calls=None),
+            "input_tokens": 1,
+            "output_tokens": 1,
+        }
+
+    def _boom(message):
+        raise RuntimeError("tool parse exploded")
+
+    monkeypatch.setattr(chat_router, "complete_with_tools", _text_then_boom)
+    monkeypatch.setattr(chat_router, "parse_tool_calls", _boom)
+
+    resp = await client.post("/optimize/chat", json={"message": "hello there"})
+    body = resp.text
+    assert "event: error" in body
+    assert "Real text" not in body  # partial result from the raising attempt must not leak
+    assert await _assistant_messages() == []

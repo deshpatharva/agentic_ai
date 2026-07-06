@@ -571,10 +571,17 @@ async def optimize_chat(
                     display = "".join(chunks).strip()
             except Exception as exc:
                 llm_exc = exc
+                display = ""
+                tool_calls = []
                 _logger.exception(
                     "chat completion failed for session %s (attempt %d)", session_id_str, attempt
                 )
             if display or tool_calls:
+                break
+            if not phase_tools:
+                # Streaming already flushed tokens to the client — a retry would
+                # emit a second, disjoint token stream. Fall through to the
+                # error/fallback handling below instead of re-streaming.
                 break
             if attempt == 1:
                 _logger.info(
