@@ -478,33 +478,14 @@ async def optimize_chat(
         usage = {"input_tokens": 0, "output_tokens": 0}
         tool_call_meta = None
 
-        # First attempt
-        try:
-            if phase_tools:
-                result = await complete_with_tools(window, MODEL_CHAT_AGENT, phase_tools)
-                message = result["message"]
-                display = message_text(message).strip()
-                tool_calls = parse_tool_calls(message)
-                usage = {"input_tokens": result.get("input_tokens", 0),
-                         "output_tokens": result.get("output_tokens", 0)}
-            else:
-                # No tools available (e.g. OPTIMIZING) — stream text response
-                chunks = []
-                async for chunk in stream_chat(window, MODEL_CHAT_AGENT):
-                    if chunk["type"] == "token":
-                        chunks.append(chunk["text"])
-                        yield {"event": "token", "data": json.dumps({"text": chunk["text"]})}
-                    elif chunk["type"] == "usage":
-                        usage = {"input_tokens": chunk.get("input_tokens", 0),
-                                 "output_tokens": chunk.get("output_tokens", 0)}
-                display = "".join(chunks).strip()
-        except Exception:
-            _logger.exception("chat completion failed for session %s", session_id_str)
-            display = ""
-
-        # Retry once on empty response
-        if not display and not tool_calls:
-            _logger.info("chat: empty response for session %s, retrying with temperature=0.7", session_id_str)
+        # Attempt loop: one retry covers both a raised call and an empty result.
+        # An exception on the final attempt is a real outage — surface it as an
+        # SSE error (like main did) instead of persisting a canned reply the
+        # model never produced. fallback_response stays reserved for calls that
+        # SUCCEEDED but returned nothing.
+        llm_exc = None
+        for attempt in (1, 2):
+            llm_exc = None
             try:
                 if phase_tools:
                     result = await complete_with_tools(window, MODEL_CHAT_AGENT, phase_tools)
@@ -513,8 +494,35 @@ async def optimize_chat(
                     tool_calls = parse_tool_calls(message)
                     usage = {"input_tokens": result.get("input_tokens", 0),
                              "output_tokens": result.get("output_tokens", 0)}
-            except Exception:
-                _logger.exception("chat retry also failed for session %s", session_id_str)
+                else:
+                    # No tools available (e.g. OPTIMIZING) — stream text response
+                    chunks = []
+                    async for chunk in stream_chat(window, MODEL_CHAT_AGENT):
+                        if chunk["type"] == "token":
+                            chunks.append(chunk["text"])
+                            yield {"event": "token", "data": json.dumps({"text": chunk["text"]})}
+                        elif chunk["type"] == "usage":
+                            usage = {"input_tokens": chunk.get("input_tokens", 0),
+                                     "output_tokens": chunk.get("output_tokens", 0)}
+                    display = "".join(chunks).strip()
+            except Exception as exc:
+                llm_exc = exc
+                _logger.exception(
+                    "chat completion failed for session %s (attempt %d)", session_id_str, attempt
+                )
+            if display or tool_calls:
+                break
+            if attempt == 1:
+                _logger.info(
+                    "chat: %s for session %s, retrying once",
+                    "error" if llm_exc else "empty response", session_id_str,
+                )
+
+        if llm_exc is not None:
+            yield {"event": "final", "data": json.dumps({"content": "❌ Sorry — I hit an error. Please try again."})}
+            yield {"event": "error", "data": json.dumps({"message": "Agent failed — please try again."})}
+            yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
+            return
 
         # Final fallback — deterministic response based on phase
         if not display and not tool_calls:
