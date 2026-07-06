@@ -16,7 +16,7 @@ from config import STUCK_JOB_TIMEOUT_MINUTES, BOOTSTRAP_SECRET
 from db.models import JobStatus, LlmCallLog, PipelineEvent, PipelineJob, PlanType, Resume, User, ProviderCost
 from db.session import get_db
 from delta.writer import read_job_matches
-from utils.cost import ALLOWED_PROVIDERS
+from utils.cost import ALLOWED_PROVIDERS, estimate_cache_savings
 from utils.time_utils import ensure_utc
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -1019,6 +1019,16 @@ async def cache_efficiency(
         .order_by(func.date(LlmCallLog.created_at))
     )).all()
 
+    by_model = (await db.execute(
+        select(
+            LlmCallLog.model,
+            func.coalesce(func.sum(LlmCallLog.cached_input_tokens), 0).label("cached_tokens"),
+        )
+        .where(LlmCallLog.created_at >= cutoff)
+        .group_by(LlmCallLog.model)
+    )).all()
+    savings = estimate_cache_savings((r.model, int(r.cached_tokens)) for r in by_model)
+
     total_calls = int(totals.total_calls)
     cache_hits = int(totals.cache_hits)
     total_cached = int(totals.total_cached_tokens)
@@ -1030,7 +1040,7 @@ async def cache_efficiency(
         "cache_hit_rate_pct": round(100.0 * cache_hits / total_calls, 1) if total_calls else 0.0,
         "total_input_tokens": int(totals.total_input_tokens),
         "total_cached_tokens": total_cached,
-        "estimated_savings_usd": round(total_cached * 0.75 / 1_000_000 * 0.30, 4),
+        "estimated_savings_usd": round(savings, 4),
         "by_call_kind": [
             {
                 "call_kind":   r.call_kind or "unknown",
