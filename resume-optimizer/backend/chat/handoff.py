@@ -4,7 +4,7 @@ Also handles [SAVE_PROFILE] — creating a real Profile from the session's last_
 
 import asyncio
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -56,6 +56,7 @@ async def fire_optimizer(
     user: User,
     session: ChatSession,
     handoff: dict,
+    reserved_on: date | None = None,
 ) -> tuple[str, str]:
     """Seed a PipelineJob from the agent's handoff payload and enqueue the pipeline.
 
@@ -116,6 +117,7 @@ async def fire_optimizer(
             resume_text=resume_text,
             jd_text=jd_text,
             status=JobStatus.running,
+            quota_reserved_on=reserved_on,
             created_at=now,
             updated_at=now,
         )

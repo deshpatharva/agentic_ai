@@ -16,7 +16,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import date as date_type
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 # Ensure backend/ is on the path regardless of where uvicorn is launched from
@@ -98,13 +98,15 @@ async def _cleanup_events():
 _logger = logging.getLogger(__name__)
 
 
-async def _refund_job_quota(job_id, user_id, created_at, db: AsyncSession) -> None:
+async def _refund_job_quota(job_id, user_id, reserved_on, created_at, db: AsyncSession) -> None:
     """Idempotently refund the run reserved for a job.
 
     Both the failing pipeline task and the stuck-job reaper can reach the same
     job; the atomic quota_refunded flip ensures exactly one of them decrements
-    the counter. The refund is attributed to the job's *submission* date so a run
-    that crosses local midnight returns the slot it actually took.
+    the counter. The refund targets the reservation date stamped on the job
+    (quota_reserved_on) so it decrements the exact daily counter row the
+    reservation incremented; legacy rows (NULL stamp, pre-0026) fall back to
+    created_at as before.
     """
     result = await db.execute(
         update(PipelineJob)
@@ -115,7 +117,8 @@ async def _refund_job_quota(job_id, user_id, created_at, db: AsyncSession) -> No
         await db.commit()  # already refunded by the other path — nothing to do
         return
     if user_id is not None:
-        await refund_run_quota(str(user_id), db, run_date=_counter_date_for(created_at))
+        run_date = reserved_on.isoformat() if reserved_on else _counter_date_for(created_at)
+        await refund_run_quota(str(user_id), db, run_date=run_date)
     else:
         await db.commit()
 
@@ -170,16 +173,16 @@ async def _reap_once(db: AsyncSession) -> list[str]:
         job.error_message = "Job timed out — worker may have restarted."
         job.updated_at = now
         ids.append(str(job.id))
-        reaped.append((job.id, job.user_id, job.created_at))
+        reaped.append((job.id, job.user_id, job.quota_reserved_on, job.created_at))
     await db.commit()
 
     # Refund each reaped run. A run killed by a worker restart never reaches the
     # task's own refund path, so without this a deploy would permanently consume
     # the user's quota. _refund_job_quota is idempotent (quota_refunded flag), so
     # a slow-but-alive task that later also refunds this job can't double-refund.
-    for job_id, user_id, created_at in reaped:
+    for job_id, user_id, reserved_on, created_at in reaped:
         try:
-            await _refund_job_quota(job_id, user_id, created_at, db)
+            await _refund_job_quota(job_id, user_id, reserved_on, created_at, db)
         except Exception:
             _logger.exception("reaper: quota refund failed for job %s", job_id)
     return ids
@@ -409,7 +412,8 @@ async def run_pipeline(
     # Reserve the run slot only after winning the claim — the single authoritative
     # limit check. On limit, revert the job to pending so a retry works, and return
     # the one canonical 429.
-    if not await reserve_run_quota(current_user, db):
+    today = date.today()
+    if not await reserve_run_quota(current_user, db, on_date=today):
         await db.execute(
             update(PipelineJob).where(PipelineJob.id == job_uuid).values(status=JobStatus.pending)
         )
@@ -422,6 +426,16 @@ async def run_pipeline(
                 "upgrade_message": "You've reached your daily limit. Upgrade to Pro for more runs/day.",
             },
         )
+
+    # Stamp the reservation on the job and re-arm the refund: the refund targets
+    # quota_reserved_on's counter row, and a retried failed job (whose first
+    # failure already flipped quota_refunded=True) must be refundable again.
+    await db.execute(
+        update(PipelineJob)
+        .where(PipelineJob.id == job_uuid)
+        .values(quota_reserved_on=today, quota_refunded=False)
+    )
+    await db.commit()
 
     background_tasks.add_task(_run_pipeline_task, str(job_uuid), str(current_user.id))
 
@@ -1286,7 +1300,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             async with AsyncSessionLocal() as db:
                 job_row = await db.get(PipelineJob, uuid.UUID(job_id))
                 if job_row is not None:
-                    await _refund_job_quota(job_row.id, job_row.user_id, job_row.created_at, db)
+                    await _refund_job_quota(job_row.id, job_row.user_id, job_row.quota_reserved_on, job_row.created_at, db)
         except Exception:
             _logger.exception("job=%s: quota refund failed", job_id)
         await emit({"type": "error", "message": f"Pipeline error: {str(e)}"})

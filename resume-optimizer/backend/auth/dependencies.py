@@ -145,7 +145,7 @@ async def check_plan_limit(
     return user
 
 
-async def reserve_run_quota(user: User, db: AsyncSession) -> bool:
+async def reserve_run_quota(user: User, db: AsyncSession, on_date: date | None = None) -> bool:
     """Atomically reserve one pipeline run against the user's daily limit.
 
     Returns True if a slot was reserved (the counter was incremented), False if the
@@ -157,10 +157,14 @@ async def reserve_run_quota(user: User, db: AsyncSession) -> bool:
 
     Uses the stored UUID hex form (no dashes) so the ON CONFLICT target matches the
     row SQLAlchemy writes — a dashed string silently creates a phantom row on SQLite.
+
+    on_date lets the caller pin the reservation to the date it will also stamp on
+    the job (quota_reserved_on), so reservation, stamp, and refund agree even if
+    midnight passes between those statements.
     """
     limits = await db.scalar(select(PlanLimit).where(PlanLimit.plan == _effective_plan(user)))
     uid_hex = _uuid_module.UUID(str(user.id)).hex
-    today_str = date.today().isoformat()
+    today_str = (on_date or date.today()).isoformat()
 
     if limits is None:
         # No configured limit — count the run for analytics but never reject.

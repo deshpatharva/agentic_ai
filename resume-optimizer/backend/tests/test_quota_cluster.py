@@ -139,9 +139,9 @@ async def test_job_refund_is_idempotent(db_tables):
     assert await _runs_on(user.id, today) == 1
 
     async with AsyncSessionLocal() as db:
-        await _refund_job_quota(jid, uid, created, db)
+        await _refund_job_quota(jid, uid, None, created, db)
     async with AsyncSessionLocal() as db:
-        await _refund_job_quota(jid, uid, created, db)   # reaper's turn — must no-op
+        await _refund_job_quota(jid, uid, None, created, db)   # reaper's turn — must no-op
     assert await _runs_on(user.id, today) == 0
 
 

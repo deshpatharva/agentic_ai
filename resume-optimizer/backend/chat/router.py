@@ -14,7 +14,7 @@ import json
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -336,15 +336,16 @@ async def _launch_and_stream(current_user, session, handoff_payload):
     permanently consume the user's daily run. Shared by the LLM-tool and
     deterministic launch paths so the reserve/refund contract lives in one place.
     """
+    today = date.today()
     async with AsyncSessionLocal() as qdb:
-        reserved_ok = await reserve_run_quota(current_user, qdb)
+        reserved_ok = await reserve_run_quota(current_user, qdb, on_date=today)
     if not reserved_ok:
         yield {"event": "error", "data": json.dumps({"message": "You've reached your daily limit. Upgrade to Pro for more runs/day."})}
         return
 
     slot_held = True
     try:
-        job_id, sse_token = await fire_optimizer(current_user, session, handoff_payload)
+        job_id, sse_token = await fire_optimizer(current_user, session, handoff_payload, reserved_on=today)
         slot_held = False  # the pipeline task now owns the reservation
         async with AsyncSessionLocal() as wdb:
             launched_sess = await wdb.scalar(select(ChatSession).where(ChatSession.id == session.id))
