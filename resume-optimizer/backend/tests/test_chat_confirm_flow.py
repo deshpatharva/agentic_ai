@@ -80,3 +80,19 @@ def test_picker_click_still_fires_instantly():
     out = try_deterministic(JD_CAPTURED, 'Use my "Data Engineer" profile', ctx, PROFILES)
     assert out["action"] == "launch"
     assert out["profile_id"] == "p1"
+
+
+def test_edit_tool_available_before_optimization():
+    from chat.state_machine import tools_for_phase, AWAITING_JD as P_AWAIT, JD_CAPTURED as P_JD
+    from chat.tools import EDIT_TOOL
+    for phase in (P_AWAIT, P_JD):
+        names = [t["function"]["name"] for t in tools_for_phase(phase)]
+        assert EDIT_TOOL in names, f"edit tool missing in {phase}"
+
+
+def test_pre_opt_prompts_document_edits():
+    from chat.agent import render_system_prompt
+    from chat.state_machine import AWAITING_JD as P_AWAIT, JD_CAPTURED as P_JD
+    for phase in (P_AWAIT, P_JD):
+        prompt = render_system_prompt({"profiles": PROFILES}, phase)
+        assert "RESUME EDITS" in prompt, f"edit guidance missing in {phase} prompt"

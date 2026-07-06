@@ -40,9 +40,9 @@ def resolve_phase(ctx: dict) -> str:
 
 def tools_for_phase(phase: str) -> list[dict]:
     if phase == AWAITING_JD:
-        return [_TOOLS_BY_NAME[DOWNLOAD_TOOL]]
+        return [_TOOLS_BY_NAME[DOWNLOAD_TOOL], _TOOLS_BY_NAME[EDIT_TOOL]]
     if phase == JD_CAPTURED:
-        return [_TOOLS_BY_NAME[LAUNCH_TOOL], _TOOLS_BY_NAME[DOWNLOAD_TOOL]]
+        return [_TOOLS_BY_NAME[LAUNCH_TOOL], _TOOLS_BY_NAME[DOWNLOAD_TOOL], _TOOLS_BY_NAME[EDIT_TOOL]]
     if phase == OPTIMIZING:
         return []
     # RESULTS_READY
