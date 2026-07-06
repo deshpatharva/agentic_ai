@@ -49,3 +49,31 @@ def test_default_when_nothing_available():
 def test_ignores_trailing_empty_entries():
     from limiter import _client_ip
     assert _client_ip(_make_req(xff="203.0.113.9, ")) == "203.0.113.9"
+
+
+def test_strips_port_azure_format():
+    # Azure App Service's front end appends the client as 'IP:port'.
+    from limiter import _client_ip
+    assert _client_ip(_make_req(xff="203.0.113.9:54321")) == "203.0.113.9"
+
+
+def test_strips_port_multi_entry():
+    from limiter import _client_ip
+    assert _client_ip(_make_req(xff="6.6.6.6, 203.0.113.9:49152")) == "203.0.113.9"
+
+
+def test_port_varies_but_bucket_is_stable():
+    from limiter import _client_ip
+    a = _client_ip(_make_req(xff="203.0.113.9:54321"))
+    b = _client_ip(_make_req(xff="203.0.113.9:54988"))
+    assert a == b == "203.0.113.9"
+
+
+def test_bracketed_ipv6_with_port():
+    from limiter import _client_ip
+    assert _client_ip(_make_req(xff="[2001:db8::1]:8080")) == "2001:db8::1"
+
+
+def test_bare_ipv6_untouched():
+    from limiter import _client_ip
+    assert _client_ip(_make_req(xff="2001:db8::1")) == "2001:db8::1"
