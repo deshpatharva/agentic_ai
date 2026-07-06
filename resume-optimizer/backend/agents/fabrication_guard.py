@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import List
 
 from agents.fact_extractor import (
-    METRIC_RE, ClaimsLedger, _BULLET_STRIP_RE, nlp
+    METRIC_RE, ClaimsLedger, _BULLET_STRIP_RE, nlp_process
 )
 
 # Role-domain terms that should never appear in a resume unless the candidate's
@@ -146,7 +146,7 @@ def fabrication_guard(
         metric_source = source_text + "\n" + "\n".join(ledger.metrics)
 
     # Single NLP pass to find ORG entities in the generated text
-    doc = nlp(generated_text)
+    doc = nlp_process(generated_text)
     gen_companies = {ent.text.strip() for ent in doc.ents if ent.label_ == "ORG"}
 
     # Companies that appear in the output but not in the source
@@ -163,6 +163,13 @@ def fabrication_guard(
     gaps: list         = []
 
     for line in generated_text.splitlines():
+        # Blank lines are section spacing (reassemble joins sections with "\n\n"),
+        # not sentences — keep them verbatim so they neither strip formatting nor
+        # register as phantom "dropped persona sentence" gaps.
+        if not line.strip():
+            output_lines.append(line)
+            continue
+
         # ── Persona novelty check — drop sentences with out-of-role domain terms ──
         cleaned = _drop_persona_sentences(line, allowed_persona)
         if not cleaned:

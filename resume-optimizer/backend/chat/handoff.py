@@ -38,6 +38,20 @@ async def _parse_sections(raw_text: str) -> dict:
     return await _ps(raw_text)
 
 
+def _resolve_profile_by_label(profile_id_str: str, user_profiles: list) -> "Profile | None":
+    """Resolve an agent-emitted label to one of the user's profiles.
+
+    Delegates to the hardened state_machine matcher (exact match, else a
+    length/ratio-guarded substring) so a short or generic label ('eng') can't
+    incidentally select — and launch a paid run against — the wrong profile.
+    This is the paid path, so it must not be looser than the deterministic one.
+    """
+    from chat.state_machine import _find_profile_by_label  # noqa: PLC0415 — avoid circular
+    by_label = [{"label": p.label or "", "_prof": p} for p in user_profiles]
+    match = _find_profile_by_label(profile_id_str, by_label)
+    return match["_prof"] if match is not None else None
+
+
 async def fire_optimizer(
     user: User,
     session: ChatSession,
@@ -78,26 +92,13 @@ async def fire_optimizer(
                 )
             )
 
-        if prof is None:
-            # Fallback: resolve by label (handles agent emitting a label or
-            # a quoted label instead of the UUID).
-            candidate = profile_id_str.strip().strip('"').strip("'").lower()
-            if candidate:
-                user_profiles = (
-                    await db.execute(select(Profile).where(Profile.user_id == user.id))
-                ).scalars().all()
-                # Exact label match first, then a contains-match either direction.
-                prof = next(
-                    (p for p in user_profiles if (p.label or "").strip().lower() == candidate),
-                    None,
-                )
-                if prof is None:
-                    prof = next(
-                        (p for p in user_profiles
-                         if candidate in (p.label or "").lower()
-                         or ((p.label or "").strip().lower() and (p.label or "").strip().lower() in candidate)),
-                        None,
-                    )
+        if prof is None and profile_id_str.strip():
+            # Fallback: resolve by label (handles agent emitting a label or a
+            # quoted label instead of the UUID), using the hardened matcher.
+            user_profiles = (
+                await db.execute(select(Profile).where(Profile.user_id == user.id))
+            ).scalars().all()
+            prof = _resolve_profile_by_label(profile_id_str, user_profiles)
 
         if not prof:
             raise HTTPException(

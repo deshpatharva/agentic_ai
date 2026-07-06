@@ -10,6 +10,7 @@ The ledger is the anti-hallucination ground truth:
 from __future__ import annotations
 
 import re
+import threading
 from dataclasses import dataclass, field
 
 import spacy
@@ -21,6 +22,18 @@ except OSError:
         "spaCy model 'en_core_web_sm' not found. "
         "Run: python -m spacy download en_core_web_sm"
     )
+
+# A spaCy Language object is a single shared module global and is NOT safe for
+# concurrent __call__. Guard/claim extraction now runs inside asyncio.to_thread
+# from several pipelines at once (agent_loop, debate_loop, main), so every call
+# into the pipeline must go through this lock.
+_nlp_lock = threading.Lock()
+
+
+def nlp_process(text: str):
+    """Thread-safe entry point to the shared spaCy pipeline."""
+    with _nlp_lock:
+        return nlp(text)
 
 # Explicit quantitative metrics — the highest-risk fabrication targets.
 # Only matches units that carry real semantic weight (%, $, K/M/B, x-multiplier).
@@ -66,7 +79,7 @@ def extract_claims(resume_text: str) -> ClaimsLedger:
     Parse resume text into a ClaimsLedger.
     Same input always produces the same ledger.
     """
-    doc = nlp(resume_text)
+    doc = nlp_process(resume_text)
 
     companies = frozenset(
         ent.text.strip()
