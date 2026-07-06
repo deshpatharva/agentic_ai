@@ -407,7 +407,7 @@ async def _launch_and_stream(current_user, session, handoff_payload):
     finally:
         if slot_held:
             async with AsyncSessionLocal() as qdb:
-                await refund_run_quota(str(current_user.id), qdb)
+                await refund_run_quota(str(current_user.id), qdb, run_date=today.isoformat())
 
 
 # ── Main chat endpoint ────────────────────────────────────────────────────────

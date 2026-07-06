@@ -40,11 +40,25 @@ async def db_tables():
         await conn.run_sync(Base.metadata.drop_all)
 
 
-def test_migration_values_match_live_defaults():
-    from utils.cost import DEFAULT_PROVIDER_RATES
+def test_migration_corrections_are_frozen():
+    # 0025's _LEGACY_CORRECTIONS fixes historical (per-1K-scale) provider_costs
+    # rows using the rates that were current when the migration was authored
+    # (2026-07-06). utils.cost.DEFAULT_PROVIDER_RATES is a *live* fallback
+    # table that is expected to drift as pricing changes -- e.g. commit
+    # f373762 refreshed google/deepseek from LiteLLM's live pricing map.
+    # So "migration corrections == live defaults" is not a real invariant;
+    # pin against the migration's own frozen literals instead.
     mig = _load_migration()
-    for provider, _oi, _oo, new_in, new_out in mig._LEGACY_CORRECTIONS:
-        assert DEFAULT_PROVIDER_RATES[provider] == (new_in, new_out), provider
+    expected = {
+        "anthropic": (3.0, 15.0),
+        "google": (0.10, 0.40),
+        "groq": (0.05, 0.08),
+    }
+    corrections = {
+        provider: (new_in, new_out)
+        for provider, _oi, _oo, new_in, new_out in mig._LEGACY_CORRECTIONS
+    }
+    assert corrections == expected
 
 
 @pytest.mark.asyncio
