@@ -16,6 +16,7 @@ from config import STUCK_JOB_TIMEOUT_MINUTES, BOOTSTRAP_SECRET
 from db.models import JobStatus, LlmCallLog, PipelineEvent, PipelineJob, PlanType, Resume, User, ProviderCost
 from db.session import get_db
 from delta.writer import read_job_matches
+from utils.cost import ALLOWED_PROVIDERS
 from utils.time_utils import ensure_utc
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -685,8 +686,8 @@ async def create_provider_cost(
     db: AsyncSession = Depends(get_db),
 ):
     """Create or update provider pricing. Marks previous active rate as inactive."""
-    if body.provider not in ["anthropic", "google", "groq", "deepseek"]:
-        raise HTTPException(status_code=400, detail="provider must be one of: anthropic, google, groq, deepseek")
+    if body.provider not in ALLOWED_PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"provider must be one of: {', '.join(ALLOWED_PROVIDERS)}")
     if body.input_cost_per_1m_tokens < 0 or body.output_cost_per_1m_tokens < 0:
         raise HTTPException(status_code=400, detail="costs must be non-negative")
 

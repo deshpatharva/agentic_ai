@@ -93,10 +93,14 @@ import pandas as pd
 
 def test_empty_user_id_returns_all_rows():
     """When user_id='', no user_id filter is applied — all rows returned."""
+    # Relative to today so the row stays inside read_usage_last_n_days' n-day
+    # window regardless of when the suite runs (a fixed date breaks at the edge).
+    from datetime import datetime as _dt, timezone as _tz
+    recent = _dt.now(_tz.utc).date().isoformat()
     mock_df = pd.DataFrame([
-        {"user_id": "user-a", "date": "2026-06-05", "pipeline_runs": 2,
+        {"user_id": "user-a", "date": recent, "pipeline_runs": 2,
          "uploads": 2, "input_tokens": 1000, "output_tokens": 500, "tokens_used": 1500},
-        {"user_id": "user-b", "date": "2026-06-05", "pipeline_runs": 1,
+        {"user_id": "user-b", "date": recent, "pipeline_runs": 1,
          "uploads": 1, "input_tokens": 800, "output_tokens": 300, "tokens_used": 1100},
     ])
     mock_dt = MagicMock()
@@ -114,10 +118,12 @@ def test_empty_user_id_returns_all_rows():
 
 def test_non_empty_user_id_filters_rows():
     """When user_id is non-empty, only that user's rows are returned."""
+    from datetime import datetime as _dt, timezone as _tz
+    recent = _dt.now(_tz.utc).date().isoformat()
     mock_df = pd.DataFrame([
-        {"user_id": "user-a", "date": "2026-06-05", "pipeline_runs": 2,
+        {"user_id": "user-a", "date": recent, "pipeline_runs": 2,
          "uploads": 2, "input_tokens": 1000, "output_tokens": 500, "tokens_used": 1500},
-        {"user_id": "user-b", "date": "2026-06-05", "pipeline_runs": 1,
+        {"user_id": "user-b", "date": recent, "pipeline_runs": 1,
          "uploads": 1, "input_tokens": 800, "output_tokens": 300, "tokens_used": 1100},
     ])
     mock_dt = MagicMock()

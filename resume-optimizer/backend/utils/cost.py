@@ -2,6 +2,20 @@
 
 import litellm
 
+# Single source of truth for the providers we price and their fallback rates,
+# in USD per 1,000,000 tokens as (input, output). resolve_cost() only reaches
+# these when LiteLLM can't natively price a call. Admin validation (admin.router)
+# and the init_db fallback seed both derive from this, so adding a provider is a
+# one-line change here rather than four edits that can drift.
+DEFAULT_PROVIDER_RATES: dict[str, tuple[float, float]] = {
+    "anthropic": (3.0, 15.0),
+    "google": (0.10, 0.40),
+    "groq": (0.05, 0.08),
+    "deepseek": (0.28, 1.10),
+}
+
+ALLOWED_PROVIDERS: tuple[str, ...] = tuple(DEFAULT_PROVIDER_RATES)
+
 
 def resolve_cost(
     response,

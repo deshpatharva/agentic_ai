@@ -108,7 +108,7 @@ class PromoCodeCreate(BaseModel):
 
 
 class ProviderCostCreate(BaseModel):
-    provider: str  # anthropic, google, groq
+    provider: str  # validated against utils.cost.ALLOWED_PROVIDERS in the router
     input_cost_per_1m_tokens: float
     output_cost_per_1m_tokens: float
 

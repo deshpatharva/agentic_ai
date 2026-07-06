@@ -7,7 +7,6 @@ optimizer's strategist, and the priciest model) has a custom name LiteLLM may no
 map, so it must have a configurable fallback — otherwise those calls record $0.
 """
 
-import inspect
 import os
 import sys
 from pathlib import Path
@@ -42,12 +41,12 @@ def test_deepseek_without_rate_records_zero_source():
 
 
 def test_init_db_seeds_deepseek_fallback():
-    from db import session as db_session
-    src = inspect.getsource(db_session.init_db)
-    assert '"deepseek"' in src or "'deepseek'" in src, "init_db must seed a deepseek provider_costs row"
+    # init_db seeds every provider in the shared DEFAULT_PROVIDER_RATES, which
+    # must include a deepseek fallback rate.
+    from utils.cost import DEFAULT_PROVIDER_RATES
+    assert "deepseek" in DEFAULT_PROVIDER_RATES, "must seed a deepseek fallback rate"
 
 
 def test_admin_allows_deepseek_provider():
-    from admin import router as admin_router
-    src = inspect.getsource(admin_router.create_provider_cost)
-    assert "deepseek" in src, "create_provider_cost must accept the deepseek provider"
+    from utils.cost import ALLOWED_PROVIDERS
+    assert "deepseek" in ALLOWED_PROVIDERS, "create_provider_cost must accept the deepseek provider"

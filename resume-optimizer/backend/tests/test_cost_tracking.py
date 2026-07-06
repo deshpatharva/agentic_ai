@@ -203,21 +203,15 @@ async def test_complete_groq_returns_prompt_completion_tokens():
 
 
 def test_provider_seed_uses_lowercase():
-    """Verify session.py seeds lowercase provider names.
-    Uses inspect.getsource to catch any regression where capitalized names are reintroduced.
-    """
-    import inspect
-    import db.session as _sess
+    """init_db seeds from the shared DEFAULT_PROVIDER_RATES; its provider keys
+    (the names written to provider_costs) must be lowercase."""
+    from utils.cost import DEFAULT_PROVIDER_RATES
 
-    source = inspect.getsource(_sess.init_db)
-    for bad in ('"Anthropic"', '"Google"', '"Groq"'):
-        assert bad not in source, (
-            f"session.py contains {bad} — provider names must be lowercase"
-        )
-    for good in ('"anthropic"', '"google"', '"groq"'):
-        assert good in source, (
-            f"session.py must contain {good} in init_db seed"
-        )
+    for provider in DEFAULT_PROVIDER_RATES:
+        assert provider == provider.lower(), f"provider name {provider!r} must be lowercase"
+    # The historically-seeded providers are still present and lowercase.
+    for expected in ("anthropic", "google", "groq"):
+        assert expected in DEFAULT_PROVIDER_RATES
 
 
 @pytest.mark.asyncio

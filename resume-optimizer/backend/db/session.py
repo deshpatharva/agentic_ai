@@ -132,31 +132,17 @@ async def init_db() -> None:
                 # price a call — most notably deepseek/deepseek-v4-pro, whose custom
                 # model name LiteLLM may not map, which would otherwise record $0.
                 # Values are USD per 1,000,000 tokens (the column name), not per 1K.
+                # Rates come from the shared DEFAULT_PROVIDER_RATES so the seed and
+                # the admin allowlist can never drift apart.
+                from utils.cost import DEFAULT_PROVIDER_RATES
                 provider_costs = [
                     ProviderCost(
-                        provider="anthropic",
-                        input_cost_per_1m_tokens=3.0,
-                        output_cost_per_1m_tokens=15.0,
+                        provider=provider,
+                        input_cost_per_1m_tokens=in_rate,
+                        output_cost_per_1m_tokens=out_rate,
                         active=True,
-                    ),
-                    ProviderCost(
-                        provider="google",
-                        input_cost_per_1m_tokens=0.10,
-                        output_cost_per_1m_tokens=0.40,
-                        active=True,
-                    ),
-                    ProviderCost(
-                        provider="groq",
-                        input_cost_per_1m_tokens=0.05,
-                        output_cost_per_1m_tokens=0.08,
-                        active=True,
-                    ),
-                    ProviderCost(
-                        provider="deepseek",
-                        input_cost_per_1m_tokens=0.28,
-                        output_cost_per_1m_tokens=1.10,
-                        active=True,
-                    ),
+                    )
+                    for provider, (in_rate, out_rate) in DEFAULT_PROVIDER_RATES.items()
                 ]
                 session.add_all(provider_costs)
                 await session.commit()
