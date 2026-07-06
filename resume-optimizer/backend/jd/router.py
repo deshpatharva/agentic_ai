@@ -127,10 +127,28 @@ _MAX_JD_FETCH_BYTES = 5 * 1024 * 1024  # 5 MB cap on fetched HTML
 _MAX_REDIRECTS = 5
 
 
-def _assert_public_url(url: str) -> None:
-    """Reject non-http(s) schemes and hosts that resolve to private/loopback/
-    link-local address space, so an attacker can't use JD fetching for SSRF
-    against the VNet, cloud metadata (169.254.169.254), or localhost.
+_BLOCKED_EXTRA_NETS = [
+    ipaddress.ip_network("100.64.0.0/10"),  # CGNAT (RFC 6598) — not flagged is_private
+]
+
+
+def _ip_is_blocked(ip) -> bool:
+    """True for any non-public address we must never connect to (SSRF targets)."""
+    if (ip.is_private or ip.is_loopback or ip.is_link_local
+            or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+        return True
+    return any(ip in net for net in _BLOCKED_EXTRA_NETS)
+
+
+def _resolve_public_ip(url: str) -> tuple[str, str, int]:
+    """Validate the scheme, resolve the host, and require EVERY resolved address
+    to be public. Returns (validated_ip, host, port).
+
+    The caller connects to the returned IP directly, which closes the DNS-rebinding
+    TOCTOU: with the old validate-then-let-httpx-re-resolve split, an attacker's
+    TTL-0 domain could answer this lookup with a public IP and httpx's connect-time
+    lookup with 169.254.169.254. Every A/AAAA record is checked so a hostname with
+    both a public and a private record is still rejected.
 
     Raises ValueError on any disallowed URL. Runs blocking DNS — call via to_thread.
     """
@@ -140,41 +158,62 @@ def _assert_public_url(url: str) -> None:
     host = parsed.hostname
     if not host:
         raise ValueError("URL has no host.")
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
 
-    # Resolve every A/AAAA record — reject if ANY is non-public (defends against
-    # a hostname with both a public and a private record).
     try:
-        infos = socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80), proto=socket.IPPROTO_TCP)
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
     except socket.gaierror as exc:
         raise ValueError(f"Could not resolve host: {exc}") from exc
 
+    validated_ip = None
     for info in infos:
         ip = ipaddress.ip_address(info[4][0])
-        if (ip.is_private or ip.is_loopback or ip.is_link_local
-                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+        if _ip_is_blocked(ip):
             raise ValueError("URL resolves to a non-public address.")
+        if validated_ip is None:
+            validated_ip = info[4][0]
+    if validated_ip is None:
+        raise ValueError("URL did not resolve to any address.")
+    return validated_ip, host, port
 
 
 async def _fetch_jd_from_url(url: str) -> str:
     """Fetch URL and extract job description text via HTML parsing.
 
-    Follows redirects manually, re-validating each hop against the SSRF allowlist,
-    so a public URL cannot redirect into private/internal address space. Streams
-    the body and stops at _MAX_JD_FETCH_BYTES so a huge response can't exhaust
-    memory (the body is never fully buffered before the cap is applied).
+    For each hop: resolve+validate the host, then connect to that exact validated
+    IP (Host header + TLS SNI keep the real hostname) so httpx cannot independently
+    re-resolve to a private address between the check and the connect (DNS
+    rebinding). Redirects are followed manually and every hop is re-validated.
+    Streams the body and stops at _MAX_JD_FETCH_BYTES so a huge response can't
+    exhaust memory.
     """
     current = url
-    headers = {"User-Agent": "Mozilla/5.0 ResumeOptimizer/1.0"}
-    # follow_redirects=False: we resolve each hop ourselves and re-validate its
-    # target before making the next request.
+    base_headers = {"User-Agent": "Mozilla/5.0 ResumeOptimizer/1.0"}
+    # follow_redirects=False: we resolve/validate/pin each hop ourselves.
     async with httpx.AsyncClient(follow_redirects=False, timeout=15.0) as client:
         for _ in range(_MAX_REDIRECTS + 1):
-            await asyncio.to_thread(_assert_public_url, current)
-            async with client.stream("GET", current, headers=headers) as response:
+            validated_ip, host, port = await asyncio.to_thread(_resolve_public_ip, current)
+
+            parsed = urlparse(current)
+            ip_host = f"[{validated_ip}]" if ":" in validated_ip else validated_ip
+            path = parsed.path or "/"
+            if parsed.query:
+                path = f"{path}?{parsed.query}"
+            conn_url = f"{parsed.scheme}://{ip_host}:{port}{path}"
+            host_header = host if port in (80, 443) else f"{host}:{port}"
+            headers = {**base_headers, "Host": host_header}
+
+            # Connect to the pinned IP; keep TLS SNI + cert verification on the real
+            # hostname via the sni_hostname extension (honoured by httpcore).
+            request = client.build_request(
+                "GET", conn_url, headers=headers, extensions={"sni_hostname": host}
+            )
+            response = await client.send(request, stream=True)
+            try:
                 if response.is_redirect and response.headers.get("location"):
-                    # Resolve relative redirects against the current URL; skip
-                    # reading the (empty) redirect body.
-                    current = str(response.url.join(response.headers["location"]))
+                    # Resolve relative redirects against the logical (hostname) URL,
+                    # not the pinned-IP URL, so the next hop keeps its real host.
+                    current = str(httpx.URL(current).join(response.headers["location"]))
                     continue
 
                 response.raise_for_status()
@@ -189,6 +228,8 @@ async def _fetch_jd_from_url(url: str) -> str:
                 html = body.decode(response.encoding or "utf-8", errors="replace")
                 # Parsing multi-MB job pages can stall other requests — off-thread it.
                 return await asyncio.to_thread(_extract_jd_text, html)
+            finally:
+                await response.aclose()
 
     raise ValueError("Too many redirects.")
 
