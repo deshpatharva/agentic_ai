@@ -29,13 +29,14 @@ from auth.dependencies import (
 from chat.agent import render_system_prompt, render_context_message
 from chat.state_machine import (
     resolve_phase, tools_for_phase, try_deterministic, fallback_response,
+    _get_recommended_profile, OPTIMIZING,
 )
 from chat.tools import LAUNCH_TOOL, SAVE_TOOL, DOWNLOAD_TOOL, EDIT_TOOL, parse_tool_calls, message_text
 from chat.dependencies import get_or_create_session, require_complete_profile
 from chat.handoff import fire_optimizer, save_profile_from_session, resolve_profile_download, apply_edit
 from chat.window import build_window
 from config import MODEL_CHAT_AGENT, CHAT_WINDOW_TURNS
-from db.models import ChatMessage, ChatSession, DailyUsageCounter, PlanLimit, User
+from db.models import ChatMessage, ChatSession, DailyUsageCounter, PipelineJob, JobStatus, PlanLimit, User
 from db.session import get_db, AsyncSessionLocal
 from llm import complete_with_tools, stream_chat
 
@@ -327,6 +328,51 @@ async def _increment_edit_counter(user_id: str, db: AsyncSession) -> None:
     await db.commit()
 
 
+async def _check_optimizer_job(session, ctx: dict, profiles_list: list[dict], db) -> dict | None:
+    """When the session believes a run is in flight, verify against the jobs table.
+
+    The session context only learns about SUCCESS (last_result is written by the
+    pipeline's success path) — a failed, reaped, or vanished job would otherwise
+    leave the session in OPTIMIZING forever, answering every message with the
+    canned "still running" line. Returns None while the job really is running;
+    otherwise mutates ctx to leave OPTIMIZING and returns the deterministic reply
+    for this turn (a retry proposal on failure, a dashboard pointer on
+    done-without-result).
+    """
+    job = await db.get(PipelineJob, session.job_id) if session.job_id else None
+    if job is not None and job.status in (JobStatus.running, JobStatus.pending):
+        return None
+
+    ctx.pop("_optimizer_launched", None)
+
+    if job is not None and job.status == JobStatus.done:
+        # Success landed on the job but last_result never reached this session
+        # (partial write) — don't fake results; point at the canonical copy.
+        return {
+            "action": "respond",
+            "response": "That optimization finished — check your dashboard for the results, "
+                        "or paste a new job description to run again.",
+        }
+
+    ctx["last_error"] = (job.error_message if job is not None else None) or "Optimizer run failed."
+    pid = str(job.profile_id) if (job is not None and job.profile_id) else None
+    profile = next((p for p in profiles_list if p["id"] == pid), None)
+    if profile is None:
+        profile = _get_recommended_profile(ctx, profiles_list)
+    if profile:
+        ctx["_pending_confirm"] = {"action": "launch", "profile_id": profile["id"]}
+        return {
+            "action": "respond",
+            "response": f'That optimization run failed and your quota was refunded. '
+                        f'Say yes to retry with your "{profile["label"]}" profile.',
+        }
+    return {
+        "action": "respond",
+        "response": "That optimization run failed and your quota was refunded. "
+                    "Paste a job description or pick a profile to try again.",
+    }
+
+
 async def _launch_and_stream(current_user, session, handoff_payload):
     """Reserve a run slot, fire the optimizer, and yield the handoff/error events.
 
@@ -457,10 +503,17 @@ async def optimize_chat(
     # the SAME dict object, so comparing them post-mutation would always be
     # equal; and SQLAlchemy only detects JSON-column changes on reassignment.
     ctx_snapshot = dict(ctx)
-    deterministic = try_deterministic(phase, body.message, ctx, profiles_list)
 
-    # try_deterministic mutates ctx (_pending_confirm set/consumed/dropped) —
-    # persist so the proposal survives to the next turn.
+    # If the session believes a run is in flight, reconcile with the jobs table
+    # first — a failed/reaped/vanished job must not brick the session.
+    recovery = None
+    if phase == OPTIMIZING:
+        recovery = await _check_optimizer_job(session, ctx, profiles_list, db)
+
+    deterministic = recovery or try_deterministic(phase, body.message, ctx, profiles_list)
+
+    # try_deterministic/_check_optimizer_job mutate ctx (_pending_confirm,
+    # _optimizer_launched, last_error) — persist so changes survive to next turn.
     if ctx != ctx_snapshot:
         session.context = dict(ctx)
         session.updated_at = datetime.now(timezone.utc)
