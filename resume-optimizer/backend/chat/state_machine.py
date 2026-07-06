@@ -59,13 +59,40 @@ def try_deterministic(
     """Try to handle the input without an LLM call.
 
     Returns {"action": str, "response": str, ...} or None if the LLM is needed.
+    MUTATES ctx: pops "_pending_confirm" at entry (proposals are single-shot) and
+    sets it when returning a confirmation proposal — the router persists ctx when
+    it changed.
 
     Actions:
       "respond"   — just send the response text, no tool call
       "launch"    — call fire_optimizer with profile_id
       "download"  — call resolve_profile_download with profile_id
+
+    Paid or irreversible actions are never fired from ambiguous free text: a bare
+    profile label PROPOSES the action into ctx["_pending_confirm"], and only an
+    explicit affirmation on the very next turn executes it. A bare "yes" with no
+    pending proposal falls through to the LLM, which sees the conversation and can
+    tell a launch confirmation from an answer to the gap question.
     """
     text = message.strip()
+
+    # ── Pending confirmation from the previous turn (single-shot) ────────────
+    pending = ctx.pop("_pending_confirm", None)
+    if pending and _AFFIRM_RE.match(text):
+        profile = next((p for p in profiles if p.get("id") == pending.get("profile_id")), None)
+        label = profile["label"] if profile else "selected"
+        if pending.get("action") == "launch" and not ctx.get("_optimizer_launched"):
+            return {
+                "action": "launch",
+                "profile_id": pending["profile_id"],
+                "response": f'Launching the optimizer with your "{label}" profile…',
+            }
+        if pending.get("action") == "download":
+            return {
+                "action": "download",
+                "profile_id": pending["profile_id"],
+                "response": f'Generating your "{label}" resume as a Word document…',
+            }
 
     # ── Profile picker click: 'Use my "Senior Data Engineer" profile' ────────
     picker_match = _PICKER_RE.match(text)
@@ -86,31 +113,30 @@ def try_deterministic(
             }
 
     # ── Bare profile label (e.g. user types "Senior Data Engineer") ──────────
+    # Free text is ambiguous ("data engineering" may answer the gap question), so
+    # a label match only PROPOSES — it must never consume quota by itself.
     if not _URL_RE.match(text) and len(text) < 120:
         profile = _find_profile_by_label(text, profiles)
         if profile:
             if phase == JD_CAPTURED and ctx.get("jd_text") and not ctx.get("_optimizer_launched"):
+                ctx["_pending_confirm"] = {"action": "launch", "profile_id": profile["id"]}
                 return {
-                    "action": "launch",
-                    "profile_id": profile["id"],
-                    "response": f'Great — launching the optimizer with your "{profile["label"]}" profile…',
+                    "action": "respond",
+                    "response": (
+                        f'Ready to optimize with your "{profile["label"]}" profile? '
+                        "Say yes to launch, or tell me anything to add first "
+                        "(real experience, tools, context)."
+                    ),
                 }
             if phase == AWAITING_JD:
+                ctx["_pending_confirm"] = {"action": "download", "profile_id": profile["id"]}
                 return {
-                    "action": "download",
-                    "profile_id": profile["id"],
-                    "response": f'Generating your "{profile["label"]}" resume as a Word document…',
+                    "action": "respond",
+                    "response": (
+                        f'Want me to export your "{profile["label"]}" profile as a '
+                        "Word document? Say yes to download."
+                    ),
                 }
-
-    # ── Affirmation ("yes", "go", "run it") with a recommended profile ───────
-    if phase == JD_CAPTURED and _AFFIRM_RE.match(text):
-        recommended = _get_recommended_profile(ctx, profiles)
-        if recommended and not ctx.get("_optimizer_launched"):
-            return {
-                "action": "launch",
-                "profile_id": recommended["id"],
-                "response": f'Launching the optimizer with your "{recommended["label"]}" profile…',
-            }
 
     # ── Optimizing phase — block input ───────────────────────────────────────
     if phase == OPTIMIZING:

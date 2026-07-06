@@ -453,7 +453,18 @@ async def optimize_chat(
         return EventSourceResponse(_setup_error_gen(), sep="\n")
 
     # ── 5. Try deterministic handling first ──────────────────────────────────
+    # Snapshot first: after JD resolution above, session.context and ctx can be
+    # the SAME dict object, so comparing them post-mutation would always be
+    # equal; and SQLAlchemy only detects JSON-column changes on reassignment.
+    ctx_snapshot = dict(ctx)
     deterministic = try_deterministic(phase, body.message, ctx, profiles_list)
+
+    # try_deterministic mutates ctx (_pending_confirm set/consumed/dropped) —
+    # persist so the proposal survives to the next turn.
+    if ctx != ctx_snapshot:
+        session.context = dict(ctx)
+        session.updated_at = datetime.now(timezone.utc)
+        await db.commit()
 
     async def event_generator():
         """SSE generator for LLM-driven turns (deterministic turns use _deterministic_generator)."""
