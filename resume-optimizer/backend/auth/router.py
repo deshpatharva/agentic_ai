@@ -206,7 +206,9 @@ async def update_profile(
         await db.rollback()
         raise HTTPException(status_code=400, detail="Email already in use.")
 
-    result = await db.execute(select(PlanLimit).where(PlanLimit.plan == user.plan.value))
+    # Limits reflect the enforced plan (pro during an active trial), matching
+    # login and GET /me — otherwise editing a profile snaps limits back to free.
+    result = await db.execute(select(PlanLimit).where(PlanLimit.plan == _effective_plan(user)))
     limits = result.scalar_one_or_none()
     return _user_dict(user, limits)
 

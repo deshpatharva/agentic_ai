@@ -165,6 +165,13 @@ _CONTACT_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+# Case-sensitive (NOT IGNORECASE): a capitalized locality + state followed by a
+# ZIP at the END of the line — catches 'Boston MA 02115' (no comma) and
+# 'Boston, Massachusetts 02139' (spelled-out state) that the comma+2-letter
+# branch above misses. Requiring two capitalized words and the ZIP as the final
+# token keeps prose like 'Reached 50000 users' / 'Grew ARR to 45000 in Q3' out.
+_LOCATION_ZIP_RE = re.compile(r"[A-Z][A-Za-z.]+,?\s+[A-Za-z.]+\s+\d{5}(?:-\d{4})?\s*$")
+
 
 def _is_contact_line(line: str, seq_idx: int) -> bool:
     """Return True if this line looks like contact information.
@@ -178,7 +185,7 @@ def _is_contact_line(line: str, seq_idx: int) -> bool:
     stripped = line.strip()
     if not stripped:
         return False
-    return bool(_CONTACT_PATTERNS.search(stripped))
+    return bool(_CONTACT_PATTERNS.search(stripped) or _LOCATION_ZIP_RE.search(stripped))
 
 
 def generate_docx(resume_text: str, output_path: str) -> str:
