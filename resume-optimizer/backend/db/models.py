@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from enum import Enum as PyEnum
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, Enum, Float, ForeignKey,
+    Boolean, Column, Date, DateTime, Enum, Float, ForeignKey,
     Index, Integer, JSON, String, Text, text, Uuid, UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -103,6 +103,10 @@ class PipelineJob(Base):
     # Set exactly once when the run's reserved quota slot is returned, so the
     # failing task and the stuck-job reaper can't both refund the same run.
     quota_refunded    = Column(Boolean, default=False, nullable=False)
+    # Calendar date the run's quota slot was reserved (date.today() at claim
+    # time). Refunds decrement this exact daily_usage_counters row; NULL means
+    # pre-0026 legacy — refund falls back to created_at.
+    quota_reserved_on = Column(Date, nullable=True)
 
     events = relationship("PipelineEvent", back_populates="job", cascade="all, delete-orphan")
 
