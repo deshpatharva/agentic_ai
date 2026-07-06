@@ -35,7 +35,7 @@ def test_migrations_create_all_tables(tmp_path, monkeypatch):
     }
     conn.close()
 
-    assert tables == {"users", "resumes", "pipeline_jobs", "pipeline_events", "plan_limits", "promo_codes", "user_promo_redemptions", "provider_costs", "daily_usage_counters", "token_blocklist", "profiles", "jd_scrape_cache"}
+    assert tables == {"users", "resumes", "pipeline_jobs", "pipeline_events", "plan_limits", "promo_codes", "user_promo_redemptions", "provider_costs", "daily_usage_counters", "token_blocklist", "profiles", "jd_scrape_cache", "chat_sessions", "chat_messages", "llm_call_log"}
 
 
 def test_migrations_idempotent(tmp_path, monkeypatch):
