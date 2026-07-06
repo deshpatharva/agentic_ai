@@ -22,7 +22,10 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
-from auth.dependencies import get_current_user, reserve_run_quota, refund_run_quota
+from auth.dependencies import (
+    get_current_user, reserve_run_quota, refund_run_quota,
+    reserve_edit_quota, refund_edit_quota,
+)
 from chat.agent import render_system_prompt, render_context_message
 from chat.state_machine import (
     resolve_phase, tools_for_phase, try_deterministic, fallback_response,
@@ -324,6 +327,42 @@ async def _increment_edit_counter(user_id: str, db: AsyncSession) -> None:
     await db.commit()
 
 
+async def _launch_and_stream(current_user, session, handoff_payload):
+    """Reserve a run slot, fire the optimizer, and yield the handoff/error events.
+
+    The reserved slot is refunded UNLESS the pipeline task actually started, so a
+    failure of any kind — a non-HTTP error from fire_optimizer, or a client
+    disconnect (CancelledError/GeneratorExit) between reserve and dispatch — can't
+    permanently consume the user's daily run. Shared by the LLM-tool and
+    deterministic launch paths so the reserve/refund contract lives in one place.
+    """
+    async with AsyncSessionLocal() as qdb:
+        reserved_ok = await reserve_run_quota(current_user, qdb)
+    if not reserved_ok:
+        yield {"event": "error", "data": json.dumps({"message": "You've reached your daily limit. Upgrade to Pro for more runs/day."})}
+        return
+
+    slot_held = True
+    try:
+        job_id, sse_token = await fire_optimizer(current_user, session, handoff_payload)
+        slot_held = False  # the pipeline task now owns the reservation
+        async with AsyncSessionLocal() as wdb:
+            launched_sess = await wdb.scalar(select(ChatSession).where(ChatSession.id == session.id))
+            if launched_sess:
+                _ctx = dict(launched_sess.context or {})
+                _ctx["_optimizer_launched"] = True
+                launched_sess.context = _ctx
+                await wdb.commit()
+        yield {"event": "handoff", "data": json.dumps({"job_id": job_id, "sse_token": sse_token})}
+    except Exception as exc:
+        detail = exc.detail if isinstance(exc, HTTPException) else "Couldn't start the optimizer. Please try again."
+        yield {"event": "error", "data": json.dumps({"message": str(detail)})}
+    finally:
+        if slot_held:
+            async with AsyncSessionLocal() as qdb:
+                await refund_run_quota(str(current_user.id), qdb)
+
+
 # ── Main chat endpoint ────────────────────────────────────────────────────────
 
 
@@ -525,36 +564,13 @@ async def optimize_chat(
                 yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
                 return
 
-            # Atomically reserve a run slot (own session — the request db may be
-            # closed by the time this streaming generator runs).
-            async with AsyncSessionLocal() as qdb:
-                reserved = await reserve_run_quota(current_user, qdb)
-            if not reserved:
-                yield {"event": "error", "data": json.dumps({"message": "You've reached your daily limit. Upgrade to Pro for more runs/day."})}
-                yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
-                return
-
             args = launch["arguments"]
             handoff_payload = {
                 "profile_id": str(args.get("profile_id", "") or ""),
                 "instruction": str(args.get("added_context", "") or ""),
             }
-            try:
-                job_id, sse_token = await fire_optimizer(current_user, session, handoff_payload)
-                async with AsyncSessionLocal() as wdb:
-                    from sqlalchemy import select as _sel
-                    launched_sess = await wdb.scalar(_sel(ChatSession).where(ChatSession.id == session.id))
-                    if launched_sess:
-                        _ctx = dict(launched_sess.context or {})
-                        _ctx["_optimizer_launched"] = True
-                        launched_sess.context = _ctx
-                        await wdb.commit()
-                yield {"event": "handoff", "data": json.dumps({"job_id": job_id, "sse_token": sse_token})}
-            except HTTPException as exc:
-                # The pipeline task never started — return the reserved slot.
-                async with AsyncSessionLocal() as qdb:
-                    await refund_run_quota(str(current_user.id), qdb)
-                yield {"event": "error", "data": json.dumps({"message": str(exc.detail)})}
+            async for _ev in _launch_and_stream(current_user, session, handoff_payload):
+                yield _ev
 
         # ── Download ───────────────────────────────────────────────────────
         elif download:
@@ -575,23 +591,29 @@ async def optimize_chat(
 
         # ── Edit ───────────────────────────────────────────────────────────
         elif edit:
-            try:
-                await _check_edit_quota(current_user, db)
-            except HTTPException as exc:
-                detail = exc.detail
-                msg = (detail.get("upgrade_message", "Daily edit limit reached.")
-                       if isinstance(detail, dict) else str(detail))
-                yield {"event": "error", "data": json.dumps({"message": msg})}
+            # Reserve the edit slot atomically up-front (same race the run path
+            # had): concurrent edits can't all pass a read-only used<limit check.
+            async with AsyncSessionLocal() as qdb:
+                edit_reserved = await reserve_edit_quota(current_user, qdb)
+            if not edit_reserved:
+                yield {"event": "error", "data": json.dumps({"message": "You've reached your daily edit limit. Upgrade to Pro for more edits."})}
                 yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
                 return
+            edit_held = True
             try:
                 edit_result = await apply_edit(current_user, session, edit["arguments"])
-                async with AsyncSessionLocal() as wdb:
-                    await _increment_edit_counter(str(current_user.id), wdb)
+                edit_held = False  # edit succeeded — keep the reservation
                 yield {"event": "resume_edited", "data": json.dumps(edit_result)}
             except HTTPException as exc:
                 msg = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
                 yield {"event": "error", "data": json.dumps({"message": msg})}
+            except Exception:
+                yield {"event": "error", "data": json.dumps({"message": "Couldn't apply the edit. Please try again."})}
+            finally:
+                # Refund unless the edit succeeded — a failed edit must not burn quota.
+                if edit_held:
+                    async with AsyncSessionLocal() as qdb:
+                        await refund_edit_quota(str(current_user.id), qdb)
 
         yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
 
@@ -623,32 +645,12 @@ async def optimize_chat(
                 yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
                 return
 
-            async with AsyncSessionLocal() as qdb:
-                reserved = await reserve_run_quota(current_user, qdb)
-            if not reserved:
-                yield {"event": "error", "data": json.dumps({"message": "You've reached your daily limit. Upgrade to Pro for more runs/day."})}
-                yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
-                return
-
             handoff_payload = {
                 "profile_id": deterministic["profile_id"],
                 "instruction": "",
             }
-            try:
-                job_id, sse_token = await fire_optimizer(current_user, session, handoff_payload)
-                async with AsyncSessionLocal() as wdb:
-                    from sqlalchemy import select as _sel
-                    launched_sess = await wdb.scalar(_sel(ChatSession).where(ChatSession.id == session.id))
-                    if launched_sess:
-                        _ctx = dict(launched_sess.context or {})
-                        _ctx["_optimizer_launched"] = True
-                        launched_sess.context = _ctx
-                        await wdb.commit()
-                yield {"event": "handoff", "data": json.dumps({"job_id": job_id, "sse_token": sse_token})}
-            except HTTPException as exc:
-                async with AsyncSessionLocal() as qdb:
-                    await refund_run_quota(str(current_user.id), qdb)
-                yield {"event": "error", "data": json.dumps({"message": str(exc.detail)})}
+            async for _ev in _launch_and_stream(current_user, session, handoff_payload):
+                yield _ev
 
         elif action == "download":
             try:

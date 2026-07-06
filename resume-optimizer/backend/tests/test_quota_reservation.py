@@ -144,13 +144,14 @@ async def test_reaper_refunds_quota_for_killed_runs(db_tables):
         assert await reserve_run_quota(user, db) is True
     assert await _runs(user.id) == 1
 
-    # A running job whose worker died: updated_at older than the stuck cutoff.
+    # A running job whose worker died: created/reserved today (matching the
+    # reservation above), but updated_at older than the stuck cutoff so it reaps.
     stale = datetime.now(timezone.utc) - timedelta(hours=1)
     async with AsyncSessionLocal() as db:
         db.add(PipelineJob(
             user_id=user.id, status=JobStatus.running,
             original_filename="r", resume_text="x", jd_text="y",
-            created_at=stale, updated_at=stale,
+            created_at=datetime.now(timezone.utc), updated_at=stale,
         ))
         await db.commit()
 

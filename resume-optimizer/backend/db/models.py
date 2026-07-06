@@ -100,6 +100,9 @@ class PipelineJob(Base):
     error_message     = Column(String(2000), nullable=True)
     created_at        = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at        = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    # Set exactly once when the run's reserved quota slot is returned, so the
+    # failing task and the stuck-job reaper can't both refund the same run.
+    quota_refunded    = Column(Boolean, default=False, nullable=False)
 
     events = relationship("PipelineEvent", back_populates="job", cascade="all, delete-orphan")
 

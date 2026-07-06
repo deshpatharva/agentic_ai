@@ -67,7 +67,7 @@ from db.session import get_db, init_db, AsyncSessionLocal
 from db.models import JobStatus, PipelineEvent, PipelineJob, Profile, Resume, User, TokenBlocklist
 from utils.profile_utils import sections_to_text as _sections_to_text
 from auth.router import router as auth_router, user_router
-from auth.dependencies import decode_token_checked, decode_sse_token, get_current_user, check_plan_limit, _effective_plan, reserve_run_quota, refund_run_quota
+from auth.dependencies import decode_token_checked, decode_sse_token, get_current_user, _effective_plan, reserve_run_quota, refund_run_quota, _counter_date_for
 from dashboard.router import router as dashboard_router
 from admin.router import router as admin_router
 from profiles.router import router as profiles_router, profile_ops as profile_ops_router
@@ -98,6 +98,56 @@ async def _cleanup_events():
 _logger = logging.getLogger(__name__)
 
 
+async def _refund_job_quota(job_id, user_id, created_at, db: AsyncSession) -> None:
+    """Idempotently refund the run reserved for a job.
+
+    Both the failing pipeline task and the stuck-job reaper can reach the same
+    job; the atomic quota_refunded flip ensures exactly one of them decrements
+    the counter. The refund is attributed to the job's *submission* date so a run
+    that crosses local midnight returns the slot it actually took.
+    """
+    result = await db.execute(
+        update(PipelineJob)
+        .where(PipelineJob.id == job_id, PipelineJob.quota_refunded.is_(False))
+        .values(quota_refunded=True)
+    )
+    if result.rowcount != 1:
+        await db.commit()  # already refunded by the other path — nothing to do
+        return
+    if user_id is not None:
+        await refund_run_quota(str(user_id), db, run_date=_counter_date_for(created_at))
+    else:
+        await db.commit()
+
+
+async def _claim_job_for_run(job_id, jd_text, resume_override, profile_id_val, db: AsyncSession) -> bool:
+    """Atomically transition a pending/error job to running.
+
+    Returns True only for the caller that performs the transition, so two
+    concurrent submissions of the same job can't both dispatch the pipeline or
+    reserve two quota slots. 'running'/'done' jobs are left untouched.
+    """
+    values = {
+        "status": JobStatus.running,
+        "jd_text": jd_text,
+        "updated_at": datetime.now(timezone.utc),
+    }
+    if profile_id_val is not None:
+        values["profile_id"] = profile_id_val
+    if resume_override is not None:
+        values["resume_text"] = resume_override
+    result = await db.execute(
+        update(PipelineJob)
+        .where(
+            PipelineJob.id == job_id,
+            PipelineJob.status.in_([JobStatus.pending, JobStatus.error]),
+        )
+        .values(**values)
+    )
+    await db.commit()
+    return result.rowcount == 1
+
+
 async def _reap_once(db: AsyncSession) -> list[str]:
     """Find stuck running jobs and mark them error. Returns list of reaped IDs."""
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=STUCK_JOB_TIMEOUT_MINUTES)
@@ -112,26 +162,26 @@ async def _reap_once(db: AsyncSession) -> list[str]:
         return []
     now = datetime.now(timezone.utc)
     ids = []
-    reaped_user_ids = []
+    # Capture identity BEFORE commit — the ORM rows expire on commit and touching
+    # them afterward would trigger a lazy (sync) refresh inside async code.
+    reaped = []
     for job in stuck:
         job.status = JobStatus.error
         job.error_message = "Job timed out — worker may have restarted."
         job.updated_at = now
         ids.append(str(job.id))
-        if job.user_id is not None:
-            reaped_user_ids.append(job.user_id)
+        reaped.append((job.id, job.user_id, job.created_at))
     await db.commit()
 
-    # Refund the run each reaped job reserved at submission. A run killed by a
-    # worker restart never reaches _run_pipeline_task's own refund path, so
-    # without this a deploy would permanently consume the user's quota. Reaped
-    # jobs are still 'running', so a task that already failed and refunded (now
-    # 'error') is never seen here — no double refund.
-    for uid in reaped_user_ids:
+    # Refund each reaped run. A run killed by a worker restart never reaches the
+    # task's own refund path, so without this a deploy would permanently consume
+    # the user's quota. _refund_job_quota is idempotent (quota_refunded flag), so
+    # a slow-but-alive task that later also refunds this job can't double-refund.
+    for job_id, user_id, created_at in reaped:
         try:
-            await refund_run_quota(uid, db)
+            await _refund_job_quota(job_id, user_id, created_at, db)
         except Exception:
-            _logger.exception("reaper: quota refund failed for user %s", uid)
+            _logger.exception("reaper: quota refund failed for job %s", job_id)
     return ids
 
 
@@ -308,7 +358,7 @@ class ScrapeJobsRequest(BaseModel):
 async def run_pipeline(
     request: RunPipelineRequest,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(check_plan_limit),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -326,24 +376,44 @@ async def run_pipeline(
     if not job or str(job.user_id) != str(current_user.id):
         raise HTTPException(status_code=404, detail="Job not found. Upload a resume first.")
 
-    # Reject resubmission of a job that is already in flight or finished — otherwise
-    # it restarts the pipeline AND reserves a second quota slot for the same job.
-    # 'pending' (freshly uploaded) and 'error' (retry after failure) are allowed.
-    if job.status in (JobStatus.running, JobStatus.done):
+    if not request.jd_text.strip():
+        raise HTTPException(status_code=400, detail="jd_text cannot be empty.")
+
+    # Resolve an optional profile override before claiming the job.
+    resume_override = None
+    profile_id_val = None
+    if request.profile_id:
+        try:
+            pid = uuid.UUID(request.profile_id)
+        except ValueError:
+            pid = None
+        if pid is not None:
+            prof = await db.scalar(
+                select(Profile).where(Profile.id == pid, Profile.user_id == current_user.id)
+            )
+            if prof:
+                profile_id_val = prof.id
+                if prof.sections:
+                    resume_override = _sections_to_text(prof.sections)
+
+    # Atomically claim the job (pending/error -> running). Exactly one concurrent
+    # submission wins, so a double-click can't dispatch the pipeline twice or
+    # reserve two quota slots for one job; 'running'/'done' are rejected with 409.
+    claimed = await _claim_job_for_run(job_uuid, request.jd_text, resume_override, profile_id_val, db)
+    if not claimed:
         raise HTTPException(
             status_code=409,
             detail="This job is already running or completed. Upload a new resume to optimize again.",
         )
 
-    if not request.jd_text.strip():
-        raise HTTPException(status_code=400, detail="jd_text cannot be empty.")
-
-    # Atomically reserve a run slot BEFORE dispatching. check_plan_limit above is a
-    # fast pre-check, but only this atomic reserve closes the concurrency window
-    # where many parallel submissions each pass the read-only check at used<limit
-    # and every one burns real LLM spend. Refunded in _run_pipeline_task on failure
-    # so failed runs stay free.
+    # Reserve the run slot only after winning the claim — the single authoritative
+    # limit check. On limit, revert the job to pending so a retry works, and return
+    # the one canonical 429.
     if not await reserve_run_quota(current_user, db):
+        await db.execute(
+            update(PipelineJob).where(PipelineJob.id == job_uuid).values(status=JobStatus.pending)
+        )
+        await db.commit()
         raise HTTPException(
             status_code=429,
             detail={
@@ -352,25 +422,6 @@ async def run_pipeline(
                 "upgrade_message": "You've reached your daily limit. Upgrade to Pro for more runs/day.",
             },
         )
-
-    if request.profile_id:
-        try:
-            pid = uuid.UUID(request.profile_id)
-            prof_result = await db.execute(
-                select(Profile).where(Profile.id == pid, Profile.user_id == current_user.id)
-            )
-            prof = prof_result.scalar_one_or_none()
-            if prof and prof.sections:
-                job.resume_text = _sections_to_text(prof.sections)
-            if prof:
-                job.profile_id = prof.id
-        except ValueError:
-            pass
-
-    job.jd_text = request.jd_text
-    job.status = JobStatus.running
-    job.updated_at = datetime.now(timezone.utc)
-    await db.commit()
 
     background_tasks.add_task(_run_pipeline_task, str(job_uuid), str(current_user.id))
 
@@ -1228,11 +1279,14 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
 
     except Exception as e:
         await update_job(status=JobStatus.error, error_message=str(e))
-        # Refund the run reserved at submission — failed runs must not consume quota.
-        if user_id:
-            try:
-                async with AsyncSessionLocal() as db:
-                    await refund_run_quota(user_id, db)
-            except Exception:
-                _logger.exception("job=%s: quota refund failed", job_id)
+        # Refund the run reserved at submission — failed runs must not consume
+        # quota. Idempotent per job, so if the reaper already refunded this run
+        # (it outlived the stuck-job timeout) this is a no-op.
+        try:
+            async with AsyncSessionLocal() as db:
+                job_row = await db.get(PipelineJob, uuid.UUID(job_id))
+                if job_row is not None:
+                    await _refund_job_quota(job_row.id, job_row.user_id, job_row.created_at, db)
+        except Exception:
+            _logger.exception("job=%s: quota refund failed", job_id)
         await emit({"type": "error", "message": f"Pipeline error: {str(e)}"})
