@@ -63,6 +63,7 @@ async def run_debate(
           - cost_usd (float): cumulative cost
           - iterations (int): number of complete_with_tools calls made
           - flagged (list): fabrication-guard gaps on the final draft
+          - honest_gaps (list): JD asks recorded as impossible to truthfully add
     """
     # Tag all LlmCallLog rows from this driver as "pro_debate"
     set_call_kind("pro_debate")
@@ -187,6 +188,12 @@ async def run_debate(
             _logger.info("debate_loop: optimizer made 0 tool calls in round %d — skipping reviewer", round_idx + 1)
             break
 
+        # Final round: a re-score would only feed a reviewer whose objection can
+        # never be acted on -- skip both (spec 5b; measured ~11% of pro-job cost).
+        if round_idx >= DEBATE_MAX_ROUNDS - 1:
+            _logger.info("debate_loop: final round %d complete -- skipping re-score and reviewer", round_idx + 1)
+            break
+
         # ── Re-score the draft so round N+1 (and the reviewer) see fresh scores ──
         draft = state.reassemble()
         try:
@@ -203,25 +210,23 @@ async def run_debate(
             _logger.warning("debate_loop: re-score failed (%s) — keeping prior scores", exc)
 
         # ── Reviewer single-pass critique ──────────────────────────────────
-        overall = current_scores.get("overall", 0)
-
         reviewer_prompt = (
-            "You are a skeptical resume reviewer. The optimizer just revised this resume "
-            "and can run more tools to address objections.\n\n"
+            "You are a skeptical resume reviewer. The optimizer revised this resume and can run more\n"
+            "tools, but it can only make PRESENTATION fixes to existing, verified content:\n"
+            "  - keyword_inject: weave pre-verified keywords into existing sentences\n"
+            "  - bullet_strengthen: stronger verbs on existing bullets\n"
+            "  - skills_rewrite: sync the skills section with skills evidenced elsewhere in the resume\n"
+            "  - bullets_reorder: reorder existing bullets by JD relevance\n\n"
+            f"{_build_scores_context(current_scores, state.capabilities)}\n\n"
+            "HONEST GAPS already identified (impossible to fix truthfully -- do NOT raise these):\n"
+            f"{', '.join(state.honest_gaps()) or 'none'}\n\n"
             f"CURRENT RESUME DRAFT:\n{draft}\n\n"
-            f"SCORES: overall={overall}\n\n"
-            "The optimizer can only fix issues with these tools:\n"
-            "  - keyword_inject: add missing ATS keywords\n"
-            "  - bullet_strengthen: rewrite weak bullets with stronger verbs/metrics\n"
-            "  - skills_rewrite: add missing skills to the skills section\n"
-            "  - bullets_reorder: reorder bullets by JD relevance\n\n"
-            "Raise ONE objection that is fixable by these tools. Do NOT raise objections about:\n"
-            "  - tone, density, robotic language, metric inflation, wording — a dedicated humanize "
-            "stage runs after the debate completes and handles all language polish\n"
-            "  - employment gaps, timeline, dates, missing certifications, lack of specific projects, "
-            "or anything requiring new factual information — the optimizer cannot fabricate facts\n\n"
-            "If you have no more fixable objections, respond EXACTLY: No objections.\n"
-            "Otherwise respond EXACTLY: OBJECTION: <one fixable issue, 20 words or less>"
+            "Raise ONE objection that is fixable purely by presentation changes to existing content.\n"
+            "Do NOT raise objections about: missing skills, keywords, metrics, certifications, or\n"
+            "experience the resume does not contain; tone or wording (a humanize stage follows);\n"
+            "employment gaps or dates.\n"
+            "If you have no fixable objection, respond EXACTLY: No objections.\n"
+            "Otherwise respond EXACTLY: OBJECTION: <one presentation issue, 20 words or less>"
         )
 
         try:
@@ -261,13 +266,6 @@ async def run_debate(
         # Store objection to feed back next round
         last_objection = reviewer_text
 
-        # If this is the last round, don't iterate further
-        if round_idx >= DEBATE_MAX_ROUNDS - 1:
-            _logger.info(
-                "debate_loop: max rounds (%d) exhausted — exiting with last draft",
-                DEBATE_MAX_ROUNDS,
-            )
-
     # ── Fabrication guard on final draft ──────────────────────────────────────
     final_draft = state.reassemble()
     # CPU-bound (spaCy NER + difflib) — offload so concurrent requests aren't stalled.
@@ -283,4 +281,5 @@ async def run_debate(
         "cost_usd":      state.cost_usd,
         "iterations":    iterations,
         "flagged":       list(guard.gaps),
+        "honest_gaps":   state.honest_gaps(),
     }
