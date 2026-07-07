@@ -185,6 +185,19 @@ def _contains_drop_marker(n: str) -> bool:
     return any(w in _COMPOUND_CLAIM_MARKERS for w in _WORD_RE.findall(n))
 
 
+def _is_pure_marker_phrase(n: str) -> bool:
+    """True if n carries no substantive content of its own -- either the whole
+    (possibly hyphenated) string is a seniority stopword, or every word in it
+    is a seniority/marker word. Such phrases are never evidenced, even on an
+    exact capability match, since a bare marker word reaching `capabilities`
+    is most likely resume-parsing noise, not an intentional self-description."""
+    if n in _SENIORITY_STOPWORDS:
+        return True
+    words = _WORD_RE.findall(n)
+    return bool(words) and all(w in _SENIORITY_STOPWORDS or w in _COMPOUND_CLAIM_MARKERS
+                               for w in words)
+
+
 def _norm_term(s: str) -> str:
     s = re.sub(r"\([^)]*\)", " ", s.lower())          # strip parentheticals
     return re.sub(r"\s+", " ", s).strip(" .")
@@ -193,18 +206,21 @@ def _norm_term(s: str) -> str:
 def split_evidenced(items, capabilities) -> tuple:
     """Partition JD asks into (evidenced, gaps) against the capabilities allowlist.
 
-    Seniority/role adjectives are dropped from BOTH lists -- titles are never
-    keyword-injectable and are not closable gaps either (spec 2b).
+    Seniority/role/credential-only phrases are never evidenced -- dropped from
+    BOTH lists, not a closable gap either (spec 2b). A multi-word phrase that
+    contains marker words alongside substantive content (e.g. "Senior Python
+    Developer") IS evidenced when it exact-matches a capability captured
+    verbatim from the resume, since citing it back is not a new claim.
     """
     evidenced, gaps = [], []
     for item in items:
         n = _norm_term(item)
-        if not n:
+        if not n or _is_pure_marker_phrase(n):
             continue
-        if n in capabilities:            # exact match short-circuits first
+        if n in capabilities:
             evidenced.append(item)
             continue
-        if n in _SENIORITY_STOPWORDS or _contains_drop_marker(n):
+        if _contains_drop_marker(n):
             continue
         hit = any(
             re.search(r"(?<![\w+#])" + re.escape(c) + r"(?![\w+#])", n)

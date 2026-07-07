@@ -526,6 +526,25 @@ def test_split_evidenced_exact_match_short_circuits_marker_guard():
     assert gaps == []
 
 
+def test_split_evidenced_pure_marker_phrase_never_evidenced_even_on_exact_match():
+    from agents.tools import split_evidenced
+
+    # Bare marker/stopword words: never evidenced, even as an exact capability
+    # match -- most likely resume-parsing noise, not a real self-description.
+    assert split_evidenced(["Senior"], frozenset({"senior"})) == ([], [])
+    assert split_evidenced(["Staff"], frozenset({"staff"})) == ([], [])
+    assert split_evidenced(["Manager"], frozenset({"manager"})) == ([], [])
+    assert split_evidenced(["Senior Manager"], frozenset({"senior manager"})) == ([], [])
+
+    # Substantive multi-word exact match: DELIBERATELY still evidenced, even
+    # though it contains marker words -- it was captured verbatim from the
+    # candidate's own resume, so citing it back is not a new claim.
+    caps = frozenset({"senior python developer"})
+    evidenced, gaps = split_evidenced(["Senior Python Developer"], caps)
+    assert evidenced == ["Senior Python Developer"]
+    assert gaps == []
+
+
 async def test_keyword_inject_filters_unevidenced_and_records_gaps():
     from agents import tools
 
