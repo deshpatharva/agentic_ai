@@ -25,6 +25,7 @@ const NotFound         = lazy(() => import('./pages/NotFound'));
 const AdminLayout      = lazy(() => import('./pages/admin/AdminLayout'));
 const AdminDashboard   = lazy(() => import('./pages/admin/AdminDashboard'));
 const PipelineRuns     = lazy(() => import('./pages/admin/PipelineRuns'));
+const Observability    = lazy(() => import('./pages/admin/Observability'));
 const UserList         = lazy(() => import('./pages/admin/UserList'));
 const UserDetail       = lazy(() => import('./pages/admin/UserDetail'));
 const AdminAnalytics   = lazy(() => import('./pages/admin/Analytics'));
@@ -78,6 +79,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
             <Route path="users/:id" element={<UserDetail />} />
             <Route path="promo-codes" element={<PromoCodes />} />
             <Route path="analytics" element={<AdminAnalytics />} />
+            <Route path="observability" element={<Observability />} />
           </Route>
 
           <Route path="*" element={<NotFound />} />
