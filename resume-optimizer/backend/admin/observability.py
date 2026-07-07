@@ -145,3 +145,123 @@ async def observability_series(
             for k, b in sorted(buckets.items())
         ],
     }
+
+
+@router.get("/latency")
+async def observability_latency(
+    days: int = Query(7, ge=1, le=90),
+    _: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Per-model p50/p95/p99 for latency_ms and ttft_ms (successful calls)."""
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    rows, capped = await _window_rows(
+        db, since,
+        (LlmCallLog.model, LlmCallLog.status, LlmCallLog.latency_ms, LlmCallLog.ttft_ms))
+    per_model: dict[str, dict] = {}
+    for r in rows:
+        if r.status != "ok":
+            continue
+        m = per_model.setdefault(r.model, {"lats": [], "ttfts": [], "calls": 0})
+        m["calls"] += 1
+        if r.latency_ms is not None:
+            m["lats"].append(r.latency_ms)
+        if r.ttft_ms is not None:
+            m["ttfts"].append(r.ttft_ms)
+    models = []
+    for name, m in sorted(per_model.items(), key=lambda kv: -kv[1]["calls"]):
+        lp, tp = _percentiles(m["lats"]), _percentiles(m["ttfts"])
+        models.append({
+            "model": name, "calls": m["calls"],
+            "latency_ms": {"p50": lp[50], "p95": lp[95], "p99": lp[99]},
+            "ttft_ms": {"p50": tp[50], "p95": tp[95], "p99": tp[99]},
+        })
+    return {"window_days": days, "capped": capped, "models": models}
+
+
+@router.get("/errors")
+async def observability_errors(
+    days: int = Query(7, ge=1, le=90),
+    _: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Error breakdown by type x provider x model, plus the 50 newest errors."""
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    breakdown = (await db.execute(
+        select(
+            LlmCallLog.error_type, LlmCallLog.provider, LlmCallLog.model,
+            func.count().label("count"),
+            func.max(LlmCallLog.created_at).label("last_seen"),
+            func.max(LlmCallLog.error_code).label("sample_error_code"),
+        )
+        .where(LlmCallLog.created_at >= since, LlmCallLog.status == "error")
+        .group_by(LlmCallLog.error_type, LlmCallLog.provider, LlmCallLog.model)
+        .order_by(func.count().desc())
+    )).all()
+    recent = (await db.execute(
+        select(LlmCallLog)
+        .where(LlmCallLog.created_at >= since, LlmCallLog.status == "error")
+        .order_by(LlmCallLog.created_at.desc())
+        .limit(50)
+    )).scalars().all()
+    return {
+        "window_days": days,
+        "breakdown": [
+            {"error_type": r.error_type or "unknown", "provider": r.provider,
+             "model": r.model, "count": int(r.count), "last_seen": str(r.last_seen),
+             "sample_error_code": r.sample_error_code}
+            for r in breakdown
+        ],
+        "recent": [
+            {"created_at": str(r.created_at), "model": r.model, "provider": r.provider,
+             "call_kind": r.call_kind, "error_type": r.error_type, "error_code": r.error_code,
+             "attempt": r.attempt, "latency_ms": r.latency_ms,
+             "trace_id": r.trace_id, "job_id": str(r.job_id) if r.job_id else None}
+            for r in recent
+        ],
+    }
+
+
+@router.get("/trace")
+async def observability_trace(
+    trace_id: str | None = Query(None),
+    job_id: str | None = Query(None),
+    _: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Waterfall: ordered LLM calls for one trace or pipeline job."""
+    if bool(trace_id) == bool(job_id):
+        raise HTTPException(status_code=422, detail="Pass exactly one of trace_id or job_id.")
+    q = select(LlmCallLog).order_by(LlmCallLog.created_at, LlmCallLog.id)
+    job = None
+    if trace_id:
+        q = q.where(LlmCallLog.trace_id == trace_id)
+    else:
+        try:
+            jid = _uuid.UUID(job_id)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="job_id is not a valid UUID.")
+        q = q.where(LlmCallLog.job_id == jid)
+        job = await db.get(PipelineJob, jid)
+    calls = (await db.execute(q.limit(500))).scalars().all()
+    if not calls:
+        raise HTTPException(status_code=404, detail="No LLM calls found for that id.")
+
+    def _aware(ts):
+        return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+
+    t0 = _aware(calls[0].created_at)
+    return {
+        "trace_id": trace_id or calls[0].trace_id,
+        "job": ({"status": job.status.value, "error_message": job.error_message,
+                 "created_at": str(job.created_at)} if job is not None else None),
+        "calls": [
+            {"offset_ms": int((_aware(c.created_at) - t0).total_seconds() * 1000),
+             "latency_ms": c.latency_ms, "call_kind": c.call_kind, "model": c.model,
+             "status": c.status, "error_type": c.error_type, "finish_reason": c.finish_reason,
+             "input_tokens": c.input_tokens, "output_tokens": c.output_tokens,
+             "cached_input_tokens": c.cached_input_tokens, "cost_usd": c.cost_usd,
+             "attempt": c.attempt}
+            for c in calls
+        ],
+    }

@@ -129,3 +129,60 @@ def test_grade_boundaries():
     assert _grade(0.02, 0.02, 0.05) == "warn"
     assert _grade(0.05, 0.02, 0.05) == "crit"
     assert _grade(None, 0.02, 0.05) == "ok"
+
+
+async def test_latency_percentiles_per_model(admin_client):
+    await _seed([_row(model="groq/fast", latency=100) for _ in range(9)]
+                + [_row(model="groq/fast", latency=1000)])
+    r = await admin_client.get("/admin/observability/latency", params={"days": 7})
+    body = r.json()
+    fast = next(m for m in body["models"] if m["model"] == "groq/fast")
+    assert fast["calls"] >= 10
+    assert fast["latency_ms"]["p50"] == 100.0
+    assert fast["latency_ms"]["p99"] == 1000.0
+
+
+async def test_errors_breakdown_and_recent(admin_client):
+    await _seed([_row(status="error", model="deepseek/x", error_code="429") for _ in range(3)])
+    r = await admin_client.get("/admin/observability/errors", params={"days": 7})
+    body = r.json()
+    dsx = next(b for b in body["breakdown"] if b["model"] == "deepseek/x")
+    assert dsx["count"] == 3
+    assert dsx["error_type"] == "FakeError"
+    assert len(body["recent"]) >= 3
+    assert body["recent"][0]["error_type"] == "FakeError"
+
+
+async def test_trace_requires_exactly_one_id(admin_client):
+    r = await admin_client.get("/admin/observability/trace")
+    assert r.status_code == 422
+    r = await admin_client.get("/admin/observability/trace",
+                               params={"trace_id": "t", "job_id": str(uuid.uuid4())})
+    assert r.status_code == 422
+
+
+async def test_trace_by_job_id_with_waterfall_offsets(admin_client):
+    from db.models import JobStatus, PipelineJob
+    jid = uuid.uuid4()
+    t0 = datetime.now(timezone.utc) - timedelta(minutes=10)
+    async with _TestSession() as db:
+        db.add(PipelineJob(id=jid, resume_text="r", status=JobStatus.done))
+        r1 = _row(job_id=jid, latency=500)
+        r1.created_at = t0
+        r2 = _row(job_id=jid, latency=300)
+        r2.created_at = t0 + timedelta(seconds=2)
+        db.add(r1)
+        db.add(r2)
+        await db.commit()
+    r = await admin_client.get("/admin/observability/trace", params={"job_id": str(jid)})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["job"]["status"] == "done"
+    assert len(body["calls"]) == 2
+    assert body["calls"][0]["offset_ms"] == 0
+    assert body["calls"][1]["offset_ms"] == 2000
+
+
+async def test_trace_unknown_id_404(admin_client):
+    r = await admin_client.get("/admin/observability/trace", params={"job_id": str(uuid.uuid4())})
+    assert r.status_code == 404
