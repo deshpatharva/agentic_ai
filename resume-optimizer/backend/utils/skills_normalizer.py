@@ -265,6 +265,15 @@ _register(
     "compliance", "data privacy", "mdm", "master data management",
 )
 
+
+def taxonomy_terms() -> frozenset:
+    """All known skill terms (lowercased) from the curated taxonomy.
+
+    Single source of truth for capability evidence checks (fact_extractor,
+    fabrication_guard)."""
+    return frozenset(_SKILL_CATEGORY.keys())
+
+
 # Substring heuristics for unknown tokens (checked in order).
 _KEYWORD_RULES: list[tuple[str, str]] = [
     ("aws ", "Cloud & Platforms"),
