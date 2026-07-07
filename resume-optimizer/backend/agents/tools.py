@@ -182,8 +182,7 @@ _WORD_RE = re.compile(r"[a-z]+")
 
 
 def _contains_drop_marker(n: str) -> bool:
-    return any(w in _SENIORITY_STOPWORDS or w in _COMPOUND_CLAIM_MARKERS
-               for w in _WORD_RE.findall(n))
+    return any(w in _COMPOUND_CLAIM_MARKERS for w in _WORD_RE.findall(n))
 
 
 def _norm_term(s: str) -> str:
@@ -200,9 +199,14 @@ def split_evidenced(items, capabilities) -> tuple:
     evidenced, gaps = [], []
     for item in items:
         n = _norm_term(item)
-        if not n or _contains_drop_marker(n):
+        if not n:
             continue
-        hit = n in capabilities or any(
+        if n in capabilities:            # exact match short-circuits first
+            evidenced.append(item)
+            continue
+        if n in _SENIORITY_STOPWORDS or _contains_drop_marker(n):
+            continue
+        hit = any(
             re.search(r"(?<![\w+#])" + re.escape(c) + r"(?![\w+#])", n)
             for c in capabilities
         )

@@ -510,6 +510,22 @@ def test_split_evidenced_rejects_compound_title_and_credential_claims():
     assert evidenced == [] and gaps == []  # certification claim not promoted
 
 
+def test_split_evidenced_hyphenated_seniority_still_dropped():
+    from agents.tools import split_evidenced
+
+    assert split_evidenced(["Entry-level"], frozenset({"python"})) == ([], [])
+    assert split_evidenced(["Mid-level"], frozenset({"python"})) == ([], [])
+
+
+def test_split_evidenced_exact_match_short_circuits_marker_guard():
+    from agents.tools import split_evidenced
+
+    caps = frozenset({"certified kubernetes administrator"})
+    evidenced, gaps = split_evidenced(["Certified Kubernetes Administrator"], caps)
+    assert evidenced == ["Certified Kubernetes Administrator"]
+    assert gaps == []
+
+
 async def test_keyword_inject_filters_unevidenced_and_records_gaps():
     from agents import tools
 
