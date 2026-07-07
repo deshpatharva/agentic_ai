@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from types import SimpleNamespace
 from typing import Callable, Optional
 
 from agents.fabrication_guard import fabrication_guard
@@ -43,7 +44,6 @@ _logger = logging.getLogger(__name__)
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 AGENT_MAX_REFLECTIONS = 3  # max reflection iterations (outer loop)
-_SCORE_TARGET = SCORE_TARGET  # from config
 
 # ── Tool definitions (JSON schema for LiteLLM tool-calling) ──────────────────
 
@@ -157,7 +157,7 @@ TOOL_MAP: dict[str, Callable] = {
 # ── System prompt builder ─────────────────────────────────────────────────────
 
 
-def _build_system_stable(jd_keywords: list, available_sections: list,
+def _build_system_stable(available_sections: list,
                          user_instruction: Optional[str] = None) -> str:
     """Stable system prompt — stays identical across reflections/rounds so the
     provider's context cache can hit on it."""
@@ -170,7 +170,7 @@ def _build_system_stable(jd_keywords: list, available_sections: list,
             "optimization or change sections the user did not mention.\n\n"
         )
 
-    return f"""{instruction_block}You are a Resume Optimization Strategist. Your job is to raise all resume scores above {_SCORE_TARGET} using the available tools.
+    return f"""{instruction_block}You are a Resume Optimization Strategist. Your job is to raise all resume scores above {SCORE_TARGET} using the available tools.
 
 AVAILABLE RESUME SECTIONS: {', '.join(available_sections)}
 
@@ -194,7 +194,7 @@ def _build_scores_context(scores: dict) -> str:
         return d.get("score", 0)
 
     def _flag(d: dict) -> str:
-        return "NEEDS WORK" if _s(d) < _SCORE_TARGET else "ok"
+        return "NEEDS WORK" if _s(d) < SCORE_TARGET else "ok"
 
     return f"""CURRENT SCORES:
   ATS Match:    {_s(ats):>3}  [{_flag(ats)}]
@@ -209,10 +209,10 @@ def _build_scores_context(scores: dict) -> str:
 Analyze the scores above. Call tools for dimensions marked NEEDS WORK."""
 
 
-def _build_system(scores: dict, jd_keywords: list, available_sections: list,
+def _build_system(scores: dict, available_sections: list,
                   user_instruction: Optional[str] = None) -> str:
     """Full system prompt (backward-compat wrapper)."""
-    return (_build_system_stable(jd_keywords, available_sections, user_instruction)
+    return (_build_system_stable(available_sections, user_instruction)
             + "\n\n" + _build_scores_context(scores))
 
 
@@ -246,12 +246,11 @@ async def run_agent(
     # Tag all LlmCallLog rows from this driver as "phase2_optimizer"
     set_call_kind("phase2_optimizer")
 
-    reflections_cap = max_reflections or AGENT_MAX_REFLECTIONS
+    reflections_cap = max_reflections if max_reflections is not None else AGENT_MAX_REFLECTIONS
 
-    _SCORES_IDX = 1
     messages: list[dict] = [
         {"role": "system",
-         "content": _build_system_stable(jd_keywords, state.available_sections(), user_instruction)},
+         "content": _build_system_stable(state.available_sections(), user_instruction)},
         {"role": "user",
          "content": _build_scores_context(scores)},
     ]
@@ -259,15 +258,21 @@ async def run_agent(
     current_scores = scores
     last_scored_draft = original_resume  # baseline `scores` were computed on this text
     iterations = 0
-    # Guard result is initialised so we always have something to reference
-    # even if the loop exits early (e.g. budget exceeded before first reflection).
-    guard = type("_Guard", (), {"gaps": [], "text": state.reassemble()})()
+    budget_exhausted = False
+    prev_gaps: list = []
+    # Guard placeholder for the reflections_cap=0 edge case. gaps stays empty so
+    # final_text falls through to state.reassemble(); text is never read then.
+    guard = SimpleNamespace(gaps=[], text="")
 
     for reflection_idx in range(reflections_cap):
 
         # ── Inner tool-calling loop ───────────────────────────────────────────
         for _ in range(AGENT_MAX_ITER):
+            # Pre-call check only: the final call can overshoot the budget by up
+            # to one turn's tokens. Accepted — a mid-call abort would waste the
+            # spend without getting the tool results.
             if state.total_tokens() >= AGENT_TOKEN_BUDGET:
+                budget_exhausted = True
                 _logger.info(
                     "agent_loop: token budget reached (%d/%d), stopping inner loop",
                     state.total_tokens(), AGENT_TOKEN_BUDGET,
@@ -292,8 +297,11 @@ async def run_agent(
             assistant_msg = {
                 "role": "assistant",
                 "content": msg.content or "",
-                "tool_calls": msg.tool_calls or None,
             }
+            # Omit the key entirely on non-tool turns — some providers reject
+            # an explicit tool_calls: null on assistant messages.
+            if msg.tool_calls:
+                assistant_msg["tool_calls"] = msg.tool_calls
             _rc = getattr(msg, "reasoning_content", None)
             if _rc:
                 assistant_msg["reasoning_content"] = _rc
@@ -324,13 +332,17 @@ async def run_agent(
                 })
 
                 if on_event:
-                    on_event({
-                        "type": "agent_step",
-                        "message": f"Tool {tool_name}: {obs[:100]}",
-                        "stage": "agent",
-                        "tokens_used": state.total_tokens(),
-                        "budget": AGENT_TOKEN_BUDGET,
-                    })
+                    try:
+                        on_event({
+                            "type": "agent_step",
+                            "message": f"Tool {tool_name}: {obs[:100]}",
+                            "stage": "agent",
+                            "tokens_used": state.total_tokens(),
+                            "budget": AGENT_TOKEN_BUDGET,
+                        })
+                    except Exception:
+                        # A broken progress callback must not abort the optimization.
+                        _logger.warning("agent_loop: on_event callback raised", exc_info=True)
 
         # ── Reflection ────────────────────────────────────────────────────────
         draft = state.reassemble()
@@ -362,7 +374,7 @@ async def run_agent(
         # done-check indefinitely whenever readability lags the other dimensions.
         _agent_dims = tuple(d for d in SCORE_DIMENSIONS if d != "readability")
         all_above = all(
-            current_scores.get(d, {}).get("score", 0) >= _SCORE_TARGET
+            current_scores.get(d, {}).get("score", 0) >= SCORE_TARGET
             for d in _agent_dims
         )
 
@@ -371,32 +383,35 @@ async def run_agent(
             reflection_idx + 1, reflections_cap, overall, all_above, len(guard.gaps),
         )
 
-        if all_above and not guard.gaps:
-            break  # target met, no fabrication flags — done
+        # No tool removes fabricated content, so identical gaps two reflections in
+        # a row means another round can't clear them — final_text falls back to
+        # guard's cleaned text anyway, so stop burning LLM calls once scores are met.
+        gaps_stalled = bool(guard.gaps) and list(guard.gaps) == prev_gaps
+        prev_gaps = list(guard.gaps)
+
+        if all_above and (not guard.gaps or gaps_stalled):
+            break  # target met; gaps either absent or unfixable by the toolset
+
+        if budget_exhausted:
+            _logger.info("agent_loop: token budget exhausted — ending reflections")
+            break
 
         if reflection_idx < reflections_cap - 1:
-            # Feed reflection back as a user message so the model can continue
-            feedback_parts: list[str] = []
-            if not all_above:
-                feedback_parts.append(
-                    f"Scores after your changes: overall={overall}. "
-                    f"Still below target on some dimensions."
-                )
+            # Feed reflection back as a single user message: refreshed scores plus
+            # guard feedback. History is append-only — the original scores message
+            # stays in place so earlier assistant turns keep their context, and the
+            # stable system prompt keeps its cache hits.
+            feedback_parts: list[str] = [_build_scores_context(current_scores)]
             if guard.gaps:
                 feedback_parts.append(
                     f"Fabrication guard flagged: {'; '.join(guard.gaps[:5])}"
                 )
+            feedback_parts.append("Please continue optimizing.")
 
             messages.append({
                 "role": "user",
-                "content": "\n".join(feedback_parts) + "\nPlease continue optimizing.",
+                "content": "\n\n".join(feedback_parts),
             })
-
-            # Refresh scores context (system prompt stays stable → cache hits)
-            messages[_SCORES_IDX] = {
-                "role": "user",
-                "content": _build_scores_context(current_scores),
-            }
 
     # Prefer guard's cleaned text when fabrications were detected
     final_text = guard.text if guard.gaps else state.reassemble()
