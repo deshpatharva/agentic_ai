@@ -16,12 +16,13 @@ assert _FUNC_START != -1, "_run_pipeline_task not found in main.py"
 _PIPELINE_SRC = _MAIN_SRC[_FUNC_START:]
 
 
-def test_pipeline_uses_max_iterations_loop():
-    """_run_pipeline_task must implement a MAX_ITERATIONS loop."""
-    assert "MAX_ITERATIONS" in _PIPELINE_SRC, \
-        "Pipeline must use MAX_ITERATIONS"
-    assert ("for " in _PIPELINE_SRC or "while " in _PIPELINE_SRC), \
-        "Pipeline must have a loop construct for iterations"
+def test_pipeline_delegates_iterations_to_agent_loop():
+    """The old MAX_ITERATIONS loop moved into the Phase 2 agent loop:
+    the pipeline must call run_optimization_async and surface its iteration count."""
+    assert "run_optimization_async(" in _PIPELINE_SRC, \
+        "Pipeline must delegate Phase 2 to run_optimization_async"
+    assert "iterations" in _PIPELINE_SRC, \
+        "Pipeline must surface the agent loop's iteration count"
 
 
 def test_pipeline_threads_seniority_to_scorer():

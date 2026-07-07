@@ -22,18 +22,22 @@ def test_optimizer_list_caps_increased():
         "missing_skills still capped at 8 — increase to 15"
 
 
-def test_section_name_uses_worst_section():
-    """section_name must come from readability.worst_section, not be hardcoded 'summary'.
-    With T2.3, the prompt-building logic moved to orchestration/agent_loop.py, so we
-    check the combined source of optimizer.py + agent_loop.py.
+def test_section_targeting_is_model_driven():
+    """section_name must not be hardcoded to 'summary'.
+
+    Since the A+C agent loop, the model picks the target section via the
+    bullets_reorder tool's section_name argument, and readability (worst_section)
+    is owned by the post-loop humanize stage rather than the optimizer.
     """
     optimizer_src = (_BACKEND / "orchestration" / "optimizer.py").read_text(encoding="utf-8")
     agent_loop_src = (_BACKEND / "orchestration" / "agent_loop.py").read_text(encoding="utf-8")
     combined = optimizer_src + agent_loop_src
     assert 'section_name = "summary"' not in combined, \
-        "section_name is hardcoded to 'summary' — use worst_section from scorer"
-    assert "worst_section" in combined, \
-        "worst_section not referenced in optimizer.py or agent_loop.py"
+        "section_name is hardcoded to 'summary' — it must be model-chosen"
+    assert '"section_name"' in agent_loop_src, \
+        "bullets_reorder tool schema must expose section_name as a model-chosen argument"
+    assert "readability" in agent_loop_src, \
+        "agent loop must explicitly exclude readability (the humanize stage owns it)"
 
 
 def test_agent_max_iter_comes_from_config():
