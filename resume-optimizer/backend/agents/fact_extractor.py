@@ -15,6 +15,9 @@ from dataclasses import dataclass, field
 
 import spacy
 
+from utils.section_parser import detect_sections
+from utils.skills_normalizer import _parse_skills, taxonomy_terms
+
 try:
     nlp = spacy.load("en_core_web_sm")
 except OSError:
@@ -61,6 +64,7 @@ class ClaimsLedger:
     job_titles:  frozenset = field(default_factory=frozenset)  # job titles found in the resume
     degrees:     frozenset = field(default_factory=frozenset)  # academic degrees found in the resume
     date_ranges: frozenset = field(default_factory=frozenset)  # date ranges found in the resume
+    capabilities: frozenset = field(default_factory=frozenset)  # evidenced skills/tools (lowercased)
 
     def prompt_block(self) -> str:
         """Compact string injected into the rewriter prompt."""
@@ -69,9 +73,38 @@ class ClaimsLedger:
             parts.append(f"  Permitted metrics: {', '.join(sorted(self.metrics))}")
         if self.companies:
             parts.append(f"  Permitted companies/orgs: {', '.join(sorted(self.companies))}")
-        if not self.metrics and not self.companies:
+        if self.capabilities:
+            parts.append(f"  Verified capabilities: {', '.join(sorted(self.capabilities))}")
+        if not self.metrics and not self.companies and not self.capabilities:
             parts.append("  (no explicit metrics or organisations detected)")
         return "\n".join(parts)
+
+
+# Custom boundaries so "c++", "c#", "ci/cd" match whole terms and "go" never
+# matches inside "Django". Compiled once at import.
+_TAXONOMY_PATTERNS: dict = {
+    t: re.compile(r"(?<![\w+#])" + re.escape(t) + r"(?![\w+#])")
+    for t in taxonomy_terms()
+}
+
+
+def _extract_capabilities(resume_text: str) -> frozenset:
+    caps: set = set()
+    skills_text = detect_sections(resume_text).get("skills", "")
+    if skills_text.strip():
+        for tok in _parse_skills(skills_text):
+            tok_lower = tok.lower()
+            # Keep the whole comma-delimited token (so multi-word tool names
+            # like "SnowConvert Custom Tool" survive intact) and also add its
+            # individual words (so single-word skills listed without commas,
+            # e.g. "Django only", still surface "django" on its own).
+            caps.add(tok_lower)
+            caps.update(tok_lower.split())
+    text_lower = resume_text.lower()
+    for term, pattern in _TAXONOMY_PATTERNS.items():
+        if pattern.search(text_lower):
+            caps.add(term)
+    return frozenset(caps)
 
 
 def extract_claims(resume_text: str) -> ClaimsLedger:
@@ -126,4 +159,5 @@ def extract_claims(resume_text: str) -> ClaimsLedger:
         job_titles=job_titles,
         degrees=degrees,
         date_ranges=date_ranges,
+        capabilities=_extract_capabilities(resume_text),
     )
