@@ -871,6 +871,12 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
     Phase 2 (agentic):       Native A+C agent loop with 4 targeted tools (see orchestration/agent_loop.py).
     Phase 3 (deterministic): fabrication guard, docx generation, persistence.
     """
+    # Bind trace + job context: every LLM call in this run logs with this
+    # job's id, and the trace waterfall keys off it (spec 2026-07-06).
+    from observability.trace import new_trace, set_job_context
+    new_trace(job_id)
+    set_job_context(job_id, user_id)
+
     job_uuid = uuid.UUID(job_id)
     _loop = asyncio.get_event_loop()
 

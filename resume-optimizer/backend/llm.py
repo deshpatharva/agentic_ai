@@ -53,15 +53,49 @@ def _deepseek_extra_body(model: str) -> dict | None:
 
 
 async def _record_call(row_kwargs: dict) -> None:
-    """Fire-and-forget: write one LlmCallLog row in a fresh session."""
+    """Fire-and-forget: write one LlmCallLog row in a fresh session.
+
+    Resolves job/user context here (single chokepoint) so pipeline-run rows
+    carry job_id/user_id without any call-site plumbing.
+    """
     try:
+        import uuid as _uuid
         from db.models import LlmCallLog
         from db.session import AsyncSessionLocal
+        from observability.trace import current_job_id, current_user_id
+        for key, val in (("job_id", current_job_id()), ("user_id", current_user_id())):
+            if val and key not in row_kwargs:
+                try:
+                    row_kwargs[key] = _uuid.UUID(val)
+                except ValueError:
+                    pass
         async with AsyncSessionLocal() as db:
             db.add(LlmCallLog(**row_kwargs))
             await db.commit()
     except Exception:
         _logger.exception("Failed to write LlmCallLog row")
+
+
+def _error_row(model: str, exc: Exception, t0: float, attempt: int) -> dict:
+    """Ledger row for a failed call — metadata only, never payload text."""
+    from observability.trace import current_trace, current_call_kind
+    code = getattr(exc, "status_code", None)
+    return {
+        "trace_id":      current_trace() or None,
+        "model":         model,
+        "provider":      _provider(model),
+        "call_kind":     current_call_kind() or None,
+        "status":        "error",
+        "error_type":    type(exc).__name__[:100],
+        "error_code":    (str(code)[:40] if code is not None else None),
+        "attempt":       attempt,
+        "input_tokens":  0,
+        "output_tokens": 0,
+        "cost_usd":      0.0,
+        "cost_source":   "error",
+        "latency_ms":    int((time.perf_counter() - t0) * 1000),
+        "created_at":    datetime.now(timezone.utc),
+    }
 
 
 async def _provider_rates() -> dict[str, tuple[float, float]]:
@@ -144,11 +178,19 @@ async def complete(
         call_kwargs["extra_body"] = extra_body
 
     # One bounded retry on transient failures (timeout / connection / 5xx).
+    attempt = 1
+    finish_reason = None
     try:
-        response = await litellm.acompletion(**call_kwargs)
-    except _TRANSIENT as exc:
-        _logger.warning("LLM call to %s failed transiently (%s) — retrying once", model, type(exc).__name__)
-        response = await litellm.acompletion(**call_kwargs)
+        try:
+            response = await litellm.acompletion(**call_kwargs)
+        except _TRANSIENT as exc:
+            _logger.warning("LLM call to %s failed transiently (%s) — retrying once", model, type(exc).__name__)
+            attempt = 2
+            response = await litellm.acompletion(**call_kwargs)
+    except Exception as exc:
+        asyncio.create_task(_record_call(_error_row(model, exc, t0, attempt)))
+        raise
+    finish_reason = getattr(response.choices[0], "finish_reason", None) if getattr(response, "choices", None) else None
 
     latency_ms = int((time.perf_counter() - t0) * 1000)
     in_tok  = response.usage.prompt_tokens
@@ -169,6 +211,9 @@ async def complete(
         "model":         model,
         "provider":      _provider(model),
         "call_kind":     current_call_kind() or None,
+        "status":        "ok",
+        "attempt":       attempt,
+        "finish_reason": finish_reason,
         "input_tokens":  in_tok,
         "output_tokens": out_tok,
         "cached_input_tokens": cached_tok,
@@ -234,17 +279,25 @@ async def complete_with_tools(
         tool_kwargs["extra_body"] = extra_body
 
     t0 = time.perf_counter()
+    attempt = 1
     try:
-        response = await litellm.acompletion(**tool_kwargs)
-    except _TRANSIENT as exc:
-        _logger.warning("tool-calling chat to %s failed transiently (%s) — retrying once",
-                        model, type(exc).__name__)
-        response = await litellm.acompletion(**tool_kwargs)
+        try:
+            response = await litellm.acompletion(**tool_kwargs)
+        except _TRANSIENT as exc:
+            _logger.warning("tool-calling chat to %s failed transiently (%s) — retrying once",
+                            model, type(exc).__name__)
+            attempt = 2
+            response = await litellm.acompletion(**tool_kwargs)
+        except Exception as exc:
+            _logger.warning("tool-calling chat to %s failed (%s) — retrying WITHOUT tools",
+                            model, type(exc).__name__)
+            attempt = 2
+            no_tools = {k: v for k, v in tool_kwargs.items() if k not in ("tools", "tool_choice")}
+            response = await litellm.acompletion(**no_tools)
     except Exception as exc:
-        _logger.warning("tool-calling chat to %s failed (%s) — retrying WITHOUT tools",
-                        model, type(exc).__name__)
-        no_tools = {k: v for k, v in tool_kwargs.items() if k not in ("tools", "tool_choice")}
-        response = await litellm.acompletion(**no_tools)
+        asyncio.create_task(_record_call(_error_row(model, exc, t0, attempt)))
+        raise
+    finish_reason = getattr(response.choices[0], "finish_reason", None) if getattr(response, "choices", None) else None
 
     latency_ms = int((time.perf_counter() - t0) * 1000)
     usage = getattr(response, "usage", None)
@@ -266,6 +319,9 @@ async def complete_with_tools(
         "model":         model,
         "provider":      _provider(model),
         "call_kind":     current_call_kind() or None,
+        "status":        "ok",
+        "attempt":       attempt,
+        "finish_reason": finish_reason,
         "input_tokens":  in_tok,
         "output_tokens": out_tok,
         "cached_input_tokens": cached_tok,
@@ -298,27 +354,32 @@ async def stream_chat(messages: list[dict], model: str) -> AsyncIterator[dict]:
     t0 = time.perf_counter()
     ttft_ms: int | None = None
 
-    response = await litellm.acompletion(
-        model=model,
-        messages=messages,
-        timeout=_CALL_TIMEOUT_S,
-        stream=True,
-        stream_options={"include_usage": True},
-    )
-
     in_tok = out_tok = 0
     last_response = None
-    async for chunk in response:
-        last_response = chunk
-        delta = chunk.choices[0].delta.content if chunk.choices else None
-        if delta:
-            if ttft_ms is None:
-                ttft_ms = int((time.perf_counter() - t0) * 1000)
-            yield {"type": "token", "text": delta}
-        usage = getattr(chunk, "usage", None)
-        if usage:
-            in_tok  = getattr(usage, "prompt_tokens", 0) or 0
-            out_tok = getattr(usage, "completion_tokens", 0) or 0
+    try:
+        response = await litellm.acompletion(
+            model=model,
+            messages=messages,
+            timeout=_CALL_TIMEOUT_S,
+            stream=True,
+            stream_options={"include_usage": True},
+        )
+        async for chunk in response:
+            last_response = chunk
+            delta = chunk.choices[0].delta.content if chunk.choices else None
+            if delta:
+                if ttft_ms is None:
+                    ttft_ms = int((time.perf_counter() - t0) * 1000)
+                yield {"type": "token", "text": delta}
+            usage = getattr(chunk, "usage", None)
+            if usage:
+                in_tok  = getattr(usage, "prompt_tokens", 0) or 0
+                out_tok = getattr(usage, "completion_tokens", 0) or 0
+    except Exception as exc:
+        row = _error_row(model, exc, t0, attempt=1)
+        row["ttft_ms"] = ttft_ms
+        asyncio.create_task(_record_call(row))
+        raise
 
     latency_ms = int((time.perf_counter() - t0) * 1000)
 
@@ -326,14 +387,23 @@ async def stream_chat(messages: list[dict], model: str) -> AsyncIterator[dict]:
     rates = await _provider_rates()
     cost_usd, cost_source = resolve_cost(last_response, model, in_tok, out_tok, rates)
 
+    usage_obj = getattr(last_response, "usage", None)
+    cached_tok = getattr(usage_obj, "prompt_tokens_details", None)
+    cached_tok = getattr(cached_tok, "cached_tokens", 0) or 0 if cached_tok else 0
+    cached_tok = cached_tok if isinstance(cached_tok, int) else 0
+
     from observability.trace import current_trace, current_call_kind
     asyncio.create_task(_record_call({
         "trace_id":      current_trace() or None,
         "model":         model,
         "provider":      _provider(model),
         "call_kind":     current_call_kind() or None,
+        "status":        "ok",
+        "attempt":       1,
         "input_tokens":  in_tok,
         "output_tokens": out_tok,
+        "cached_input_tokens": cached_tok,
+        "cache_hit":     cached_tok > 0,
         "cost_usd":      cost_usd,
         "cost_source":   cost_source,
         "latency_ms":    latency_ms,
