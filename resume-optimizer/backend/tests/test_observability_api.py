@@ -186,3 +186,13 @@ async def test_trace_by_job_id_with_waterfall_offsets(admin_client):
 async def test_trace_unknown_id_404(admin_client):
     r = await admin_client.get("/admin/observability/trace", params={"job_id": str(uuid.uuid4())})
     assert r.status_code == 404
+
+
+async def test_by_model_avg_latency_excludes_error_rows(admin_client):
+    await _seed([_row(model="groq/avg-check", latency=100) for _ in range(4)]
+                + [_row(model="groq/avg-check", status="error", latency=120000)])
+    r = await admin_client.get("/admin/analytics/by-model", params={"days": 7})
+    assert r.status_code == 200
+    row = next(m for m in r.json()["models"] if m["model"] == "groq/avg-check")
+    assert row["avg_latency_ms"] is not None
+    assert row["avg_latency_ms"] < 1000  # 100ms avg, not poisoned by the 120s error row

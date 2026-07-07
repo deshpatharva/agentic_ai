@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone, time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import Integer, func, select
+from sqlalchemy import Integer, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.dependencies import get_admin_user
@@ -903,8 +903,8 @@ async def by_model_analytics(
             func.coalesce(func.sum(LlmCallLog.input_tokens),  0).label("input_tokens"),
             func.coalesce(func.sum(LlmCallLog.output_tokens), 0).label("output_tokens"),
             func.coalesce(func.sum(LlmCallLog.cost_usd),      0.0).label("cost_usd"),
-            func.avg(LlmCallLog.latency_ms).label("avg_latency_ms"),
-            func.avg(LlmCallLog.ttft_ms).label("avg_ttft_ms"),
+            func.avg(case((LlmCallLog.status == "ok", LlmCallLog.latency_ms))).label("avg_latency_ms"),
+            func.avg(case((LlmCallLog.status == "ok", LlmCallLog.ttft_ms))).label("avg_ttft_ms"),
         )
         .where(LlmCallLog.created_at >= cutoff)
         .group_by(LlmCallLog.model, LlmCallLog.provider)
@@ -986,7 +986,7 @@ async def cache_efficiency(
             func.coalesce(func.sum(LlmCallLog.cached_input_tokens), 0).label("total_cached_tokens"),
             func.coalesce(func.sum(LlmCallLog.cost_usd), 0.0).label("total_cost_usd"),
         )
-        .where(LlmCallLog.created_at >= cutoff)
+        .where(LlmCallLog.created_at >= cutoff, LlmCallLog.status == "ok")
     )).one()
 
     by_kind = (await db.execute(
@@ -1000,7 +1000,7 @@ async def cache_efficiency(
             func.coalesce(func.sum(LlmCallLog.input_tokens), 0).label("input_tokens"),
             func.coalesce(func.sum(LlmCallLog.cost_usd), 0.0).label("cost_usd"),
         )
-        .where(LlmCallLog.created_at >= cutoff)
+        .where(LlmCallLog.created_at >= cutoff, LlmCallLog.status == "ok")
         .group_by(LlmCallLog.call_kind)
         .order_by(func.sum(LlmCallLog.cached_input_tokens).desc())
     )).all()
@@ -1014,7 +1014,7 @@ async def cache_efficiency(
             ), 0).label("cache_hits"),
             func.coalesce(func.sum(LlmCallLog.cached_input_tokens), 0).label("cached_tokens"),
         )
-        .where(LlmCallLog.created_at >= cutoff)
+        .where(LlmCallLog.created_at >= cutoff, LlmCallLog.status == "ok")
         .group_by(func.date(LlmCallLog.created_at))
         .order_by(func.date(LlmCallLog.created_at))
     )).all()
