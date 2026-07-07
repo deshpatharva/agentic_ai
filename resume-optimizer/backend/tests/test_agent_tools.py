@@ -545,6 +545,14 @@ def test_split_evidenced_pure_marker_phrase_never_evidenced_even_on_exact_match(
     assert gaps == []
 
 
+def test_split_evidenced_hyphenated_stopword_plus_marker_word():
+    from agents.tools import split_evidenced
+
+    assert split_evidenced(["Entry-level Manager"], frozenset({"entry-level manager"})) == ([], [])
+    assert split_evidenced(["Mid-level Director"], frozenset({"mid-level director"})) == ([], [])
+    assert split_evidenced(["Entry-level Engineer"], frozenset({"entry-level engineer"})) == ([], [])
+
+
 async def test_keyword_inject_filters_unevidenced_and_records_gaps():
     from agents import tools
 

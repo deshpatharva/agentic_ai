@@ -178,7 +178,9 @@ _COMPOUND_CLAIM_MARKERS = frozenset({
     "certified", "certification", "certificate", "accredited", "licensed",
 })
 
-_WORD_RE = re.compile(r"[a-z]+")
+# Hyphen-aware: greedily captures "entry-level" as ONE token instead of
+# shredding it into "entry"/"level", neither of which is itself a marker.
+_WORD_RE = re.compile(r"[a-z]+(?:-[a-z]+)*")
 
 
 def _contains_drop_marker(n: str) -> bool:
@@ -190,7 +192,13 @@ def _is_pure_marker_phrase(n: str) -> bool:
     (possibly hyphenated) string is a seniority stopword, or every word in it
     is a seniority/marker word. Such phrases are never evidenced, even on an
     exact capability match, since a bare marker word reaching `capabilities`
-    is most likely resume-parsing noise, not an intentional self-description."""
+    is most likely resume-parsing noise, not an intentional self-description.
+
+    This is a lexical heuristic against the concrete leak patterns found during
+    review (compound titles/certifications riding through on a partial or exact
+    capability match), not a semantic parser -- it will not catch every possible
+    phrasing. The fabrication_guard (post-generation) and verifier stages are the
+    downstream backstops for whatever a purely lexical check like this misses."""
     if n in _SENIORITY_STOPWORDS:
         return True
     words = _WORD_RE.findall(n)
