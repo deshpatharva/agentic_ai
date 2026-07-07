@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # ── agent.py ─────────────────────────────────────────────────────────────────
 
-from chat.agent import render_system_prompt
+from chat.agent import render_context_message, render_system_prompt
 from chat.tools import parse_tool_calls, message_text, TOOLS, LAUNCH_TOOL, SAVE_TOOL, DOWNLOAD_TOOL, EDIT_TOOL
 from chat.gaps import compute_gaps
 from utils.text_sanitizer import sanitize_resume_text
@@ -28,12 +28,13 @@ class TestOptimizationReport:
         assert r["iterations"] == 2
 
     def test_report_surfaced_in_prompt(self):
+        # Report facts render in the dynamic context message, not the system prompt.
         jd = {"required_hard_skills": ["Snowflake"]}
         r = build_report(jd, "no match", "now has Snowflake", 70,
                          {"average": 90, "ats": 88, "impact": 92, "skills_gap": 95, "readability": 90}, 1)
-        prompt = render_system_prompt({"last_result": {"report": r}})
-        assert "Score improved from 70 to 90" in prompt
-        assert "Snowflake" in prompt
+        ctx_msg = render_context_message({"last_result": {"report": r}})
+        assert "SCORES: 70" in ctx_msg and "90" in ctx_msg
+        assert "Snowflake" in ctx_msg
 
 
 class TestSanitizeResumeText:
@@ -104,20 +105,24 @@ class TestComputeGaps:
 class TestPromptToolGuidance:
     def test_no_id_leak_instruction_present(self):
         prompt = render_system_prompt({"profiles": [{"id": "abc", "label": "SWE"}]})
-        assert "NEVER print a profile id" in prompt
+        assert "Never print a profile id" in prompt
 
     def test_tools_described(self):
-        prompt = render_system_prompt({})
-        assert "launch_optimizer" in prompt and "save_profile" in prompt
+        # Tools are described per phase: launch in JD_CAPTURED, save in RESULTS_READY.
+        jd_prompt = render_system_prompt({"jd_text": "x"})
+        assert "launch_optimizer" in jd_prompt
+        results_prompt = render_system_prompt({"last_result": {"report": {}}})
+        assert "save_profile" in results_prompt
 
     def test_gaps_injected(self):
-        prompt = render_system_prompt({
+        # Gaps render in the dynamic context message, not the system prompt.
+        ctx_msg = render_context_message({
             "jd_text": "x",
             "profiles": [{"id": "a", "label": "DE"}],
             "_jd_matched_profiles": [{"id": "a", "label": "DE", "match_pct": 80}],
             "gaps": ["Azure Data Factory"],
         })
-        assert "Azure Data Factory" in prompt
+        assert "Azure Data Factory" in ctx_msg
 
     def test_last_result_state_shown(self):
         prompt = render_system_prompt({"last_result": {"sections": {}, "final_score": 80}})
@@ -130,8 +135,8 @@ class TestPromptToolGuidance:
 
     def test_launched_state_blocks_relaunch(self):
         prompt = render_system_prompt({"_optimizer_launched": True, "profiles": []})
-        assert "already been launched" in prompt
-        assert "Do NOT call launch_optimizer again" in prompt
+        assert "currently running" in prompt
+        assert "Do NOT call any tools" in prompt
 
 
 class TestRenderSystemPrompt:
@@ -143,15 +148,16 @@ class TestRenderSystemPrompt:
 
     def test_no_jd_state(self):
         prompt = render_system_prompt({})
-        assert "No job description yet" in prompt
+        assert "not provided a job description yet" in prompt
 
     def test_jd_present_state(self):
         prompt = render_system_prompt({"jd_text": "some jd", "profiles": []})
-        assert "A job description has already been captured" in prompt
+        assert "A job description has been captured" in prompt
 
     def test_jd_fetch_error_state(self):
-        prompt = render_system_prompt({"jd_fetch_error": True, "profiles": []})
-        assert "FAILED to fetch" in prompt or "could not be fetched" in prompt or "FAILED" in prompt
+        # Fetch errors render in the dynamic context message, not the system prompt.
+        ctx_msg = render_context_message({"jd_fetch_error": True, "profiles": []})
+        assert "URL FETCH FAILED" in ctx_msg
 
     def test_no_profiles_message(self):
         prompt = render_system_prompt({})

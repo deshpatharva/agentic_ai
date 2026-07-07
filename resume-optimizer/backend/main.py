@@ -780,6 +780,22 @@ def _derive_auto_label(job_title: str, industry: str, jd_keywords: list[str]) ->
     return f"{base} (auto)"
 
 
+async def _score_profiles(profile_dicts: list, jd_text: str) -> list:
+    """Lazy wrapper around jd.router._score_profiles.
+
+    Module-level so tests can patch ``main._score_profiles``; the import stays
+    lazy to avoid a circular import at startup.
+    """
+    from jd.router import _score_profiles as _sp  # noqa: PLC0415
+    return await _sp(profile_dicts, jd_text)
+
+
+async def _parse_sections(raw_text: str) -> dict:
+    """Lazy wrapper around profiles.router._parse_sections (patchable in tests)."""
+    from profiles.router import _parse_sections as _ps  # noqa: PLC0415
+    return await _ps(raw_text)
+
+
 async def _resolve_or_create_profile(
     *,
     job_uuid,
@@ -795,8 +811,6 @@ async def _resolve_or_create_profile(
 
     Returns the profile UUID to store on Resume.profile_id, or None on failure.
     """
-    from jd.router import _score_profiles
-    from profiles.router import _parse_sections
     from config import DOMAIN_MATCH_THRESHOLD
 
     async with AsyncSessionLocal() as db:
