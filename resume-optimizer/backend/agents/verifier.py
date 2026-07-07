@@ -27,17 +27,19 @@ class VerifierResult:
     cost_usd: float = 0.0
 
 
-async def verify_final_draft(draft: str, ledger: ClaimsLedger) -> VerifierResult:
+async def verify_final_draft(draft: str, ledger: ClaimsLedger, original_resume: str) -> VerifierResult:
     """Single LLM call that checks draft against the claims ledger.
 
     Args:
-        draft:  The final optimized resume text produced by the pipeline.
-        ledger: The ClaimsLedger built from the original (unmodified) resume.
+        draft:           The final optimized resume text produced by the pipeline.
+        ledger:          The ClaimsLedger built from the original (unmodified) resume.
+        original_resume: The full original resume text, given as ground truth so the
+                          verifier can tell a rephrased-but-true claim from a fabricated one.
 
     Returns:
         VerifierResult with:
             - text:    the draft, unchanged
-            - flagged: list of unsupported-claim strings (empty if clean)
+            - flagged: list of unsupported-claim strings (empty if clean), capped at 10
     """
     if not draft.strip():
         return VerifierResult(text=draft)
@@ -49,6 +51,9 @@ async def verify_final_draft(draft: str, ledger: ClaimsLedger) -> VerifierResult
 
     prompt = f"""You are a resume verification assistant. Check this resume draft for unsupported claims.
 
+ORIGINAL RESUME (ground truth):
+{original_resume}
+
 VERIFIED FACTS FROM ORIGINAL RESUME:
 - Companies: {companies_str}
 - Metrics: {metrics_str}
@@ -58,10 +63,9 @@ VERIFIED FACTS FROM ORIGINAL RESUME:
 RESUME DRAFT:
 {draft}
 
-List any claims in the draft that are NOT supported by the verified facts above.
-Focus on: invented metrics/numbers, company names not in the list, job titles not earned, degrees not held.
-If the draft is clean, output exactly: VERIFIED
-
+Flag ONLY concrete claims -- a skill, tool, title, company, degree, or number -- that
+appear in the draft but have no support in the original resume or verified facts above.
+Do not flag rephrasings of supported claims. At most 10 flags.
 Output format: one unsupported claim per line, or "VERIFIED" if clean. No prose."""
 
     try:
@@ -79,6 +83,8 @@ Output format: one unsupported claim per line, or "VERIFIED" if clean. No prose.
             for line in text.splitlines()
             if line.strip() and line.strip().upper() != "VERIFIED"
         ]
+
+    flagged = flagged[:10]
 
     if flagged:
         _logger.info("verifier flagged %d unsupported claim(s)", len(flagged))

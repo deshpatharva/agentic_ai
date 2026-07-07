@@ -71,7 +71,7 @@ async def test_verifier_flags_unsupported_metric():
     flagged_response = "unsupported claim: increased revenue by 500%"
 
     with patch("agents.verifier.complete", _mock_complete(flagged_response)):
-        result = await verify_final_draft(SAMPLE_DRAFT, ledger)
+        result = await verify_final_draft(SAMPLE_DRAFT, ledger, original_resume=SAMPLE_DRAFT)
 
     assert result.flagged, "Expected non-empty flagged list when LLM returns unsupported claims"
     assert any("500%" in f or "revenue" in f.lower() for f in result.flagged)
@@ -89,7 +89,7 @@ async def test_verifier_clean_draft_returns_empty_flagged():
     ledger = _make_ledger()
 
     with patch("agents.verifier.complete", _mock_complete("VERIFIED")):
-        result = await verify_final_draft(CLEAN_DRAFT, ledger)
+        result = await verify_final_draft(CLEAN_DRAFT, ledger, original_resume=CLEAN_DRAFT)
 
     assert result.flagged == [], f"Expected empty flagged list, got: {result.flagged}"
 
@@ -106,7 +106,7 @@ async def test_verifier_result_preserves_draft_text():
     ledger = _make_ledger()
 
     with patch("agents.verifier.complete", _mock_complete("VERIFIED")):
-        result = await verify_final_draft(CLEAN_DRAFT, ledger)
+        result = await verify_final_draft(CLEAN_DRAFT, ledger, original_resume=CLEAN_DRAFT)
 
     assert result.text == CLEAN_DRAFT, (
         f"Expected result.text == original_draft, got: {result.text!r}"
@@ -193,7 +193,7 @@ async def test_verifier_uses_ledger_companies_and_metrics():
         return {"text": "VERIFIED", "input_tokens": 10, "output_tokens": 5, "cost_usd": 0.0}
 
     with patch("agents.verifier.complete", capture_complete):
-        await verify_final_draft(CLEAN_DRAFT, ledger)
+        await verify_final_draft(CLEAN_DRAFT, ledger, original_resume=CLEAN_DRAFT)
 
     assert captured_prompt, "complete was never called"
     prompt = captured_prompt[0]
@@ -204,3 +204,32 @@ async def test_verifier_uses_ledger_companies_and_metrics():
     assert "99%" in prompt or "$5M" in prompt, (
         "Ledger metrics must appear in the verifier prompt"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 6 -- verifier prompt includes original resume text and flag rules
+# ---------------------------------------------------------------------------
+
+async def test_verifier_prompt_includes_original_and_flag_rules(monkeypatch):
+    import agents.verifier as verifier
+    from agents.fact_extractor import ClaimsLedger
+
+    captured = {}
+
+    async def fake_complete(prompt, model, **kw):
+        captured["prompt"] = prompt
+        return {"text": "VERIFIED", "input_tokens": 1, "output_tokens": 1, "cost_usd": 0.0}
+
+    monkeypatch.setattr(verifier, "complete", fake_complete)
+    ledger = ClaimsLedger(companies=frozenset({"Acme"}), metrics=frozenset({"40%"}),
+                          raw_bullets=())
+    result = await verifier.verify_final_draft(
+        "Reduced load time by 40% at Acme.", ledger,
+        original_resume="Original: reduced page load time by 40% at Acme.",
+    )
+    p = captured["prompt"]
+    assert "ORIGINAL RESUME (ground truth):" in p
+    assert "reduced page load time by 40%" in p
+    assert "Do not flag rephrasings of supported claims" in p
+    assert "At most 10 flags" in p
+    assert result.flagged == []
