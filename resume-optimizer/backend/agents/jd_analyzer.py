@@ -55,6 +55,8 @@ Distinguish required vs preferred:
 - required_hard_skills: explicitly required technical skills ("must have", "required", "X+ years of")
 - preferred_soft_skills: "nice to have", "preferred", or behavioural traits
 - critical_keywords: 3-8 ATS-critical terms that MUST appear on a resume to pass screening
+required_hard_skills entries must be 1-3 word technologies or competencies, not
+requirement sentences ("Kubernetes", not "5+ years of Kubernetes experience").
 
 Return ONLY valid JSON. No prose."""
 
