@@ -65,9 +65,12 @@ class ResumeState:
     authoritative budget counter.
     """
 
-    def __init__(self, sections: Dict[str, str], available_metrics: str = "") -> None:
+    def __init__(self, sections: Dict[str, str], available_metrics: str = "",
+                 capabilities: frozenset = frozenset()) -> None:
         self._sections: Dict[str, str] = dict(sections)
         self.available_metrics: str = available_metrics
+        self.capabilities: frozenset = frozenset(t.lower() for t in capabilities)
+        self._gaps: set = set()
         self._total_input:    int   = 0
         self._total_output:   int   = 0
         self._total_cost_usd: float = 0.0
@@ -86,6 +89,17 @@ class ResumeState:
     def available_sections(self) -> list:
         with self._lock:
             return [k for k, v in self._sections.items() if v.strip()]
+
+    # -- Honest gaps -----------------------------------------------------------
+
+    def add_gaps(self, items) -> None:
+        """Record JD asks that cannot be truthfully added (no evidence)."""
+        with self._lock:
+            self._gaps.update(i.strip() for i in items if i and i.strip())
+
+    def honest_gaps(self) -> list:
+        with self._lock:
+            return sorted(self._gaps)
 
     # ── Token accounting ──────────────────────────────────────────────────────
 
