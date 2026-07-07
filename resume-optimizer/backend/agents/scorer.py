@@ -137,6 +137,9 @@ JD Tailoring (0-100):
 Seniority context: {seniority_note}
 {required_block}
 
+missing_keywords must be concrete skills, tools, or domain terms -- never seniority words
+("Senior", "Lead"), role adjectives, or soft phrases.
+
 Return ONLY a raw JSON object — no markdown, no code fences, no prose before or after.
 Use EXACTLY these top-level keys: "ats", "impact", "skills_gap", "readability", "jd_tailoring", "overall".
 
