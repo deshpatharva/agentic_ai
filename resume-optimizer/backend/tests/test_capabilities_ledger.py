@@ -41,10 +41,27 @@ def test_capabilities_from_skills_section_and_taxonomy():
 
 def test_capabilities_word_boundaries():
     from agents.fact_extractor import extract_claims
-    # "go" must not match inside "Django"; "r" must not match inside "Rust-like"
-    ledger = extract_claims("Skills\nDjango only\n\nExperience\n- Built things")
+    # "go" (a taxonomy term) must not match inside "Django" via the taxonomy
+    # regex's substring-boundary guard. Skills-section tokens are evidenced as
+    # whole comma-delimited units, not split on whitespace -- so "Django" is
+    # captured intact via the skills section, never contributing loose words
+    # like "custom"/"tool" the way a multi-word entry's constituents would.
+    ledger = extract_claims(
+        "Skills\nDjango, SQL\n\nExperience\n- Built things with Django"
+    )
     assert "go" not in ledger.capabilities
     assert "django" in ledger.capabilities
+
+
+def test_capabilities_no_word_split_pollution():
+    from agents.fact_extractor import extract_claims
+    # A multi-word skill entry must not leak its individual words as if they
+    # were independent evidenced capabilities (would let generic JD terms like
+    # "Custom Solutions" false-match against "custom").
+    ledger = extract_claims(RESUME)
+    assert "custom" not in ledger.capabilities
+    assert "tool" not in ledger.capabilities
+    assert "snowconvert custom tool" in ledger.capabilities
 
 
 def test_prompt_block_includes_capabilities():

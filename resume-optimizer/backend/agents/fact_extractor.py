@@ -92,14 +92,12 @@ def _extract_capabilities(resume_text: str) -> frozenset:
     caps: set = set()
     skills_text = detect_sections(resume_text).get("skills", "")
     if skills_text.strip():
-        for tok in _parse_skills(skills_text):
-            tok_lower = tok.lower()
-            # Keep the whole comma-delimited token (so multi-word tool names
-            # like "SnowConvert Custom Tool" survive intact) and also add its
-            # individual words (so single-word skills listed without commas,
-            # e.g. "Django only", still surface "django" on its own).
-            caps.add(tok_lower)
-            caps.update(tok_lower.split())
+        # Whole comma/semicolon-delimited tokens only -- NOT split on whitespace.
+        # Splitting multi-word entries into individual words would evidence
+        # generic filler ("custom", "tool") as if it were a real skill, which
+        # defeats the point of this allowlist (spec: capabilities feed the
+        # evidence check that stops the optimizer from claiming unowned skills).
+        caps.update(t.lower() for t in _parse_skills(skills_text))
     text_lower = resume_text.lower()
     for term, pattern in _TAXONOMY_PATTERNS.items():
         if pattern.search(text_lower):
