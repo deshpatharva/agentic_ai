@@ -57,7 +57,7 @@ async def test_humanizer_returns_dict_with_text_and_tokens():
     responses = [mock_response_1, mock_response_2, mock_response_3]
     call_count = [0]
 
-    async def mock_complete(prompt, model, cached_prefix=None):
+    async def mock_complete(prompt, model, cached_prefix=None, response_format=None):
         result = responses[call_count[0]]
         call_count[0] += 1
         return {
