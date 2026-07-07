@@ -230,7 +230,7 @@ async def test_all_four_tools_accumulate_cost():
     fake_llm_result = {"text": "updated text", "input_tokens": 10, "output_tokens": 5, "cost_usd": COST}
 
     # keyword_inject
-    state = ResumeState(sections={"summary": "Led team."})
+    state = ResumeState(sections={"summary": "Led team."}, capabilities=frozenset({"python"}))
     with patch("agents.tools.complete", new_callable=AsyncMock, return_value=fake_llm_result):
         await keyword_inject(state, missing_keywords_csv="python", target_sections_csv="summary")
     assert state.cost_usd == pytest.approx(COST), f"keyword_inject cost not tracked: {state.cost_usd}"
@@ -242,7 +242,7 @@ async def test_all_four_tools_accumulate_cost():
     assert state.cost_usd == pytest.approx(COST), f"bullet_strengthen cost not tracked: {state.cost_usd}"
 
     # skills_rewrite
-    state = ResumeState(sections={"skills": "Python, SQL"})
+    state = ResumeState(sections={"skills": "Python, SQL"}, capabilities=frozenset({"kubernetes"}))
     with patch("agents.tools.complete", new_callable=AsyncMock, return_value=fake_llm_result):
         await skills_rewrite(state, missing_skills_csv="kubernetes")
     assert state.cost_usd == pytest.approx(COST), f"skills_rewrite cost not tracked: {state.cost_usd}"

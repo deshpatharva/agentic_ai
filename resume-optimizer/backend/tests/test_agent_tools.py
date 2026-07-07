@@ -100,7 +100,8 @@ def test_resume_state_reassemble_canonical_order():
 async def test_keyword_inject_updates_section_and_cost():
     from agents import tools
 
-    st = tools.ResumeState(sections={"summary": "Built things.", "experience": "Did work."})
+    st = tools.ResumeState(sections={"summary": "Built things.", "experience": "Did work."},
+                           capabilities=frozenset({"scalable"}))
 
     async def fake(prompt, model, **kw):
         return {"text": "Built scalable things.", "input_tokens": 20, "output_tokens": 10, "cost_usd": 0.001}
@@ -120,7 +121,7 @@ async def test_keyword_inject_multiple_sections():
     st = tools.ResumeState(sections={
         "summary": "Professional summary.",
         "experience": "Work experience."
-    })
+    }, capabilities=frozenset({"python", "agile"}))
     call_count = 0
 
     async def fake(prompt, model, **kw):
@@ -164,7 +165,8 @@ async def test_keyword_inject_budget_guard():
 async def test_keyword_inject_section_not_found():
     from agents import tools
 
-    st = tools.ResumeState(sections={"experience": "Some work."})
+    st = tools.ResumeState(sections={"experience": "Some work."},
+                           capabilities=frozenset({"python"}))
 
     with patch.object(tools, "complete", new=_fake_complete):
         msg = await tools.keyword_inject(st, missing_keywords_csv="python", target_sections_csv="summary")
@@ -177,7 +179,8 @@ async def test_keyword_inject_empty_section_skipped():
     """An empty target section should be skipped (not passed to LLM)."""
     from agents import tools
 
-    st = tools.ResumeState(sections={"summary": "", "experience": "Real work."})
+    st = tools.ResumeState(sections={"summary": "", "experience": "Real work."},
+                           capabilities=frozenset({"python"}))
     call_count = 0
 
     async def fake(prompt, model, **kw):
@@ -267,7 +270,8 @@ async def test_bullet_strengthen_empty_output_unchanged():
 async def test_skills_rewrite_updates_section_and_cost():
     from agents import tools
 
-    st = tools.ResumeState(sections={"skills": "Python, SQL, Git"})
+    st = tools.ResumeState(sections={"skills": "Python, SQL, Git"},
+                           capabilities=frozenset({"docker", "kubernetes"}))
 
     with patch.object(tools, "complete", new=_fake_complete):
         msg = await tools.skills_rewrite(st, missing_skills_csv="Docker, Kubernetes")
@@ -301,7 +305,8 @@ async def test_skills_rewrite_budget_guard():
 async def test_skills_rewrite_no_skills_section():
     from agents import tools
 
-    st = tools.ResumeState(sections={"experience": "Did work."})
+    st = tools.ResumeState(sections={"experience": "Did work."},
+                           capabilities=frozenset({"docker"}))
 
     with patch.object(tools, "complete", new=_fake_complete):
         msg = await tools.skills_rewrite(st, missing_skills_csv="Docker")
@@ -314,7 +319,8 @@ async def test_skills_rewrite_empty_output_unchanged():
     from agents import tools
 
     original = "Python, SQL"
-    st = tools.ResumeState(sections={"skills": original})
+    st = tools.ResumeState(sections={"skills": original},
+                           capabilities=frozenset({"docker"}))
 
     with patch.object(tools, "complete", new=_empty_complete):
         msg = await tools.skills_rewrite(st, missing_skills_csv="Docker")
@@ -332,7 +338,8 @@ async def test_keyword_inject_prompt_contains_no_placeholder_metrics_rule():
     """The prompt sent to the LLM must include the no-placeholder-metrics rule."""
     from agents import tools
 
-    st = tools.ResumeState(sections={"summary": "Built software."})
+    st = tools.ResumeState(sections={"summary": "Built software."},
+                           capabilities=frozenset({"scalable"}))
     captured_prompts = []
 
     async def capturing_fake(prompt, model, **kw):
@@ -437,7 +444,8 @@ async def test_keyword_inject_complete_failure_returns_error_string():
     from agents import tools
 
     original_summary = "Built software."
-    st = tools.ResumeState(sections={"summary": original_summary})
+    st = tools.ResumeState(sections={"summary": original_summary},
+                           capabilities=frozenset({"scalable"}))
 
     async def failing_complete(prompt, model, **kw):
         raise Exception("timeout")
@@ -471,3 +479,84 @@ def test_resume_state_gap_collector_dedups_and_sorts():
     st.add_gaps(["Kubernetes", "terraform", "Kubernetes", "  "])
     st.add_gaps(("docker",))
     assert st.honest_gaps() == ["Kubernetes", "docker", "terraform"]
+
+
+# ---------------------------------------------------------------------------
+# split_evidenced + evidence-filtered keyword_inject / skills_rewrite
+# ---------------------------------------------------------------------------
+
+
+def test_split_evidenced_partitions_and_drops_seniority():
+    from agents.tools import split_evidenced
+
+    caps = frozenset({"python", "aws", "ci/cd", "distributed systems"})
+    evidenced, gaps = split_evidenced(
+        ["Python", "Kubernetes", "AWS (ECS, Lambda)", "CI/CD pipelines",
+         "distributed systems design", "Senior", "Terraform"],
+        caps,
+    )
+    assert evidenced == ["Python", "AWS (ECS, Lambda)", "CI/CD pipelines",
+                         "distributed systems design"]
+    assert gaps == ["Kubernetes", "Terraform"]  # "Senior" dropped entirely
+
+
+async def test_keyword_inject_filters_unevidenced_and_records_gaps():
+    from agents import tools
+
+    st = tools.ResumeState(
+        sections={"experience": "Built APIs in Python for the portal."},
+        capabilities=frozenset({"python"}),
+    )
+    captured = {}
+
+    async def _capture(prompt, model, **kw):
+        captured["prompt"] = prompt
+        return FAKE_RESULT
+
+    with patch("agents.tools.complete", _capture):
+        obs = await tools.keyword_inject(st, "Python, Kubernetes, Terraform",
+                                         target_sections_csv="experience")
+    assert "Kubernetes" not in captured["prompt"]
+    assert "Terraform" not in captured["prompt"]
+    assert "Python" in captured["prompt"]
+    assert "Skipped (no evidence" in obs
+    assert st.honest_gaps() == ["Kubernetes", "Terraform"]
+
+
+async def test_keyword_inject_all_gaps_makes_no_llm_call():
+    from agents import tools
+
+    st = tools.ResumeState(sections={"experience": "Built things."},
+                           capabilities=frozenset({"python"}))
+    called = []
+
+    async def _capture(prompt, model, **kw):
+        called.append(1)
+        return FAKE_RESULT
+
+    with patch("agents.tools.complete", _capture):
+        obs = await tools.keyword_inject(st, "Kubernetes, Terraform")
+    assert not called
+    assert "lack evidence" in obs
+    assert st.honest_gaps() == ["Kubernetes", "Terraform"]
+
+
+async def test_skills_rewrite_only_offers_evidenced_skills():
+    from agents import tools
+
+    st = tools.ResumeState(
+        sections={"skills": "Skills\nPython, SQL", "experience": "Used AWS daily."},
+        capabilities=frozenset({"python", "sql", "aws"}),
+    )
+    captured = {}
+
+    async def _capture(prompt, model, **kw):
+        captured["prompt"] = prompt
+        return FAKE_RESULT
+
+    with patch("agents.tools.complete", _capture):
+        obs = await tools.skills_rewrite(st, "AWS, Kubernetes")
+    assert "AWS" in captured["prompt"]
+    assert "Kubernetes" not in captured["prompt"]
+    assert "evidenced" in captured["prompt"]
+    assert st.honest_gaps() == ["Kubernetes"]

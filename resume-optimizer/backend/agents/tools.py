@@ -37,6 +37,7 @@ Tokens accumulate in ResumeState (thread-safe). Every tool checks the budget
 at the start and returns early if exceeded.
 """
 
+import re
 import threading
 from typing import Dict
 
@@ -159,6 +160,38 @@ def _budget_ok(state: ResumeState) -> tuple:
     return True, ""
 
 
+# -- Evidence filtering ---------------------------------------------------------
+
+_SENIORITY_STOPWORDS = frozenset({
+    "senior", "junior", "lead", "principal", "staff", "expert", "seasoned",
+    "entry-level", "mid-level", "experienced",
+})
+
+
+def _norm_term(s: str) -> str:
+    s = re.sub(r"\([^)]*\)", " ", s.lower())          # strip parentheticals
+    return re.sub(r"\s+", " ", s).strip(" .")
+
+
+def split_evidenced(items, capabilities) -> tuple:
+    """Partition JD asks into (evidenced, gaps) against the capabilities allowlist.
+
+    Seniority/role adjectives are dropped from BOTH lists -- titles are never
+    keyword-injectable and are not closable gaps either (spec 2b).
+    """
+    evidenced, gaps = [], []
+    for item in items:
+        n = _norm_term(item)
+        if not n or n in _SENIORITY_STOPWORDS:
+            continue
+        hit = n in capabilities or any(
+            re.search(r"(?<![\w+#])" + re.escape(c) + r"(?![\w+#])", n)
+            for c in capabilities
+        )
+        (evidenced if hit else gaps).append(item)
+    return evidenced, gaps
+
+
 # ── Tool 1: Keyword injection (fixes low ATS score) ──────────────────────────
 
 
@@ -186,9 +219,16 @@ async def keyword_inject(
 
     keywords = [k.strip() for k in missing_keywords_csv.split(",") if k.strip()]
     if not keywords:
-        return "No keywords provided — nothing to inject."
+        return "No keywords provided -- nothing to inject."
+    evidenced, gaps = split_evidenced(keywords, state.capabilities)
+    if gaps:
+        state.add_gaps(gaps)
+    if not evidenced:
+        return (f"All requested items lack evidence -- recorded as honest gaps: "
+                f"{', '.join(gaps)}.")
     target_sections = [s.strip() for s in target_sections_csv.split(",") if s.strip()]
     updated: list = []
+    used_note = ""
 
     for section_name in target_sections:
         section_text = state.get_section(section_name)
@@ -201,19 +241,22 @@ async def keyword_inject(
                 return msg + f" Partially updated: {', '.join(updated)}."
             return msg
 
-        prompt = f"""Inject these missing keywords into the resume section below.
+        prompt = f"""Weave these keywords into the resume section below. Every keyword listed is already
+evidenced by the candidate's own material -- your job is presentation, not addition.
 
-RULES — strictly follow all of them:
-- Weave keywords into EXISTING sentences/bullets only. Do NOT add new sentences, clauses, or bullets.
-- Inject only keywords that match the candidate's actual profession and the target role's domain.
-- Skip any keyword implying a job function the candidate has never performed, regardless of field.
-- Do NOT introduce any new responsibilities, collaborations, or role claims not already in the text.
-- Do NOT change any metrics, dates, company names, or facts. NEVER insert placeholder metrics ("[XX%]").
-- Do NOT copy job-description phrases verbatim, and do NOT repeat the same phrase across multiple
-  bullets — vary the wording so it reads naturally, not keyword-stuffed.
-- Plain text only — no markdown bold (**), no asterisks, no LaTeX or "$" math wrappers.
-
-Keywords to inject: {', '.join(keywords)}
+RULES -- strictly follow all of them:
+- Weave keywords into EXISTING sentences/bullets only. Do NOT add new sentences,
+  clauses, or bullets.
+- Rephrase what the candidate already does so it uses the keyword. Do NOT claim new
+  duties, projects, tools, or role scope to host a keyword.
+- Do NOT change any metrics, dates, company names, job titles, or seniority wording.
+  NEVER insert placeholder metrics ("[XX%]").
+- Do NOT copy job-description phrases verbatim, and do NOT repeat the same phrase across
+  bullets -- vary the wording so it reads naturally.
+- If a keyword cannot be woven without inventing a new claim, skip it.
+- Plain text only -- no markdown bold, no LaTeX or "$" math wrappers.
+{used_note}
+Keywords to weave in: {', '.join(evidenced)}
 
 Section:
 \"\"\"
@@ -234,11 +277,17 @@ Return ONLY the updated section text."""
         if result.get("text"):
             state.update_section(section_name, result["text"])
             updated.append(section_name)
+            used_note = (f"\nAlready used in another section: {', '.join(evidenced)} "
+                         f"-- do not repeat them here.")
 
+    skipped_note = (f" Skipped (no evidence -- recorded as gaps): {', '.join(gaps)}."
+                    if gaps else "")
     if updated:
-        return f"Keywords ({missing_keywords_csv}) injected into: {', '.join(updated)}."
+        return (f"Injected (evidenced): {', '.join(evidenced)} into: "
+                f"{', '.join(updated)}.{skipped_note}")
     available = state.available_sections()
-    return f"No target sections found ({target_sections_csv}). Available: {', '.join(available)}."
+    return (f"No target sections found ({target_sections_csv}). "
+            f"Available: {', '.join(available)}.{skipped_note}")
 
 
 # ── Tool 2: Bullet strengthener (fixes low Impact score) ─────────────────────
@@ -344,27 +393,33 @@ async def skills_rewrite(
     if not ok:
         return msg
 
+    missing = [s.strip() for s in missing_skills_csv.split(",") if s.strip()]
+    if not missing:
+        return "No missing skills provided -- nothing to add."
+    evidenced, gaps = split_evidenced(missing, state.capabilities)
+    if gaps:
+        state.add_gaps(gaps)
+    if not evidenced:
+        return (f"All requested items lack evidence -- recorded as honest gaps: "
+                f"{', '.join(gaps)}.")
+
     skills_text = state.get_section("skills")
     if not skills_text.strip():
         return (
             "No skills section found. Call keyword_inject with "
-            f"target_sections_csv='experience' and missing_keywords_csv='{missing_skills_csv}'."
+            f"target_sections_csv='experience' and missing_keywords_csv='{', '.join(evidenced)}'."
         )
 
-    missing = [s.strip() for s in missing_skills_csv.split(",") if s.strip()]
-    if not missing:
-        return "No missing skills provided — nothing to add."
+    prompt = f"""Rewrite the Skills section so it accurately reflects the candidate's evidenced skills.
 
-    prompt = f"""Rewrite the Skills section below to include the missing skills.
-Integrate naturally — group with related existing skills if grouped.
-Do NOT invent certifications or proficiency claims.
-Only add a skill if it is plausible the candidate has it (a real tool/technology) —
-skip skills that don't fit the candidate's background.
-STRIP any parenthetical examples — add "Data migration tools", NOT "Data migration tools (e.g., SnowConvert)".
-Do NOT copy job-description phrasing verbatim.
-Plain text only — no LaTeX or "$" math.
+You may ONLY add skills from this list -- each one already appears in the candidate's own
+resume (experience, summary, or projects): {', '.join(evidenced)}
 
-Missing skills to add: {', '.join(missing)}
+- Group added skills with related existing ones if the section is grouped.
+- Keep every existing skill; deduplicate exact repeats.
+- Do NOT add anything outside the list. Do NOT invent certifications or proficiency
+  levels. STRIP parenthetical examples ("Data migration tools", not "(e.g., SnowConvert)").
+- Plain text only -- no LaTeX or "$" math.
 
 Skills section:
 \"\"\"
@@ -382,10 +437,12 @@ Return ONLY the complete updated skills section text."""
         result.get("output_tokens", 0),
         result.get("cost_usd", 0.0),
     )
+    skipped_note = (f" Skipped (no evidence -- recorded as gaps): {', '.join(gaps)}."
+                    if gaps else "")
     if result.get("text"):
         state.update_section("skills", result["text"])
-        return f"Skills section updated to include: {missing_skills_csv}."
-    return "Skills rewrite returned empty output — section unchanged."
+        return f"Skills section updated to include: {', '.join(evidenced)}.{skipped_note}"
+    return "Skills rewrite returned empty output -- section unchanged."
 
 
 # ── Tool 4: Bullet reorder (fixes low JD Tailoring score) ────────────────────
