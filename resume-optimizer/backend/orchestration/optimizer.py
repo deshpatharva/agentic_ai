@@ -15,7 +15,7 @@ import logging
 from typing import Callable, Optional
 
 from agents.fact_extractor import ClaimsLedger
-from agents.tools import ResumeState
+from agents.tools import ResumeState, split_evidenced
 from agents.rewriter import rewrite_resume
 from agents.verifier import verify_final_draft
 import config
@@ -171,31 +171,42 @@ async def _with_verifier(pipeline_result: dict, ledger: ClaimsLedger, original_r
     }
 
 
-def _format_scores_feedback(scores: dict) -> str:
+def _format_scores_feedback(scores: dict, capabilities: frozenset = frozenset()) -> tuple:
     """Turn the raw scores dict into a human-readable feedback block for the rewriter.
 
     Without this, ``f"{scores}"`` dumps the Python repr (``{'ats': {...}}``) into the
     prompt — far less useful than a list of concrete weaknesses.
+
+    Filters keyword/skill asks through the capabilities evidence allowlist so this
+    second feedback channel doesn't undo the keyword filtering in rewrite_resume's
+    own jd_keywords path. Returns (feedback_text, gaps).
     """
     if not isinstance(scores, dict):
-        return str(scores)
+        return str(scores), []
 
     lines: list[str] = []
+    gaps: list[str] = []
     ats = scores.get("ats", {}) or {}
     if ats.get("missing_keywords"):
-        lines.append(f"- Add missing ATS keywords: {', '.join(ats['missing_keywords'][:10])}")
+        evidenced, kw_gaps = split_evidenced(ats["missing_keywords"][:10], capabilities)
+        gaps.extend(kw_gaps)
+        if evidenced:
+            lines.append(f"- Add missing ATS keywords: {', '.join(evidenced)}")
     impact = scores.get("impact", {}) or {}
     if impact.get("weak_bullets"):
         lines.append("- Strengthen weak bullets: " + "; ".join(impact["weak_bullets"][:5]))
     skills = scores.get("skills_gap", {}) or {}
     crit = skills.get("critical_missing") or skills.get("missing_skills") or []
     if crit:
-        lines.append(f"- Add missing required skills: {', '.join(crit[:10])}")
+        evidenced, sk_gaps = split_evidenced(crit[:10], capabilities)
+        gaps.extend(sk_gaps)
+        if evidenced:
+            lines.append(f"- Add missing required skills: {', '.join(evidenced)}")
     tailor = scores.get("jd_tailoring", {}) or {}
     if tailor.get("issues"):
         lines.append("- Fix tailoring issues: " + "; ".join(tailor["issues"][:3]))
 
-    return "\n".join(lines) if lines else ""
+    return ("\n".join(lines) if lines else ""), gaps
 
 
 async def _deterministic_fallback(
@@ -205,10 +216,11 @@ async def _deterministic_fallback(
     scores: dict,
 ) -> dict:
     """Single full rewrite used when the agent cannot run or produces no change."""
+    feedback_text, feedback_gaps = _format_scores_feedback(scores, claims_ledger.capabilities)
     result = await rewrite_resume(
         resume_text=resume_text,
         jd_keywords=jd_keywords,
-        consolidated_feedback=_format_scores_feedback(scores),
+        consolidated_feedback=feedback_text,
         claims_ledger=claims_ledger,
     )
     return {
@@ -218,5 +230,5 @@ async def _deterministic_fallback(
         "cost_usd":      result.get("cost_usd", 0.0),
         "iterations":    1,
         "fallback":      True,
-        "honest_gaps":   result.get("gaps", []),
+        "honest_gaps":   sorted(set(result.get("gaps", [])) | set(feedback_gaps)),
     }

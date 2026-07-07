@@ -92,3 +92,16 @@ async def test_rewriter_filters_keywords_and_reports_gaps(monkeypatch):
     assert "KEYWORD SATURATION" not in captured["prompt"]
     assert "Kubernetes" not in captured["prompt"]
     assert result["gaps"] == ["Kubernetes"]
+
+
+def test_format_scores_feedback_filters_unevidenced_and_returns_gaps():
+    from orchestration.optimizer import _format_scores_feedback
+
+    scores = {
+        "ats": {"missing_keywords": ["Python", "Kubernetes"]},
+        "skills_gap": {"critical_missing": ["AWS", "Terraform"]},
+    }
+    text, gaps = _format_scores_feedback(scores, frozenset({"python", "aws"}))
+    assert "Python" in text and "Kubernetes" not in text
+    assert "AWS" in text and "Terraform" not in text
+    assert set(gaps) == {"Kubernetes", "Terraform"}
