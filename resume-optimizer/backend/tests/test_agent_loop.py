@@ -364,3 +364,60 @@ async def test_on_event_callback_invoked():
     assert "keyword_inject" in first["message"]
     assert "tokens_used" in first
     assert "budget" in first
+
+
+# ---------------------------------------------------------------------------
+# Test 6: capped (gap-blocked) dimensions stop reflections and report gaps
+# ---------------------------------------------------------------------------
+
+
+async def test_capped_dimensions_stop_reflections_and_report_gaps(monkeypatch):
+    """Below-target but gap-blocked dimensions must end the loop (no treadmill)
+    and surface honest_gaps in the result."""
+    from agents.fact_extractor import ClaimsLedger
+    from agents.tools import ResumeState
+    from orchestration import agent_loop
+
+    capped_scores = {
+        "ats":          {"score": 50, "missing_keywords": ["Kubernetes"]},
+        "impact":       {"score": 95, "weak_bullets": []},
+        "skills_gap":   {"score": 55, "missing_skills": ["Terraform"]},
+        "readability":  {"score": 60},
+        "jd_tailoring": {"score": 95, "issues": []},
+        "overall": 70,
+    }
+    ledger = ClaimsLedger(companies=frozenset(), metrics=frozenset(),
+                          raw_bullets=(), capabilities=frozenset({"python"}))
+    state = ResumeState(sections={"experience": "Did python things."},
+                        capabilities=ledger.capabilities)
+
+    calls = {"llm": 0, "score": 0}
+
+    class _Msg:
+        content = "done"
+        tool_calls = None
+
+    async def fake_cwt(messages, model, tools, **kw):
+        calls["llm"] += 1
+        return {"message": _Msg(), "input_tokens": 10, "output_tokens": 5,
+                "cost_usd": 0.0, "cached_input_tokens": 0}
+
+    async def fake_score(*a, **kw):
+        calls["score"] += 1
+        return {"text": capped_scores, "tokens": {"input_tokens": 0, "output_tokens": 0},
+                "cost_usd": 0.0}
+
+    def fake_guard(text, ledger_, original):
+        return type("_G", (), {"gaps": [], "text": text})()
+
+    monkeypatch.setattr(agent_loop, "complete_with_tools", fake_cwt)
+    monkeypatch.setattr(agent_loop, "score_combined", fake_score)
+    monkeypatch.setattr(agent_loop, "fabrication_guard", fake_guard)
+
+    result = await agent_loop.run_agent(
+        state=state, scores=capped_scores, jd_text="jd", jd_keywords=[],
+        ledger=ledger, original_resume="Did python things.",
+    )
+    # one strategist turn, then loop ends: ats/skills below target but capped
+    assert calls["llm"] == 1
+    assert result["honest_gaps"] == ["Kubernetes", "Terraform"]

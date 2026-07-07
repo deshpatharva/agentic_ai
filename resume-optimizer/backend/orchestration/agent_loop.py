@@ -35,7 +35,7 @@ from agents.tools import (
     skills_rewrite,
     split_evidenced,
 )
-from config import AGENT_MAX_ITER, AGENT_TOKEN_BUDGET, MODEL_OPTIMIZER, SCORE_DIMENSIONS, SCORE_TARGET
+from config import AGENT_MAX_ITER, AGENT_TOKEN_BUDGET, MODEL_OPTIMIZER, SCORE_TARGET
 from llm import complete_with_tools
 from observability.trace import set_call_kind
 
@@ -385,18 +385,19 @@ async def run_agent(
                 _logger.warning("Re-score failed (%s) — using prior scores for reflection", exc)
 
         overall = current_scores.get("overall", 0)
-        # Readability is excluded — the post-loop humanize stage owns it, and the
-        # optimizer has no tool to raise it. Including it here would block the
-        # done-check indefinitely whenever readability lags the other dimensions.
-        _agent_dims = tuple(d for d in SCORE_DIMENSIONS if d != "readability")
-        all_above = all(
-            current_scores.get(d, {}).get("score", 0) >= SCORE_TARGET
-            for d in _agent_dims
+        # Truthful done-check (spec 2c): a dimension is satisfied when it meets
+        # target OR nothing truthfully actionable remains ("capped") -- readability
+        # is excluded, since the post-loop humanize stage owns it, not this loop.
+        work = _dimension_work(current_scores, state.capabilities)
+        for entry in work.values():
+            state.add_gaps(entry.get("gaps", []))
+        all_done = all(
+            e["score"] >= SCORE_TARGET or not e["actionable"] for e in work.values()
         )
 
         _logger.info(
-            "agent_loop reflection %d/%d: overall=%s all_above=%s guard_gaps=%d",
-            reflection_idx + 1, reflections_cap, overall, all_above, len(guard.gaps),
+            "agent_loop reflection %d/%d: overall=%s all_done=%s guard_gaps=%d",
+            reflection_idx + 1, reflections_cap, overall, all_done, len(guard.gaps),
         )
 
         # No tool removes fabricated content, so identical gaps two reflections in
@@ -405,7 +406,7 @@ async def run_agent(
         gaps_stalled = bool(guard.gaps) and list(guard.gaps) == prev_gaps
         prev_gaps = list(guard.gaps)
 
-        if all_above and (not guard.gaps or gaps_stalled):
+        if all_done and (not guard.gaps or gaps_stalled):
             break  # target met; gaps either absent or unfixable by the toolset
 
         if budget_exhausted:
@@ -417,7 +418,12 @@ async def run_agent(
             # guard feedback. History is append-only — the original scores message
             # stays in place so earlier assistant turns keep their context, and the
             # stable system prompt keeps its cache hits.
-            feedback_parts: list[str] = [_build_scores_context(current_scores, state.capabilities)]
+            feedback_parts: list[str] = [
+                _build_scores_context(
+                    current_scores, state.capabilities,
+                    heading=f"UPDATED SCORES (reflection {reflection_idx + 1})",
+                )
+            ]
             if guard.gaps:
                 feedback_parts.append(
                     f"Fabrication guard flagged: {'; '.join(guard.gaps[:5])}"
@@ -439,4 +445,5 @@ async def run_agent(
         "cost_usd":      state.cost_usd,
         "iterations":    iterations,
         "flagged":       list(guard.gaps),
+        "honest_gaps":   state.honest_gaps(),
     }
