@@ -70,6 +70,7 @@ from auth.router import router as auth_router, user_router
 from auth.dependencies import decode_token_checked, decode_sse_token, get_current_user, _effective_plan, reserve_run_quota, refund_run_quota, _counter_date_for
 from dashboard.router import router as dashboard_router
 from admin.router import router as admin_router
+from admin.observability import router as observability_router
 from profiles.router import router as profiles_router, profile_ops as profile_ops_router
 from jd.router import router as jd_router
 from chat.router import router as chat_router
@@ -289,6 +290,7 @@ app.include_router(auth_router)
 app.include_router(user_router)
 app.include_router(dashboard_router)
 app.include_router(admin_router)
+app.include_router(observability_router)
 app.include_router(profiles_router, prefix="/profiles", tags=["profiles"], dependencies=[Depends(get_current_user)])
 app.include_router(profile_ops_router, prefix="/profile", tags=["profiles"], dependencies=[Depends(get_current_user)])
 app.include_router(jd_router, tags=["jd"])
