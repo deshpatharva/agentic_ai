@@ -62,19 +62,17 @@ async def run_debate(
           - output_tokens (int): cumulative output tokens across all calls
           - cost_usd (float): cumulative cost
           - iterations (int): number of complete_with_tools calls made
+          - flagged (list): fabrication-guard gaps on the final draft
     """
     # Tag all LlmCallLog rows from this driver as "pro_debate"
     set_call_kind("pro_debate")
 
     # Stable system prompt — shared across rounds so the provider cache hits.
-    stable_system = _build_system_stable(jd_keywords, state.available_sections())
+    stable_system = _build_system_stable(state.available_sections())
 
     current_scores = scores
     iterations = 0
     last_objection: str | None = None
-    # Guard result initialised so we always have something to reference
-    # even if the loop exits early (e.g. budget exceeded before first round).
-    guard = type("_Guard", (), {"gaps": [], "text": state.reassemble()})()
 
     for round_idx in range(DEBATE_MAX_ROUNDS):
         _logger.info("debate_loop: starting round %d/%d", round_idx + 1, DEBATE_MAX_ROUNDS)
@@ -132,8 +130,11 @@ async def run_debate(
             assistant_msg = {
                 "role": "assistant",
                 "content": msg.content or "",
-                "tool_calls": msg.tool_calls or None,
             }
+            # Omit the key entirely on non-tool turns — some providers reject
+            # an explicit tool_calls: null on assistant messages.
+            if msg.tool_calls:
+                assistant_msg["tool_calls"] = msg.tool_calls
             _rc = getattr(msg, "reasoning_content", None)
             if _rc:
                 assistant_msg["reasoning_content"] = _rc
@@ -166,14 +167,18 @@ async def run_debate(
                 })
 
                 if on_event:
-                    on_event({
-                        "type": "agent_step",
-                        "message": f"[Debate round {round_idx + 1}] Tool {tool_name}: {obs[:100]}",
-                        "stage": "debate",
-                        "tokens_used": state.total_tokens(),
-                        "budget": DEBATE_TOKEN_BUDGET,
-                        "round": round_idx + 1,
-                    })
+                    try:
+                        on_event({
+                            "type": "agent_step",
+                            "message": f"[Debate round {round_idx + 1}] Tool {tool_name}: {obs[:100]}",
+                            "stage": "debate",
+                            "tokens_used": state.total_tokens(),
+                            "budget": DEBATE_TOKEN_BUDGET,
+                            "round": round_idx + 1,
+                        })
+                    except Exception:
+                        # A broken progress callback must not abort the debate.
+                        _logger.warning("debate_loop: on_event callback raised", exc_info=True)
 
         # If the optimizer couldn't make any tool calls this round (budget hit
         # or model chose not to), skip the reviewer — no point critiquing a
@@ -238,12 +243,15 @@ async def run_debate(
         )
 
         if on_event:
-            on_event({
-                "type": "debate_review",
-                "message": f"[Reviewer round {round_idx + 1}]: {reviewer_text[:120]}",
-                "stage": "debate",
-                "round": round_idx + 1,
-            })
+            try:
+                on_event({
+                    "type": "debate_review",
+                    "message": f"[Reviewer round {round_idx + 1}]: {reviewer_text[:120]}",
+                    "stage": "debate",
+                    "round": round_idx + 1,
+                })
+            except Exception:
+                _logger.warning("debate_loop: on_event callback raised", exc_info=True)
 
         # Termination check: reviewer satisfied?
         if reviewer_text.lower().startswith("no objections"):
@@ -274,4 +282,5 @@ async def run_debate(
         "output_tokens": state.output_tokens,
         "cost_usd":      state.cost_usd,
         "iterations":    iterations,
+        "flagged":       list(guard.gaps),
     }

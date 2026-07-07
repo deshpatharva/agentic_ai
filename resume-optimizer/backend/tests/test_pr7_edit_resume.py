@@ -70,7 +70,7 @@ async def test_run_agent_injects_user_instruction_and_returns_flagged():
 
     captured = {}
 
-    async def fake_complete_with_tools(messages, model, tools):
+    async def fake_complete_with_tools(messages, model, tools, **kwargs):
         captured["system"] = messages[0]["content"]
         return {"message": _fake_msg(content="done", tool_calls=None),
                 "input_tokens": 1, "output_tokens": 1, "cost_usd": 0.0}
