@@ -218,4 +218,5 @@ async def _deterministic_fallback(
         "cost_usd":      result.get("cost_usd", 0.0),
         "iterations":    1,
         "fallback":      True,
+        "honest_gaps":   result.get("gaps", []),
     }

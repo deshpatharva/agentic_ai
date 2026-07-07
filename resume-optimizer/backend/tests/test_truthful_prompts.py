@@ -69,3 +69,26 @@ def test_scores_context_custom_heading():
     ctx = _build_scores_context(SCORES, LEDGER.capabilities,
                                 heading="UPDATED SCORES (reflection 2)")
     assert ctx.startswith("UPDATED SCORES (reflection 2):")
+
+
+async def test_rewriter_filters_keywords_and_reports_gaps(monkeypatch):
+    import agents.rewriter as rewriter
+    from agents.fact_extractor import ClaimsLedger
+
+    captured = {}
+
+    async def fake_complete(prompt, model, **kw):
+        captured["prompt"] = prompt
+        return {"text": "rewritten", "input_tokens": 1, "output_tokens": 1, "cost_usd": 0.0}
+
+    monkeypatch.setattr(rewriter, "complete", fake_complete)
+    ledger = ClaimsLedger(companies=frozenset(), metrics=frozenset(),
+                          raw_bullets=(), capabilities=frozenset({"python"}))
+    result = await rewriter.rewrite_resume(
+        resume_text="I use Python.", jd_keywords=["Python", "Kubernetes"],
+        claims_ledger=ledger,
+    )
+    assert "TRUTHFUL KEYWORD ALIGNMENT" in captured["prompt"]
+    assert "KEYWORD SATURATION" not in captured["prompt"]
+    assert "Kubernetes" not in captured["prompt"]
+    assert result["gaps"] == ["Kubernetes"]
