@@ -450,3 +450,24 @@ async def test_keyword_inject_complete_failure_returns_error_string():
     # Section must be unchanged since the call failed
     assert st.get_section("summary") == original_summary
     assert st.total_tokens() == 0
+
+
+# ---------------------------------------------------------------------------
+# Capabilities + honest gaps (truthful optimizer)
+# ---------------------------------------------------------------------------
+
+
+def test_resume_state_capabilities_lowercased():
+    from agents import tools
+
+    st = tools.ResumeState(sections={"summary": "x"}, capabilities=frozenset({"Python", "AWS"}))
+    assert st.capabilities == frozenset({"python", "aws"})
+
+
+def test_resume_state_gap_collector_dedups_and_sorts():
+    from agents import tools
+
+    st = tools.ResumeState(sections={"summary": "x"})
+    st.add_gaps(["Kubernetes", "terraform", "Kubernetes", "  "])
+    st.add_gaps(("docker",))
+    assert st.honest_gaps() == ["Kubernetes", "docker", "terraform"]
