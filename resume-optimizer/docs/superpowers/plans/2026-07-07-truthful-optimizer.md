@@ -1793,14 +1793,20 @@ git commit -m "feat: guard/verifier/score run on delivered text; honest-gap repo
 
 **Files:**
 - Modify: `agents/scorer.py`, `agents/jd_analyzer.py`
-- Test: `tests/test_truthful_prompts.py` (append)
+- Test: `tests/test_scorer_jd_hygiene.py` (create — kept separate from
+  `test_truthful_prompts.py` deliberately: this task has no interface dependency on
+  Task 5/7 and must stay parallelizable against them)
 
 **Interfaces:**
 - Consumes/Produces: prompt-only; no signature changes.
 
-- [ ] **Step 1: Write the failing tests** — append to `tests/test_truthful_prompts.py`:
+- [ ] **Step 1: Write the failing tests** — create `tests/test_scorer_jd_hygiene.py`:
 
 ```python
+"""Scorer + JD analyzer prompt hygiene (spec 5d) -- standalone file, no
+interface dependency on the capabilities/ledger track (Tasks 1-9,12)."""
+
+
 async def test_scorer_prompt_bans_seniority_keywords(monkeypatch):
     import agents.scorer as scorer
 
@@ -1838,8 +1844,8 @@ async def test_jd_analyzer_prompt_demands_short_skill_terms(monkeypatch):
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `../.venv/Scripts/python.exe -m pytest tests/test_truthful_prompts.py -q`
-Expected: the two new tests FAIL.
+Run: `../.venv/Scripts/python.exe -m pytest tests/test_scorer_jd_hygiene.py -q`
+Expected: FAIL — `AssertionError` (the banned/required phrases aren't in the current prompts yet).
 
 - [ ] **Step 3: Implement**
 
@@ -1859,13 +1865,13 @@ requirement sentences ("Kubernetes", not "5+ years of Kubernetes experience").
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `../.venv/Scripts/python.exe -m pytest tests/test_truthful_prompts.py tests/test_jd_analyzer_improvements.py tests/test_agents.py -q`
+Run: `../.venv/Scripts/python.exe -m pytest tests/test_scorer_jd_hygiene.py tests/test_jd_analyzer_improvements.py tests/test_agents.py -q`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add agents/scorer.py agents/jd_analyzer.py tests/test_truthful_prompts.py
+git add agents/scorer.py agents/jd_analyzer.py tests/test_scorer_jd_hygiene.py
 git commit -m "feat: scorer/jd-analyzer emit injectable-safe skill terms only"
 ```
 
