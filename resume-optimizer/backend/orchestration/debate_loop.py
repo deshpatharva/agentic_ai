@@ -68,7 +68,7 @@ async def run_debate(
     set_call_kind("pro_debate")
 
     # Stable system prompt — shared across rounds so the provider cache hits.
-    stable_system = _build_system_stable(state.available_sections())
+    stable_system = _build_system_stable(state.available_sections(), ledger)
 
     current_scores = scores
     iterations = 0
@@ -88,7 +88,7 @@ async def run_debate(
         # ── Optimizer inner tool-calling loop ──────────────────────────────
         messages: list[dict] = [
             {"role": "system", "content": stable_system},
-            {"role": "user", "content": _build_scores_context(current_scores)},
+            {"role": "user", "content": _build_scores_context(current_scores, state.capabilities)},
         ]
 
         # Feed reviewer objection from previous round as user context (round > 0)
