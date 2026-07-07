@@ -9,6 +9,7 @@ const navItems = [
   { to: '/admin/users',        end: false, icon: Users,           label: 'Users' },
   { to: '/admin/promo-codes',  end: false, icon: Tag,             label: 'Promo Codes' },
   { to: '/admin/analytics',    end: false, icon: BarChart2,       label: 'Analytics' },
+  { to: '/admin/observability', end: false, icon: Activity,       label: 'AI Observability' },
 ];
 
 function AdminNav({ user }) {

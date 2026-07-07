@@ -8,6 +8,22 @@ example companies: the model only asks about gaps we actually found.
 
 from __future__ import annotations
 
+import re
+
+
+def _present_in_text(skill_lower: str, haystack: str) -> bool:
+    """True if skill appears in haystack bounded by non-alphanumerics.
+
+    A plain ``skill in haystack`` test gives false positives for short skills —
+    the language 'R' matches the 'r' in "orchestration", 'Go' matches "logo" —
+    so a genuine gap is silently treated as already covered. Alnum lookarounds
+    (rather than \\b, which mishandles symbols like 'c++') keep 'c++'/'node.js'
+    matching correctly while requiring a real token boundary.
+    """
+    if not skill_lower:
+        return False
+    return re.search(rf"(?<![a-z0-9]){re.escape(skill_lower)}(?![a-z0-9])", haystack) is not None
+
 
 def compute_gaps(
     jd_result: dict,
@@ -42,7 +58,7 @@ def compute_gaps(
     gaps: list[str] = []
     for c in ordered:
         cl = c.lower()
-        if cl in skill_set or (cl and cl in haystack):
+        if cl in skill_set or _present_in_text(cl, haystack):
             continue
         gaps.append(c)
         if len(gaps) >= limit:

@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useState, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import { clsx } from 'clsx';
 import client from '../../api/client';
@@ -145,7 +146,16 @@ export default function PipelineRuns() {
                   <td className="px-4 py-3 text-right font-mono text-ink-mute">{formatDuration(r.duration_s)}</td>
                   <td className="px-4 py-3 text-ink-faint text-xs whitespace-nowrap">{new Date(r.created_at).toLocaleString()}</td>
                   <td className="px-4 py-3 text-ink-faint">
-                    {expanded === r.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                    <div className="flex items-center gap-2 justify-end">
+                      <Link
+                        to={`/admin/observability?job_id=${r.id}`}
+                        onClick={e => e.stopPropagation()}
+                        className="text-xs text-primary hover:underline shrink-0"
+                      >
+                        LLM calls
+                      </Link>
+                      {expanded === r.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                    </div>
                   </td>
                 </tr>
                 {expanded === r.id && (

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone, time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import Integer, func, select
+from sqlalchemy import Integer, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.dependencies import get_admin_user
@@ -16,6 +16,7 @@ from config import STUCK_JOB_TIMEOUT_MINUTES, BOOTSTRAP_SECRET
 from db.models import JobStatus, LlmCallLog, PipelineEvent, PipelineJob, PlanType, Resume, User, ProviderCost
 from db.session import get_db
 from delta.writer import read_job_matches
+from utils.cost import ALLOWED_PROVIDERS, estimate_cache_savings
 from utils.time_utils import ensure_utc
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -685,8 +686,8 @@ async def create_provider_cost(
     db: AsyncSession = Depends(get_db),
 ):
     """Create or update provider pricing. Marks previous active rate as inactive."""
-    if body.provider not in ["anthropic", "google", "groq"]:
-        raise HTTPException(status_code=400, detail="provider must be one of: anthropic, google, groq")
+    if body.provider not in ALLOWED_PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"provider must be one of: {', '.join(ALLOWED_PROVIDERS)}")
     if body.input_cost_per_1m_tokens < 0 or body.output_cost_per_1m_tokens < 0:
         raise HTTPException(status_code=400, detail="costs must be non-negative")
 
@@ -902,8 +903,8 @@ async def by_model_analytics(
             func.coalesce(func.sum(LlmCallLog.input_tokens),  0).label("input_tokens"),
             func.coalesce(func.sum(LlmCallLog.output_tokens), 0).label("output_tokens"),
             func.coalesce(func.sum(LlmCallLog.cost_usd),      0.0).label("cost_usd"),
-            func.avg(LlmCallLog.latency_ms).label("avg_latency_ms"),
-            func.avg(LlmCallLog.ttft_ms).label("avg_ttft_ms"),
+            func.avg(case((LlmCallLog.status == "ok", LlmCallLog.latency_ms))).label("avg_latency_ms"),
+            func.avg(case((LlmCallLog.status == "ok", LlmCallLog.ttft_ms))).label("avg_ttft_ms"),
         )
         .where(LlmCallLog.created_at >= cutoff)
         .group_by(LlmCallLog.model, LlmCallLog.provider)
@@ -985,7 +986,7 @@ async def cache_efficiency(
             func.coalesce(func.sum(LlmCallLog.cached_input_tokens), 0).label("total_cached_tokens"),
             func.coalesce(func.sum(LlmCallLog.cost_usd), 0.0).label("total_cost_usd"),
         )
-        .where(LlmCallLog.created_at >= cutoff)
+        .where(LlmCallLog.created_at >= cutoff, LlmCallLog.status == "ok")
     )).one()
 
     by_kind = (await db.execute(
@@ -999,7 +1000,7 @@ async def cache_efficiency(
             func.coalesce(func.sum(LlmCallLog.input_tokens), 0).label("input_tokens"),
             func.coalesce(func.sum(LlmCallLog.cost_usd), 0.0).label("cost_usd"),
         )
-        .where(LlmCallLog.created_at >= cutoff)
+        .where(LlmCallLog.created_at >= cutoff, LlmCallLog.status == "ok")
         .group_by(LlmCallLog.call_kind)
         .order_by(func.sum(LlmCallLog.cached_input_tokens).desc())
     )).all()
@@ -1013,10 +1014,20 @@ async def cache_efficiency(
             ), 0).label("cache_hits"),
             func.coalesce(func.sum(LlmCallLog.cached_input_tokens), 0).label("cached_tokens"),
         )
-        .where(LlmCallLog.created_at >= cutoff)
+        .where(LlmCallLog.created_at >= cutoff, LlmCallLog.status == "ok")
         .group_by(func.date(LlmCallLog.created_at))
         .order_by(func.date(LlmCallLog.created_at))
     )).all()
+
+    by_model = (await db.execute(
+        select(
+            LlmCallLog.model,
+            func.coalesce(func.sum(LlmCallLog.cached_input_tokens), 0).label("cached_tokens"),
+        )
+        .where(LlmCallLog.created_at >= cutoff)
+        .group_by(LlmCallLog.model)
+    )).all()
+    savings = estimate_cache_savings((r.model, int(r.cached_tokens)) for r in by_model)
 
     total_calls = int(totals.total_calls)
     cache_hits = int(totals.cache_hits)
@@ -1029,7 +1040,7 @@ async def cache_efficiency(
         "cache_hit_rate_pct": round(100.0 * cache_hits / total_calls, 1) if total_calls else 0.0,
         "total_input_tokens": int(totals.total_input_tokens),
         "total_cached_tokens": total_cached,
-        "estimated_savings_usd": round(total_cached * 0.75 / 1_000_000 * 0.30, 4),
+        "estimated_savings_usd": round(savings, 4),
         "by_call_kind": [
             {
                 "call_kind":   r.call_kind or "unknown",

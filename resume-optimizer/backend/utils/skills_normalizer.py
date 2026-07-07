@@ -61,30 +61,42 @@ def _skills_lower_set(tokens: list[str]) -> set[str]:
     return {t.lower() for t in tokens}
 
 
+def _members(token_lower: str) -> set[str]:
+    """Return the delimited members of a (possibly grouped) token.
+
+    'ci/cd (azure devops, jenkins)' → {'ci/cd', 'azure devops', 'jenkins'}.
+    Splits on commas and parentheses ONLY — never on letters — so standalone
+    skills like 'c++', 'node.js', or the language 'r' stay intact and are not
+    matched as substrings of unrelated tokens.
+    """
+    parts = re.split(r"[(),]", token_lower)
+    return {p.strip() for p in parts if p.strip()}
+
+
 def _dedup(tokens: list[str]) -> list[str]:
     """
-    Remove tokens that are exact-case-insensitive duplicates of an earlier token,
-    OR are a strict substring of an earlier token (catches 'Azure DevOps' appearing
-    both inside 'Azure (IaaS, DevOps)' grouping and as 'CI/CD (Azure DevOps, Jenkins)').
+    Remove tokens that are exact case-insensitive duplicates of an earlier token,
+    OR that appear as a delimited member of an earlier grouped token (catches
+    'Azure DevOps' listed both standalone and inside 'CI/CD (Azure DevOps, Jenkins)').
+
+    A previous raw-substring test wrongly deleted short skills — 'R' was eaten by
+    'Spark', 'MongoDB' by 'Go', 'C' by 'C++'. Member matching only treats a token
+    as a duplicate when it is a whole comma/paren-delimited member of another,
+    never merely a character run inside one.
     """
-    seen_lower: list[str] = []
+    seen: list[tuple[str, set[str]]] = []  # (lowercased token, its delimited members)
     result: list[str] = []
 
     for tok in tokens:
         tl = tok.lower()
+        members = _members(tl)
         duplicate = False
-        for prev in seen_lower:
-            # Exact duplicate
-            if tl == prev:
-                duplicate = True
-                break
-            # tl is fully contained inside a previous token (e.g. "azure devops" inside
-            # "ci/cd (azure devops, jenkins)") — the longer one already covers it
-            if tl in prev or prev in tl:
+        for prev_tl, prev_members in seen:
+            if tl == prev_tl or tl in prev_members or prev_tl in members:
                 duplicate = True
                 break
         if not duplicate:
-            seen_lower.append(tl)
+            seen.append((tl, members))
             result.append(tok)
 
     return result

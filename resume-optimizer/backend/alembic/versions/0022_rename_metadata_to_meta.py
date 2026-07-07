@@ -19,15 +19,10 @@ depends_on = None
 
 
 def _column_exists(table: str, column: str) -> bool:
+    # Dialect-portable (SQLite has no information_schema) — same pattern as 0013.
     conn = op.get_bind()
-    result = conn.execute(
-        sa.text(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_name = :table AND column_name = :column"
-        ),
-        {"table": table, "column": column},
-    )
-    return result.fetchone() is not None
+    cols = sa.inspect(conn).get_columns(table)
+    return any(c["name"] == column for c in cols)
 
 
 def upgrade() -> None:
@@ -35,7 +30,10 @@ def upgrade() -> None:
     has_meta = _column_exists("chat_messages", "meta")
 
     if has_metadata and not has_meta:
-        op.alter_column("chat_messages", "metadata", new_column_name="meta")
+        # batch_alter_table so the rename works on SQLite (no native ALTER RENAME
+        # COLUMN through Alembic's default path); on Postgres it's a plain ALTER.
+        with op.batch_alter_table("chat_messages") as batch_op:
+            batch_op.alter_column("metadata", new_column_name="meta")
     elif not has_metadata and not has_meta:
         op.add_column(
             "chat_messages",

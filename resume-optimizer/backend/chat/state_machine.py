@@ -40,9 +40,9 @@ def resolve_phase(ctx: dict) -> str:
 
 def tools_for_phase(phase: str) -> list[dict]:
     if phase == AWAITING_JD:
-        return [_TOOLS_BY_NAME[DOWNLOAD_TOOL]]
+        return [_TOOLS_BY_NAME[DOWNLOAD_TOOL], _TOOLS_BY_NAME[EDIT_TOOL]]
     if phase == JD_CAPTURED:
-        return [_TOOLS_BY_NAME[LAUNCH_TOOL], _TOOLS_BY_NAME[DOWNLOAD_TOOL]]
+        return [_TOOLS_BY_NAME[LAUNCH_TOOL], _TOOLS_BY_NAME[DOWNLOAD_TOOL], _TOOLS_BY_NAME[EDIT_TOOL]]
     if phase == OPTIMIZING:
         return []
     # RESULTS_READY
@@ -59,13 +59,40 @@ def try_deterministic(
     """Try to handle the input without an LLM call.
 
     Returns {"action": str, "response": str, ...} or None if the LLM is needed.
+    MUTATES ctx: pops "_pending_confirm" at entry (proposals are single-shot) and
+    sets it when returning a confirmation proposal — the router persists ctx when
+    it changed.
 
     Actions:
       "respond"   — just send the response text, no tool call
       "launch"    — call fire_optimizer with profile_id
       "download"  — call resolve_profile_download with profile_id
+
+    Paid or irreversible actions are never fired from ambiguous free text: a bare
+    profile label PROPOSES the action into ctx["_pending_confirm"], and only an
+    explicit affirmation on the very next turn executes it. A bare "yes" with no
+    pending proposal falls through to the LLM, which sees the conversation and can
+    tell a launch confirmation from an answer to the gap question.
     """
     text = message.strip()
+
+    # ── Pending confirmation from the previous turn (single-shot) ────────────
+    pending = ctx.pop("_pending_confirm", None)
+    if pending and _AFFIRM_RE.match(text):
+        profile = next((p for p in profiles if p.get("id") == pending.get("profile_id")), None)
+        label = profile["label"] if profile else "selected"
+        if pending.get("action") == "launch" and not ctx.get("_optimizer_launched"):
+            return {
+                "action": "launch",
+                "profile_id": pending["profile_id"],
+                "response": f'Launching the optimizer with your "{label}" profile…',
+            }
+        if pending.get("action") == "download":
+            return {
+                "action": "download",
+                "profile_id": pending["profile_id"],
+                "response": f'Generating your "{label}" resume as a Word document…',
+            }
 
     # ── Profile picker click: 'Use my "Senior Data Engineer" profile' ────────
     picker_match = _PICKER_RE.match(text)
@@ -86,31 +113,30 @@ def try_deterministic(
             }
 
     # ── Bare profile label (e.g. user types "Senior Data Engineer") ──────────
+    # Free text is ambiguous ("data engineering" may answer the gap question), so
+    # a label match only PROPOSES — it must never consume quota by itself.
     if not _URL_RE.match(text) and len(text) < 120:
         profile = _find_profile_by_label(text, profiles)
         if profile:
             if phase == JD_CAPTURED and ctx.get("jd_text") and not ctx.get("_optimizer_launched"):
+                ctx["_pending_confirm"] = {"action": "launch", "profile_id": profile["id"]}
                 return {
-                    "action": "launch",
-                    "profile_id": profile["id"],
-                    "response": f'Great — launching the optimizer with your "{profile["label"]}" profile…',
+                    "action": "respond",
+                    "response": (
+                        f'Ready to optimize with your "{profile["label"]}" profile? '
+                        "Say yes to launch, or tell me anything to add first "
+                        "(real experience, tools, context)."
+                    ),
                 }
             if phase == AWAITING_JD:
+                ctx["_pending_confirm"] = {"action": "download", "profile_id": profile["id"]}
                 return {
-                    "action": "download",
-                    "profile_id": profile["id"],
-                    "response": f'Generating your "{profile["label"]}" resume as a Word document…',
+                    "action": "respond",
+                    "response": (
+                        f'Want me to export your "{profile["label"]}" profile as a '
+                        "Word document? Say yes to download."
+                    ),
                 }
-
-    # ── Affirmation ("yes", "go", "run it") with a recommended profile ───────
-    if phase == JD_CAPTURED and _AFFIRM_RE.match(text):
-        recommended = _get_recommended_profile(ctx, profiles)
-        if recommended and not ctx.get("_optimizer_launched"):
-            return {
-                "action": "launch",
-                "profile_id": recommended["id"],
-                "response": f'Launching the optimizer with your "{recommended["label"]}" profile…',
-            }
 
     # ── Optimizing phase — block input ───────────────────────────────────────
     if phase == OPTIMIZING:
@@ -148,19 +174,36 @@ def fallback_response(phase: str, ctx: dict) -> str:
 
 
 def _find_profile_by_label(text: str, profiles: list[dict]) -> dict | None:
-    """Match user input to a profile by label (case-insensitive, flexible)."""
+    """Match user input to a profile by label (case-insensitive, flexible).
+
+    A deterministic match here can silently launch the optimizer or a download
+    (see try_deterministic), so the contains-match is guarded against
+    false positives: a short generic message like "hi" must not match a profile
+    labeled "Machine Learning Engineer". We only allow a substring match when the
+    needle is itself a substantial fraction of the label (and vice-versa), never
+    when a tiny needle happens to appear inside a long label.
+    """
     needle = text.strip().strip('"').strip("'").lower()
     if not needle:
         return None
-    # Exact match first
+    # Exact match first — always safe.
     for p in profiles:
         if (p.get("label") or "").strip().lower() == needle:
             return p
-    # Contains match (either direction)
+    # Substring match — only when the shorter string is a meaningful fraction of
+    # the longer one, so incidental substrings ("hi" in "Machine...") don't fire.
+    _MIN_MATCH_LEN = 4
+    _MIN_RATIO = 0.6
+    if len(needle) < _MIN_MATCH_LEN:
+        return None
     for p in profiles:
         pl = (p.get("label") or "").strip().lower()
-        if pl and (needle in pl or pl in needle):
-            return p
+        if not pl:
+            continue
+        if needle in pl or pl in needle:
+            shorter, longer = sorted((len(needle), len(pl)))
+            if longer and shorter / longer >= _MIN_RATIO:
+                return p
     return None
 
 

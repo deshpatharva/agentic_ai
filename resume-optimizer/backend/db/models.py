@@ -8,8 +8,8 @@ from datetime import datetime, timezone
 from enum import Enum as PyEnum
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, Enum, Float, ForeignKey,
-    Index, Integer, JSON, String, Text, text, Uuid, UniqueConstraint,
+    Boolean, Column, Date, DateTime, Enum, Float, ForeignKey,
+    Index, Integer, JSON, SmallInteger, String, Text, text, Uuid, UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -100,6 +100,13 @@ class PipelineJob(Base):
     error_message     = Column(String(2000), nullable=True)
     created_at        = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at        = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    # Set exactly once when the run's reserved quota slot is returned, so the
+    # failing task and the stuck-job reaper can't both refund the same run.
+    quota_refunded    = Column(Boolean, default=False, nullable=False)
+    # Calendar date the run's quota slot was reserved (date.today() at claim
+    # time). Refunds decrement this exact daily_usage_counters row; NULL means
+    # pre-0026 legacy — refund falls back to created_at.
+    quota_reserved_on = Column(Date, nullable=True)
 
     events = relationship("PipelineEvent", back_populates="job", cascade="all, delete-orphan")
 
@@ -273,6 +280,13 @@ class LlmCallLog(Base):
     latency_ms          = Column(Integer, nullable=True)
     ttft_ms             = Column(Integer, nullable=True)
     cache_hit           = Column(Boolean, nullable=False, default=False)
+    # Observability (0027): failure capture + finish reason. Named to map onto
+    # OTel GenAI semantic conventions for a possible future export.
+    status        = Column(String(16),  nullable=False, default="ok")
+    error_type    = Column(String(100), nullable=True)
+    error_code    = Column(String(40),  nullable=True)
+    attempt       = Column(SmallInteger, nullable=False, default=1)
+    finish_reason = Column(String(40),  nullable=True)
     created_at    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
                            nullable=False, index=True)
 

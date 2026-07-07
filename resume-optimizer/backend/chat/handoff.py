@@ -4,7 +4,7 @@ Also handles [SAVE_PROFILE] — creating a real Profile from the session's last_
 
 import asyncio
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -13,12 +13,18 @@ from agents.fact_extractor import extract_claims
 from agents.jd_analyzer import analyze_jd
 from agents.scorer import score_combined
 from agents.tools import ResumeState
+from config import SCORE_DIMENSIONS
 from db.models import ChatSession, JobStatus, PipelineJob, Profile, User
 from db.session import AsyncSessionLocal
 from orchestration.agent_loop import run_agent
 from utils.optimization_report import build_report
 from utils.profile_utils import sections_to_text
 from utils.section_parser import detect_sections
+
+# Strong refs to fire-and-forget pipeline tasks so the event loop doesn't
+# garbage-collect them mid-run (per asyncio docs) — a dropped task would silently
+# abort the user's optimization.
+_background_tasks: set = set()
 
 
 async def _parse_sections(raw_text: str) -> dict:
@@ -32,10 +38,25 @@ async def _parse_sections(raw_text: str) -> dict:
     return await _ps(raw_text)
 
 
+def _resolve_profile_by_label(profile_id_str: str, user_profiles: list) -> "Profile | None":
+    """Resolve an agent-emitted label to one of the user's profiles.
+
+    Delegates to the hardened state_machine matcher (exact match, else a
+    length/ratio-guarded substring) so a short or generic label ('eng') can't
+    incidentally select — and launch a paid run against — the wrong profile.
+    This is the paid path, so it must not be looser than the deterministic one.
+    """
+    from chat.state_machine import _find_profile_by_label  # noqa: PLC0415 — avoid circular
+    by_label = [{"label": p.label or "", "_prof": p} for p in user_profiles]
+    match = _find_profile_by_label(profile_id_str, by_label)
+    return match["_prof"] if match is not None else None
+
+
 async def fire_optimizer(
     user: User,
     session: ChatSession,
     handoff: dict,
+    reserved_on: date | None = None,
 ) -> tuple[str, str]:
     """Seed a PipelineJob from the agent's handoff payload and enqueue the pipeline.
 
@@ -72,26 +93,13 @@ async def fire_optimizer(
                 )
             )
 
-        if prof is None:
-            # Fallback: resolve by label (handles agent emitting a label or
-            # a quoted label instead of the UUID).
-            candidate = profile_id_str.strip().strip('"').strip("'").lower()
-            if candidate:
-                user_profiles = (
-                    await db.execute(select(Profile).where(Profile.user_id == user.id))
-                ).scalars().all()
-                # Exact label match first, then a contains-match either direction.
-                prof = next(
-                    (p for p in user_profiles if (p.label or "").strip().lower() == candidate),
-                    None,
-                )
-                if prof is None:
-                    prof = next(
-                        (p for p in user_profiles
-                         if candidate in (p.label or "").lower()
-                         or ((p.label or "").strip().lower() and (p.label or "").strip().lower() in candidate)),
-                        None,
-                    )
+        if prof is None and profile_id_str.strip():
+            # Fallback: resolve by label (handles agent emitting a label or a
+            # quoted label instead of the UUID), using the hardened matcher.
+            user_profiles = (
+                await db.execute(select(Profile).where(Profile.user_id == user.id))
+            ).scalars().all()
+            prof = _resolve_profile_by_label(profile_id_str, user_profiles)
 
         if not prof:
             raise HTTPException(
@@ -109,6 +117,7 @@ async def fire_optimizer(
             resume_text=resume_text,
             jd_text=jd_text,
             status=JobStatus.running,
+            quota_reserved_on=reserved_on,
             created_at=now,
             updated_at=now,
         )
@@ -132,7 +141,9 @@ async def fire_optimizer(
 
     # Enqueue using the same background task the legacy route uses.
     from main import _run_pipeline_task  # noqa: PLC0415 — intentional late import (circular)
-    asyncio.create_task(_run_pipeline_task(job_id, str(user.id)))
+    _task = asyncio.create_task(_run_pipeline_task(job_id, str(user.id)))
+    _background_tasks.add(_task)
+    _task.add_done_callback(_background_tasks.discard)
 
     sse_token = _mint_sse_token(str(user.id))
     return job_id, sse_token
@@ -215,17 +226,21 @@ async def save_profile_from_session(
 
 
 def _flat_scores(scores: dict) -> dict:
-    """Pull the 5 dimension scores into a flat {dim: int} dict."""
+    """Pull the scoring dimensions into a flat {dim: int} dict."""
     return {
         d: (scores[d]["score"] if isinstance(scores.get(d), dict) else int(scores.get(d, 0) or 0))
-        for d in ("ats", "impact", "skills_gap", "readability", "jd_tailoring")
+        for d in SCORE_DIMENSIONS
     }
 
 
-def _avg4(flat: dict) -> int:
-    """Average of the 4 pipeline dimensions (keeps final_score comparable to the pipeline)."""
-    keys = ("ats", "impact", "skills_gap", "readability")
-    return round(sum(flat.get(k, 0) for k in keys) / len(keys))
+def _avg_dims(flat: dict) -> int:
+    """Average across all canonical scoring dimensions.
+
+    Must iterate the same SCORE_DIMENSIONS tuple the pipeline uses (config.py) so
+    an edit-path final_score is computed identically to a pipeline final_score —
+    otherwise the two are silently incomparable.
+    """
+    return round(sum(flat.get(k, 0) for k in SCORE_DIMENSIONS) / len(SCORE_DIMENSIONS))
 
 
 async def apply_edit(user, session, arguments: dict) -> dict:
@@ -331,13 +346,13 @@ async def apply_edit(user, session, arguments: dict) -> dict:
     )
     new_scores = new_dict.get("text", {}) or {}
     new_flat = _flat_scores(new_scores)
-    new_scores_for_report = {**new_scores, "average": _avg4(new_flat)}
+    new_scores_for_report = {**new_scores, "average": _avg_dims(new_flat)}
 
     report = build_report(
         jd_result=jd_result,
         original_text=source_text,
         optimized_text=edited_text,
-        baseline_score=_avg4(scores_before),
+        baseline_score=_avg_dims(scores_before),
         final_scores=new_scores_for_report,
         iterations=agent_result.get("iterations", 1),
     )

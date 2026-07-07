@@ -32,8 +32,8 @@ jobs:
       JWT_SECRET: ci-test-secret-32-chars-long-enough-x
       DATABASE_URL: sqlite+aiosqlite:///./test_ci.db
       ANTHROPIC_API_KEY: test
-      google_ai_studio_api_key: test
-      groq_api_key: test
+      GOOGLE_AI_STUDIO_API_KEY: test
+      GROQ_API_KEY: test
       BOOTSTRAP_SECRET: ci-bootstrap-secret-not-real
 
     steps:

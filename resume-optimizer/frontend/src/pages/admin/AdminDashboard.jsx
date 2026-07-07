@@ -11,12 +11,14 @@ export default function AdminDashboard() {
   const [health, setHealth] = useState([]);
   const [runs, setRuns] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [aiHealth, setAiHealth] = useState(null);
 
   useEffect(() => {
     Promise.allSettled([
       client.get('/admin/stats').then(r => setStats(r.data)),
       client.get('/admin/analytics', { params: { days: 14 } }).then(r => setHealth(r.data.pipeline_health || [])),
       client.get('/admin/pipeline-runs', { params: { per_page: 8 } }).then(r => setRuns(r.data.results || [])),
+      client.get('/admin/observability/health').then(r => setAiHealth(r.data)),
     ]).then((results) => {
       const failed = results.find(r => r.status === 'rejected');
       if (failed) setStatsError(failed.reason?.response?.data?.detail || failed.reason?.message);
@@ -44,6 +46,36 @@ export default function AdminDashboard() {
     },
   ];
 
+  const HEALTH_ACCENT = {
+    ok:   'bg-accent-soft text-primary',
+    warn: 'bg-hilite-soft text-hilite',
+    crit: 'bg-err-soft text-err',
+  };
+  const fmtMs = (ms) => ms == null ? '—' : ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+  const healthCards = aiHealth ? [
+    {
+      label: 'AI Error Rate (24h)',
+      value: `${(aiHealth.signals.error_rate.value * 100).toFixed(1)}%`,
+      sub: `${aiHealth.counts.errors_24h} of ${aiHealth.counts.calls_24h} calls`,
+      icon: AlertTriangle,
+      accent: HEALTH_ACCENT[aiHealth.signals.error_rate.status],
+    },
+    {
+      label: 'AI p95 Latency (24h)',
+      value: fmtMs(aiHealth.signals.p95_latency_ms.value),
+      sub: `7d baseline ${fmtMs(aiHealth.signals.p95_latency_ms.baseline)}`,
+      icon: Activity,
+      accent: HEALTH_ACCENT[aiHealth.signals.p95_latency_ms.status],
+    },
+    {
+      label: 'AI Spend (24h)',
+      value: `$${aiHealth.signals.cost_burn_usd.value.toFixed(2)}`,
+      sub: `daily norm $${(aiHealth.signals.cost_burn_usd.baseline ?? 0).toFixed(2)}`,
+      icon: DollarSign,
+      accent: HEALTH_ACCENT[aiHealth.signals.cost_burn_usd.status],
+    },
+  ] : [];
+
   return (
     <div className="p-4 sm:p-8">
       <h1 className="text-xl font-bold text-ink mb-6">Overview</h1>
@@ -61,9 +93,16 @@ export default function AdminDashboard() {
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
-          {cards.map(c => <StatCard key={c.label} {...c} />)}
-        </div>
+        <>
+          {healthCards.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+              {healthCards.map(c => <StatCard key={c.label} {...c} />)}
+            </div>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
+            {cards.map(c => <StatCard key={c.label} {...c} />)}
+          </div>
+        </>
       )}
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">

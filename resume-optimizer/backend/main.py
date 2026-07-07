@@ -16,7 +16,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import date as date_type
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 # Ensure backend/ is on the path regardless of where uvicorn is launched from
@@ -67,9 +67,10 @@ from db.session import get_db, init_db, AsyncSessionLocal
 from db.models import JobStatus, PipelineEvent, PipelineJob, Profile, Resume, User, TokenBlocklist
 from utils.profile_utils import sections_to_text as _sections_to_text
 from auth.router import router as auth_router, user_router
-from auth.dependencies import decode_token, decode_sse_token, get_current_user, check_plan_limit, _effective_plan
+from auth.dependencies import decode_token_checked, decode_sse_token, get_current_user, _effective_plan, reserve_run_quota, refund_run_quota, _counter_date_for
 from dashboard.router import router as dashboard_router
 from admin.router import router as admin_router
+from admin.observability import router as observability_router
 from profiles.router import router as profiles_router, profile_ops as profile_ops_router
 from jd.router import router as jd_router
 from chat.router import router as chat_router
@@ -86,13 +87,69 @@ async def _cleanup_events():
     """Periodically delete PipelineEvent rows older than EVENT_TTL_HOURS."""
     while True:
         await asyncio.sleep(3600)
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=_EVENT_TTL_HOURS)
-        async with AsyncSessionLocal() as db:
-            await db.execute(delete(PipelineEvent).where(PipelineEvent.created_at < cutoff))
-            await db.commit()
+        try:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=_EVENT_TTL_HOURS)
+            async with AsyncSessionLocal() as db:
+                await db.execute(delete(PipelineEvent).where(PipelineEvent.created_at < cutoff))
+                await db.commit()
+        except Exception:
+            _logger.exception("event cleanup cycle failed — will retry in 1 hour")
 
 
 _logger = logging.getLogger(__name__)
+
+
+async def _refund_job_quota(job_id, user_id, reserved_on, created_at, db: AsyncSession) -> None:
+    """Idempotently refund the run reserved for a job.
+
+    Both the failing pipeline task and the stuck-job reaper can reach the same
+    job; the atomic quota_refunded flip ensures exactly one of them decrements
+    the counter. The refund targets the reservation date stamped on the job
+    (quota_reserved_on) so it decrements the exact daily counter row the
+    reservation incremented; legacy rows (NULL stamp, pre-0026) fall back to
+    created_at as before.
+    """
+    result = await db.execute(
+        update(PipelineJob)
+        .where(PipelineJob.id == job_id, PipelineJob.quota_refunded.is_(False))
+        .values(quota_refunded=True)
+    )
+    if result.rowcount != 1:
+        await db.commit()  # already refunded by the other path — nothing to do
+        return
+    if user_id is not None:
+        run_date = reserved_on.isoformat() if reserved_on else _counter_date_for(created_at)
+        await refund_run_quota(str(user_id), db, run_date=run_date)
+    else:
+        await db.commit()
+
+
+async def _claim_job_for_run(job_id, jd_text, resume_override, profile_id_val, db: AsyncSession) -> bool:
+    """Atomically transition a pending/error job to running.
+
+    Returns True only for the caller that performs the transition, so two
+    concurrent submissions of the same job can't both dispatch the pipeline or
+    reserve two quota slots. 'running'/'done' jobs are left untouched.
+    """
+    values = {
+        "status": JobStatus.running,
+        "jd_text": jd_text,
+        "updated_at": datetime.now(timezone.utc),
+    }
+    if profile_id_val is not None:
+        values["profile_id"] = profile_id_val
+    if resume_override is not None:
+        values["resume_text"] = resume_override
+    result = await db.execute(
+        update(PipelineJob)
+        .where(
+            PipelineJob.id == job_id,
+            PipelineJob.status.in_([JobStatus.pending, JobStatus.error]),
+        )
+        .values(**values)
+    )
+    await db.commit()
+    return result.rowcount == 1
 
 
 async def _reap_once(db: AsyncSession) -> list[str]:
@@ -109,12 +166,26 @@ async def _reap_once(db: AsyncSession) -> list[str]:
         return []
     now = datetime.now(timezone.utc)
     ids = []
+    # Capture identity BEFORE commit — the ORM rows expire on commit and touching
+    # them afterward would trigger a lazy (sync) refresh inside async code.
+    reaped = []
     for job in stuck:
         job.status = JobStatus.error
         job.error_message = "Job timed out — worker may have restarted."
         job.updated_at = now
         ids.append(str(job.id))
+        reaped.append((job.id, job.user_id, job.quota_reserved_on, job.created_at))
     await db.commit()
+
+    # Refund each reaped run. A run killed by a worker restart never reaches the
+    # task's own refund path, so without this a deploy would permanently consume
+    # the user's quota. _refund_job_quota is idempotent (quota_refunded flag), so
+    # a slow-but-alive task that later also refunds this job can't double-refund.
+    for job_id, user_id, reserved_on, created_at in reaped:
+        try:
+            await _refund_job_quota(job_id, user_id, reserved_on, created_at, db)
+        except Exception:
+            _logger.exception("reaper: quota refund failed for job %s", job_id)
     return ids
 
 
@@ -219,6 +290,7 @@ app.include_router(auth_router)
 app.include_router(user_router)
 app.include_router(dashboard_router)
 app.include_router(admin_router)
+app.include_router(observability_router)
 app.include_router(profiles_router, prefix="/profiles", tags=["profiles"], dependencies=[Depends(get_current_user)])
 app.include_router(profile_ops_router, prefix="/profile", tags=["profiles"], dependencies=[Depends(get_current_user)])
 app.include_router(jd_router, tags=["jd"])
@@ -291,7 +363,7 @@ class ScrapeJobsRequest(BaseModel):
 async def run_pipeline(
     request: RunPipelineRequest,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(check_plan_limit),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -312,23 +384,59 @@ async def run_pipeline(
     if not request.jd_text.strip():
         raise HTTPException(status_code=400, detail="jd_text cannot be empty.")
 
+    # Resolve an optional profile override before claiming the job.
+    resume_override = None
+    profile_id_val = None
     if request.profile_id:
         try:
             pid = uuid.UUID(request.profile_id)
-            prof_result = await db.execute(
+        except ValueError:
+            pid = None
+        if pid is not None:
+            prof = await db.scalar(
                 select(Profile).where(Profile.id == pid, Profile.user_id == current_user.id)
             )
-            prof = prof_result.scalar_one_or_none()
-            if prof and prof.sections:
-                job.resume_text = _sections_to_text(prof.sections)
             if prof:
-                job.profile_id = prof.id
-        except ValueError:
-            pass
+                profile_id_val = prof.id
+                if prof.sections:
+                    resume_override = _sections_to_text(prof.sections)
 
-    job.jd_text = request.jd_text
-    job.status = JobStatus.running
-    job.updated_at = datetime.now(timezone.utc)
+    # Atomically claim the job (pending/error -> running). Exactly one concurrent
+    # submission wins, so a double-click can't dispatch the pipeline twice or
+    # reserve two quota slots for one job; 'running'/'done' are rejected with 409.
+    claimed = await _claim_job_for_run(job_uuid, request.jd_text, resume_override, profile_id_val, db)
+    if not claimed:
+        raise HTTPException(
+            status_code=409,
+            detail="This job is already running or completed. Upload a new resume to optimize again.",
+        )
+
+    # Reserve the run slot only after winning the claim — the single authoritative
+    # limit check. On limit, revert the job to pending so a retry works, and return
+    # the one canonical 429.
+    today = date.today()
+    if not await reserve_run_quota(current_user, db, on_date=today):
+        await db.execute(
+            update(PipelineJob).where(PipelineJob.id == job_uuid).values(status=JobStatus.pending)
+        )
+        await db.commit()
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "limit_reached",
+                "plan": current_user.plan.value,
+                "upgrade_message": "You've reached your daily limit. Upgrade to Pro for more runs/day.",
+            },
+        )
+
+    # Stamp the reservation on the job and re-arm the refund: the refund targets
+    # quota_reserved_on's counter row, and a retried failed job (whose first
+    # failure already flipped quota_refunded=True) must be refundable again.
+    await db.execute(
+        update(PipelineJob)
+        .where(PipelineJob.id == job_uuid)
+        .values(quota_reserved_on=today, quota_refunded=False)
+    )
     await db.commit()
 
     background_tasks.add_task(_run_pipeline_task, str(job_uuid), str(current_user.id))
@@ -457,9 +565,10 @@ async def download_resume(
     if not raw_token:
         raise HTTPException(status_code=401, detail="Authentication required.")
 
-    user_id = decode_token(raw_token)  # raises 401 on invalid token
-
     async with AsyncSessionLocal() as db:
+        # Verify the token is valid AND not revoked (logout blocklist) — the token
+        # rides in the URL here, so honouring revocation matters most on this path.
+        user_id = await decode_token_checked(raw_token, db)
         user_result = await db.execute(
             select(User).where(User.id == uuid.UUID(user_id), User.is_active.is_(True))
         )
@@ -523,8 +632,6 @@ async def download_profile_docx(
     if not raw_token:
         raise HTTPException(status_code=401, detail="Authentication required.")
 
-    user_id = decode_token(raw_token)
-
     try:
         pid = uuid.UUID(profile_id)
     except ValueError:
@@ -533,6 +640,8 @@ async def download_profile_docx(
     from db.models import Profile as _Profile
     from utils.profile_utils import sections_to_text as _sections_to_text
     async with AsyncSessionLocal() as db:
+        # Verify + revocation check on the URL-borne token before doing any work.
+        user_id = await decode_token_checked(raw_token, db)
         prof = await db.scalar(
             select(_Profile).where(_Profile.id == pid, _Profile.user_id == uuid.UUID(user_id))
         )
@@ -764,6 +873,12 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
     Phase 2 (agentic):       Native A+C agent loop with 4 targeted tools (see orchestration/agent_loop.py).
     Phase 3 (deterministic): fabrication guard, docx generation, persistence.
     """
+    # Bind trace + job context: every LLM call in this run logs with this
+    # job's id, and the trace waterfall keys off it (spec 2026-07-06).
+    from observability.trace import new_trace, set_job_context
+    new_trace(job_id)
+    set_job_context(job_id, user_id)
+
     job_uuid = uuid.UUID(job_id)
     _loop = asyncio.get_event_loop()
 
@@ -1104,22 +1219,8 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             output_tokens=total_output_tokens,
         )
 
-        # ── Increment quota counter — only on success so failures are free ──
-        if user_id:
-            try:
-                async with AsyncSessionLocal() as db:
-                    await db.execute(
-                        text(
-                            "INSERT INTO daily_usage_counters (user_id, date, runs) "
-                            "VALUES (:uid, :date, 1) "
-                            "ON CONFLICT (user_id, date) DO UPDATE "
-                            "SET runs = daily_usage_counters.runs + 1"
-                        ),
-                        {"uid": user_id, "date": date_type.today().isoformat()},
-                    )
-                    await db.commit()
-            except Exception:
-                _logger.exception("job=%s: failed to increment usage counter", job_id)
+        # Quota is reserved up-front at submission (reserve_run_quota) and only
+        # refunded on failure, so a successful run needs no counter write here.
 
         # ── Write Delta analytics (fire-and-forget, not rate limiting) ─────
         if user_id:
@@ -1200,4 +1301,14 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
 
     except Exception as e:
         await update_job(status=JobStatus.error, error_message=str(e))
+        # Refund the run reserved at submission — failed runs must not consume
+        # quota. Idempotent per job, so if the reaper already refunded this run
+        # (it outlived the stuck-job timeout) this is a no-op.
+        try:
+            async with AsyncSessionLocal() as db:
+                job_row = await db.get(PipelineJob, uuid.UUID(job_id))
+                if job_row is not None:
+                    await _refund_job_quota(job_row.id, job_row.user_id, job_row.quota_reserved_on, job_row.created_at, db)
+        except Exception:
+            _logger.exception("job=%s: quota refund failed", job_id)
         await emit({"type": "error", "message": f"Pipeline error: {str(e)}"})

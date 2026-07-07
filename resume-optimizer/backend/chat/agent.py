@@ -29,15 +29,22 @@ HARD RULES:
 
 # ── Per-phase instructions ──────────────────────────────────────────────────────
 
+_EDIT_GUIDANCE = """\
+RESUME EDITS: to change a saved profile (e.g. "remove the objective section"), call \
+edit_resume with the user's request verbatim as instruction and that profile's exact \
+id as profile_id. Ask which profile they mean if it's ambiguous. Never invent experience."""
+
 _PHASE_INSTRUCTIONS = {
-    AWAITING_JD: """\
+    AWAITING_JD: f"""\
 The user has not provided a job description yet.
 Ask for one — they can paste the text or a URL. Keep it to one sentence.
-If the user asks to download a profile, call download_profile with the profile's id.""",
+If the user asks to download a profile, call download_profile with the profile's id.
+{_EDIT_GUIDANCE}""",
 
-    JD_CAPTURED: """\
+    JD_CAPTURED: f"""\
 A job description has been captured.
-YOUR TOOLS: launch_optimizer(profile_id, added_context), download_profile(profile_id).
+YOUR TOOLS: launch_optimizer(profile_id, added_context), download_profile(profile_id), \
+edit_resume(instruction, profile_id).
 
 CONVERSATION FLOW:
 1. Recommend the best-matching profile by name with one sentence on why it fits.
@@ -47,7 +54,8 @@ has real experience (at which company, how). Ask at most once.
 affirmation — call launch_optimizer immediately with that profile's exact id.
 - 'Use my "[label]" profile' from picker = direct selection AND confirmation, no follow-up needed.
 - added_context must contain ONLY facts the user actually stated — never placeholders.
-- NEVER call launch_optimizer on the same turn the JD is first captured.""",
+- NEVER call launch_optimizer on the same turn the JD is first captured.
+{_EDIT_GUIDANCE}""",
 
     OPTIMIZING: """\
 The optimizer is currently running. Do NOT call any tools.

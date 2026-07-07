@@ -11,6 +11,7 @@ Architecture:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Callable, Optional
@@ -261,7 +262,8 @@ async def run_debate(
 
     # ── Fabrication guard on final draft ──────────────────────────────────────
     final_draft = state.reassemble()
-    guard = fabrication_guard(final_draft, ledger, original_resume)
+    # CPU-bound (spaCy NER + difflib) — offload so concurrent requests aren't stalled.
+    guard = await asyncio.to_thread(fabrication_guard, final_draft, ledger, original_resume)
 
     # Prefer guard's cleaned text when fabrications were detected
     final_text = guard.text if guard.gaps else final_draft

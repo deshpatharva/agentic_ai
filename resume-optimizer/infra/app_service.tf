@@ -35,7 +35,13 @@ resource "azurerm_linux_web_app" "backend" {
       python_version = "3.12"
     }
 
-    app_command_line = "uvicorn main:app --host 0.0.0.0 --port 8000"
+    # --proxy-headers lets uvicorn honour X-Forwarded-Proto (https) from the
+    # platform front-end. We deliberately do NOT pass --forwarded-allow-ips=*:
+    # that made uvicorn trust the client-supplied LEFTMOST X-Forwarded-For entry
+    # and set request.client.host from it, so a client could spoof its source IP
+    # and defeat slowapi's per-IP limits. The rate limiter now derives the client
+    # IP itself from the platform-appended (rightmost) XFF entry — see limiter.py.
+    app_command_line = "uvicorn main:app --host 0.0.0.0 --port 8000 --proxy-headers"
 
     cors {
       allowed_origins     = ["https://${azurerm_static_web_app.frontend.default_host_name}"]

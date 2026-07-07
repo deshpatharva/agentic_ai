@@ -14,7 +14,7 @@ import json
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -22,18 +22,21 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
-from auth.dependencies import get_current_user
+from auth.dependencies import (
+    get_current_user, reserve_run_quota, refund_run_quota,
+    reserve_edit_quota, refund_edit_quota,
+)
 from chat.agent import render_system_prompt, render_context_message
 from chat.state_machine import (
     resolve_phase, tools_for_phase, try_deterministic, fallback_response,
-    AWAITING_JD, JD_CAPTURED, OPTIMIZING, RESULTS_READY,
+    _get_recommended_profile, OPTIMIZING,
 )
 from chat.tools import LAUNCH_TOOL, SAVE_TOOL, DOWNLOAD_TOOL, EDIT_TOOL, parse_tool_calls, message_text
 from chat.dependencies import get_or_create_session, require_complete_profile
 from chat.handoff import fire_optimizer, save_profile_from_session, resolve_profile_download, apply_edit
 from chat.window import build_window
 from config import MODEL_CHAT_AGENT, CHAT_WINDOW_TURNS
-from db.models import ChatMessage, ChatSession, DailyUsageCounter, PlanLimit, User
+from db.models import ChatMessage, ChatSession, DailyUsageCounter, PipelineJob, JobStatus, PlanLimit, User
 from db.session import get_db, AsyncSessionLocal
 from llm import complete_with_tools, stream_chat
 
@@ -280,36 +283,6 @@ async def _compute_jd_gaps(jd_text: str, matches: list[dict], user: User, db: As
 # ── Quota helpers ──────────────────────────────────────────────────────────────
 
 
-async def _check_quota(user: User, db: AsyncSession) -> None:
-    from auth.dependencies import _effective_plan
-    from datetime import date
-
-    plan = _effective_plan(user)
-    limits = await db.scalar(select(PlanLimit).where(PlanLimit.plan == plan))
-    if not limits:
-        return
-
-    today_str = date.today().isoformat()
-    used = await db.scalar(
-        select(DailyUsageCounter.runs).where(
-            DailyUsageCounter.user_id == user.id,
-            DailyUsageCounter.date == today_str,
-        )
-    ) or 0
-
-    if used >= limits.daily_uploads:
-        raise HTTPException(
-            status_code=429,
-            detail={
-                "error": "limit_reached",
-                "limit": limits.daily_uploads,
-                "used": used,
-                "plan": user.plan.value,
-                "upgrade_message": "Upgrade to Pro for 20 uploads/day",
-            },
-        )
-
-
 async def _check_edit_quota(user: User, db: AsyncSession) -> None:
     from auth.dependencies import _effective_plan
     from datetime import date
@@ -353,6 +326,88 @@ async def _increment_edit_counter(user_id: str, db: AsyncSession) -> None:
         {"uid": uid_hex, "date": date.today().isoformat()},
     )
     await db.commit()
+
+
+async def _check_optimizer_job(session, ctx: dict, profiles_list: list[dict], db) -> dict | None:
+    """When the session believes a run is in flight, verify against the jobs table.
+
+    The session context only learns about SUCCESS (last_result is written by the
+    pipeline's success path) — a failed, reaped, or vanished job would otherwise
+    leave the session in OPTIMIZING forever, answering every message with the
+    canned "still running" line. Returns None while the job really is running;
+    otherwise mutates ctx to leave OPTIMIZING and returns the deterministic reply
+    for this turn (a retry proposal on failure, a dashboard pointer on
+    done-without-result).
+    """
+    job = await db.get(PipelineJob, session.job_id) if session.job_id else None
+    if job is not None and job.status in (JobStatus.running, JobStatus.pending):
+        return None
+
+    ctx.pop("_optimizer_launched", None)
+
+    if job is not None and job.status == JobStatus.done:
+        # Success landed on the job but last_result never reached this session
+        # (partial write) — don't fake results; point at the canonical copy.
+        return {
+            "action": "respond",
+            "response": "That optimization finished — check your dashboard for the results, "
+                        "or paste a new job description to run again.",
+        }
+
+    ctx["last_error"] = (job.error_message if job is not None else None) or "Optimizer run failed."
+    pid = str(job.profile_id) if (job is not None and job.profile_id) else None
+    profile = next((p for p in profiles_list if p["id"] == pid), None)
+    if profile is None:
+        profile = _get_recommended_profile(ctx, profiles_list)
+    if profile:
+        ctx["_pending_confirm"] = {"action": "launch", "profile_id": profile["id"]}
+        return {
+            "action": "respond",
+            "response": f'That optimization run failed and your quota was refunded. '
+                        f'Say yes to retry with your "{profile["label"]}" profile.',
+        }
+    return {
+        "action": "respond",
+        "response": "That optimization run failed and your quota was refunded. "
+                    "Paste a job description or pick a profile to try again.",
+    }
+
+
+async def _launch_and_stream(current_user, session, handoff_payload):
+    """Reserve a run slot, fire the optimizer, and yield the handoff/error events.
+
+    The reserved slot is refunded UNLESS the pipeline task actually started, so a
+    failure of any kind — a non-HTTP error from fire_optimizer, or a client
+    disconnect (CancelledError/GeneratorExit) between reserve and dispatch — can't
+    permanently consume the user's daily run. Shared by the LLM-tool and
+    deterministic launch paths so the reserve/refund contract lives in one place.
+    """
+    today = date.today()
+    async with AsyncSessionLocal() as qdb:
+        reserved_ok = await reserve_run_quota(current_user, qdb, on_date=today)
+    if not reserved_ok:
+        yield {"event": "error", "data": json.dumps({"message": "You've reached your daily limit. Upgrade to Pro for more runs/day."})}
+        return
+
+    slot_held = True
+    try:
+        job_id, sse_token = await fire_optimizer(current_user, session, handoff_payload, reserved_on=today)
+        slot_held = False  # the pipeline task now owns the reservation
+        async with AsyncSessionLocal() as wdb:
+            launched_sess = await wdb.scalar(select(ChatSession).where(ChatSession.id == session.id))
+            if launched_sess:
+                _ctx = dict(launched_sess.context or {})
+                _ctx["_optimizer_launched"] = True
+                launched_sess.context = _ctx
+                await wdb.commit()
+        yield {"event": "handoff", "data": json.dumps({"job_id": job_id, "sse_token": sse_token})}
+    except Exception as exc:
+        detail = exc.detail if isinstance(exc, HTTPException) else "Couldn't start the optimizer. Please try again."
+        yield {"event": "error", "data": json.dumps({"message": str(detail)})}
+    finally:
+        if slot_held:
+            async with AsyncSessionLocal() as qdb:
+                await refund_run_quota(str(current_user.id), qdb, run_date=today.isoformat())
 
 
 # ── Main chat endpoint ────────────────────────────────────────────────────────
@@ -444,7 +499,25 @@ async def optimize_chat(
         return EventSourceResponse(_setup_error_gen(), sep="\n")
 
     # ── 5. Try deterministic handling first ──────────────────────────────────
-    deterministic = try_deterministic(phase, body.message, ctx, profiles_list)
+    # Snapshot first: after JD resolution above, session.context and ctx can be
+    # the SAME dict object, so comparing them post-mutation would always be
+    # equal; and SQLAlchemy only detects JSON-column changes on reassignment.
+    ctx_snapshot = dict(ctx)
+
+    # If the session believes a run is in flight, reconcile with the jobs table
+    # first — a failed/reaped/vanished job must not brick the session.
+    recovery = None
+    if phase == OPTIMIZING:
+        recovery = await _check_optimizer_job(session, ctx, profiles_list, db)
+
+    deterministic = recovery or try_deterministic(phase, body.message, ctx, profiles_list)
+
+    # try_deterministic/_check_optimizer_job mutate ctx (_pending_confirm,
+    # _optimizer_launched, last_error) — persist so changes survive to next turn.
+    if ctx != ctx_snapshot:
+        session.context = dict(ctx)
+        session.updated_at = datetime.now(timezone.utc)
+        await db.commit()
 
     async def event_generator():
         """SSE generator for LLM-driven turns (deterministic turns use _deterministic_generator)."""
@@ -469,33 +542,14 @@ async def optimize_chat(
         usage = {"input_tokens": 0, "output_tokens": 0}
         tool_call_meta = None
 
-        # First attempt
-        try:
-            if phase_tools:
-                result = await complete_with_tools(window, MODEL_CHAT_AGENT, phase_tools)
-                message = result["message"]
-                display = message_text(message).strip()
-                tool_calls = parse_tool_calls(message)
-                usage = {"input_tokens": result.get("input_tokens", 0),
-                         "output_tokens": result.get("output_tokens", 0)}
-            else:
-                # No tools available (e.g. OPTIMIZING) — stream text response
-                chunks = []
-                async for chunk in stream_chat(window, MODEL_CHAT_AGENT):
-                    if chunk["type"] == "token":
-                        chunks.append(chunk["text"])
-                        yield {"event": "token", "data": json.dumps({"text": chunk["text"]})}
-                    elif chunk["type"] == "usage":
-                        usage = {"input_tokens": chunk.get("input_tokens", 0),
-                                 "output_tokens": chunk.get("output_tokens", 0)}
-                display = "".join(chunks).strip()
-        except Exception:
-            _logger.exception("chat completion failed for session %s", session_id_str)
-            display = ""
-
-        # Retry once on empty response
-        if not display and not tool_calls:
-            _logger.info("chat: empty response for session %s, retrying with temperature=0.7", session_id_str)
+        # Attempt loop: one retry covers both a raised call and an empty result.
+        # An exception on the final attempt is a real outage — surface it as an
+        # SSE error (like main did) instead of persisting a canned reply the
+        # model never produced. fallback_response stays reserved for calls that
+        # SUCCEEDED but returned nothing.
+        llm_exc = None
+        for attempt in (1, 2):
+            llm_exc = None
             try:
                 if phase_tools:
                     result = await complete_with_tools(window, MODEL_CHAT_AGENT, phase_tools)
@@ -504,8 +558,42 @@ async def optimize_chat(
                     tool_calls = parse_tool_calls(message)
                     usage = {"input_tokens": result.get("input_tokens", 0),
                              "output_tokens": result.get("output_tokens", 0)}
-            except Exception:
-                _logger.exception("chat retry also failed for session %s", session_id_str)
+                else:
+                    # No tools available (e.g. OPTIMIZING) — stream text response
+                    chunks = []
+                    async for chunk in stream_chat(window, MODEL_CHAT_AGENT):
+                        if chunk["type"] == "token":
+                            chunks.append(chunk["text"])
+                            yield {"event": "token", "data": json.dumps({"text": chunk["text"]})}
+                        elif chunk["type"] == "usage":
+                            usage = {"input_tokens": chunk.get("input_tokens", 0),
+                                     "output_tokens": chunk.get("output_tokens", 0)}
+                    display = "".join(chunks).strip()
+            except Exception as exc:
+                llm_exc = exc
+                display = ""
+                tool_calls = []
+                _logger.exception(
+                    "chat completion failed for session %s (attempt %d)", session_id_str, attempt
+                )
+            if display or tool_calls:
+                break
+            if not phase_tools:
+                # Streaming already flushed tokens to the client — a retry would
+                # emit a second, disjoint token stream. Fall through to the
+                # error/fallback handling below instead of re-streaming.
+                break
+            if attempt == 1:
+                _logger.info(
+                    "chat: %s for session %s, retrying once",
+                    "error" if llm_exc else "empty response", session_id_str,
+                )
+
+        if llm_exc is not None:
+            yield {"event": "final", "data": json.dumps({"content": "❌ Sorry — I hit an error. Please try again."})}
+            yield {"event": "error", "data": json.dumps({"message": "Agent failed — please try again."})}
+            yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
+            return
 
         # Final fallback — deterministic response based on phase
         if not display and not tool_calls:
@@ -556,34 +644,13 @@ async def optimize_chat(
                 yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
                 return
 
-            try:
-                await _check_quota(current_user, db)
-            except HTTPException as exc:
-                detail = exc.detail
-                msg = (detail.get("upgrade_message", "Daily limit reached.")
-                       if isinstance(detail, dict) else str(detail))
-                yield {"event": "error", "data": json.dumps({"message": msg})}
-                yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
-                return
-
             args = launch["arguments"]
             handoff_payload = {
                 "profile_id": str(args.get("profile_id", "") or ""),
                 "instruction": str(args.get("added_context", "") or ""),
             }
-            try:
-                job_id, sse_token = await fire_optimizer(current_user, session, handoff_payload)
-                async with AsyncSessionLocal() as wdb:
-                    from sqlalchemy import select as _sel
-                    launched_sess = await wdb.scalar(_sel(ChatSession).where(ChatSession.id == session.id))
-                    if launched_sess:
-                        _ctx = dict(launched_sess.context or {})
-                        _ctx["_optimizer_launched"] = True
-                        launched_sess.context = _ctx
-                        await wdb.commit()
-                yield {"event": "handoff", "data": json.dumps({"job_id": job_id, "sse_token": sse_token})}
-            except HTTPException as exc:
-                yield {"event": "error", "data": json.dumps({"message": str(exc.detail)})}
+            async for _ev in _launch_and_stream(current_user, session, handoff_payload):
+                yield _ev
 
         # ── Download ───────────────────────────────────────────────────────
         elif download:
@@ -604,23 +671,29 @@ async def optimize_chat(
 
         # ── Edit ───────────────────────────────────────────────────────────
         elif edit:
-            try:
-                await _check_edit_quota(current_user, db)
-            except HTTPException as exc:
-                detail = exc.detail
-                msg = (detail.get("upgrade_message", "Daily edit limit reached.")
-                       if isinstance(detail, dict) else str(detail))
-                yield {"event": "error", "data": json.dumps({"message": msg})}
+            # Reserve the edit slot atomically up-front (same race the run path
+            # had): concurrent edits can't all pass a read-only used<limit check.
+            async with AsyncSessionLocal() as qdb:
+                edit_reserved = await reserve_edit_quota(current_user, qdb)
+            if not edit_reserved:
+                yield {"event": "error", "data": json.dumps({"message": "You've reached your daily edit limit. Upgrade to Pro for more edits."})}
                 yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
                 return
+            edit_held = True
             try:
                 edit_result = await apply_edit(current_user, session, edit["arguments"])
-                async with AsyncSessionLocal() as wdb:
-                    await _increment_edit_counter(str(current_user.id), wdb)
+                edit_held = False  # edit succeeded — keep the reservation
                 yield {"event": "resume_edited", "data": json.dumps(edit_result)}
             except HTTPException as exc:
                 msg = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
                 yield {"event": "error", "data": json.dumps({"message": msg})}
+            except Exception:
+                yield {"event": "error", "data": json.dumps({"message": "Couldn't apply the edit. Please try again."})}
+            finally:
+                # Refund unless the edit succeeded — a failed edit must not burn quota.
+                if edit_held:
+                    async with AsyncSessionLocal() as qdb:
+                        await refund_edit_quota(str(current_user.id), qdb)
 
         yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
 
@@ -652,33 +725,12 @@ async def optimize_chat(
                 yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
                 return
 
-            try:
-                await _check_quota(current_user, db)
-            except HTTPException as exc:
-                detail = exc.detail
-                msg = (detail.get("upgrade_message", "Daily limit reached.")
-                       if isinstance(detail, dict) else str(detail))
-                yield {"event": "error", "data": json.dumps({"message": msg})}
-                yield {"event": "done", "data": json.dumps({"session_id": session_id_str})}
-                return
-
             handoff_payload = {
                 "profile_id": deterministic["profile_id"],
                 "instruction": "",
             }
-            try:
-                job_id, sse_token = await fire_optimizer(current_user, session, handoff_payload)
-                async with AsyncSessionLocal() as wdb:
-                    from sqlalchemy import select as _sel
-                    launched_sess = await wdb.scalar(_sel(ChatSession).where(ChatSession.id == session.id))
-                    if launched_sess:
-                        _ctx = dict(launched_sess.context or {})
-                        _ctx["_optimizer_launched"] = True
-                        launched_sess.context = _ctx
-                        await wdb.commit()
-                yield {"event": "handoff", "data": json.dumps({"job_id": job_id, "sse_token": sse_token})}
-            except HTTPException as exc:
-                yield {"event": "error", "data": json.dumps({"message": str(exc.detail)})}
+            async for _ev in _launch_and_stream(current_user, session, handoff_payload):
+                yield _ev
 
         elif action == "download":
             try:

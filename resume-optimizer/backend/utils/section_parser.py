@@ -63,6 +63,26 @@ def detect_sections(text: str) -> Dict[str, str]:
     current_lines: list = []
     buckets: dict = {"header": []}
 
+    def _flush() -> None:
+        """Store the accumulated block for current_section.
+
+        When the section already has content — a resume with two "Experience"
+        blocks (e.g. full-time + consulting histories) repeats the header — MERGE
+        instead of overwriting, dropping the duplicate header line so no content
+        is silently lost and the section isn't headed twice.
+        """
+        if not "\n".join(current_lines).strip():
+            return
+        existing = buckets.get(current_section)
+        if existing:
+            lines_to_add = current_lines
+            pattern = SECTION_PATTERNS.get(current_section)
+            if current_lines and pattern and pattern.match(current_lines[0].strip()):
+                lines_to_add = current_lines[1:]  # drop the repeated header line
+            existing.extend(lines_to_add)
+        else:
+            buckets[current_section] = current_lines[:]
+
     for line in text.splitlines():
         stripped = line.strip()
 
@@ -73,19 +93,14 @@ def detect_sections(text: str) -> Dict[str, str]:
                 break
 
         if matched_section:
-            content = "\n".join(current_lines).strip()
-            if content:
-                buckets[current_section] = current_lines[:]
+            _flush()
             current_section = matched_section
             current_lines = [line]
             buckets.setdefault(current_section, [])
         else:
             current_lines.append(line)
 
-    content = "\n".join(current_lines).strip()
-    if content:
-        buckets.setdefault(current_section, [])
-        buckets[current_section] = current_lines[:]
+    _flush()
 
     return {
         name: "\n".join(lines).strip()
