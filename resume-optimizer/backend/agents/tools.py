@@ -167,6 +167,24 @@ _SENIORITY_STOPWORDS = frozenset({
     "entry-level", "mid-level", "experienced",
 })
 
+# Role/credential nouns marking a compound claim (job title, certification)
+# riding on a matched capability substring -- e.g. "Senior Backend Engineer"
+# must not be promoted to evidenced just because "backend" matches; the title
+# claim itself is not evidenced. Checked as whole words anywhere in the item,
+# not just full-string equality (unlike a bare "Senior").
+_COMPOUND_CLAIM_MARKERS = frozenset({
+    "engineer", "developer", "architect", "manager", "director",
+    "administrator", "specialist", "consultant", "analyst", "scientist",
+    "certified", "certification", "certificate", "accredited", "licensed",
+})
+
+_WORD_RE = re.compile(r"[a-z]+")
+
+
+def _contains_drop_marker(n: str) -> bool:
+    return any(w in _SENIORITY_STOPWORDS or w in _COMPOUND_CLAIM_MARKERS
+               for w in _WORD_RE.findall(n))
+
 
 def _norm_term(s: str) -> str:
     s = re.sub(r"\([^)]*\)", " ", s.lower())          # strip parentheticals
@@ -182,7 +200,7 @@ def split_evidenced(items, capabilities) -> tuple:
     evidenced, gaps = [], []
     for item in items:
         n = _norm_term(item)
-        if not n or n in _SENIORITY_STOPWORDS:
+        if not n or _contains_drop_marker(n):
             continue
         hit = n in capabilities or any(
             re.search(r"(?<![\w+#])" + re.escape(c) + r"(?![\w+#])", n)

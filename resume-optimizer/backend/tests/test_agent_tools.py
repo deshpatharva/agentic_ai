@@ -500,6 +500,16 @@ def test_split_evidenced_partitions_and_drops_seniority():
     assert gaps == ["Kubernetes", "Terraform"]  # "Senior" dropped entirely
 
 
+def test_split_evidenced_rejects_compound_title_and_credential_claims():
+    from agents.tools import split_evidenced
+
+    evidenced, gaps = split_evidenced(["Senior Backend Engineer"], frozenset({"backend"}))
+    assert evidenced == [] and gaps == []  # title claim not promoted, not a reportable gap
+
+    evidenced, gaps = split_evidenced(["AWS Certified Solutions Architect"], frozenset({"aws"}))
+    assert evidenced == [] and gaps == []  # certification claim not promoted
+
+
 async def test_keyword_inject_filters_unevidenced_and_records_gaps():
     from agents import tools
 
