@@ -74,7 +74,7 @@ async def run_optimization_async(
                 "stage":   "agent",
             })
         pipeline_result = await _deterministic_fallback(resume_text, jd_keywords, claims_ledger, scores)
-        return await _with_verifier(pipeline_result, claims_ledger)
+        return await _with_verifier(pipeline_result, claims_ledger, resume_text)
 
     available_metrics = ", ".join(sorted(claims_ledger.metrics)[:15]) if claims_ledger.metrics else ""
     state = ResumeState(sections=sections, available_metrics=available_metrics)
@@ -127,7 +127,7 @@ async def run_optimization_async(
         if on_event:
             on_event({"type": "stage", "message": "Agent error — using deterministic rewrite.", "stage": "agent"})
         pipeline_result = await _deterministic_fallback(resume_text, jd_keywords, claims_ledger, scores)
-        return await _with_verifier(pipeline_result, claims_ledger)
+        return await _with_verifier(pipeline_result, claims_ledger, resume_text)
 
     # ── Extract result ────────────────────────────────────────────────────────
     optimized  = result.get("text", resume_text)
@@ -145,7 +145,7 @@ async def run_optimization_async(
         if on_event:
             on_event({"type": "stage", "message": "No changes from agent — using deterministic rewrite.", "stage": "agent"})
         pipeline_result = await _deterministic_fallback(resume_text, jd_keywords, claims_ledger, scores)
-        return await _with_verifier(pipeline_result, claims_ledger)
+        return await _with_verifier(pipeline_result, claims_ledger, resume_text)
 
     pipeline_result = {
         "text":          optimized,
@@ -155,13 +155,13 @@ async def run_optimization_async(
         "iterations":    iterations,
         "fallback":      False,
     }
-    return await _with_verifier(pipeline_result, claims_ledger)
+    return await _with_verifier(pipeline_result, claims_ledger, resume_text)
 
 
-async def _with_verifier(pipeline_result: dict, ledger: ClaimsLedger) -> dict:
+async def _with_verifier(pipeline_result: dict, ledger: ClaimsLedger, original_resume: str) -> dict:
     """Run the LLM verifier on the final draft and attach verifier_flagged to the result dict."""
     draft = pipeline_result.get("text", "")
-    vr = await verify_final_draft(draft, ledger)
+    vr = await verify_final_draft(draft, ledger, original_resume)
     return {
         **pipeline_result,
         "input_tokens":  pipeline_result.get("input_tokens",  0) + vr.input_tokens,
