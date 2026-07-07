@@ -9,7 +9,7 @@ from enum import Enum as PyEnum
 
 from sqlalchemy import (
     Boolean, Column, Date, DateTime, Enum, Float, ForeignKey,
-    Index, Integer, JSON, String, Text, text, Uuid, UniqueConstraint,
+    Index, Integer, JSON, SmallInteger, String, Text, text, Uuid, UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -280,6 +280,13 @@ class LlmCallLog(Base):
     latency_ms          = Column(Integer, nullable=True)
     ttft_ms             = Column(Integer, nullable=True)
     cache_hit           = Column(Boolean, nullable=False, default=False)
+    # Observability (0027): failure capture + finish reason. Named to map onto
+    # OTel GenAI semantic conventions for a possible future export.
+    status        = Column(String(16),  nullable=False, default="ok")
+    error_type    = Column(String(100), nullable=True)
+    error_code    = Column(String(40),  nullable=True)
+    attempt       = Column(SmallInteger, nullable=False, default=1)
+    finish_reason = Column(String(40),  nullable=True)
     created_at    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
                            nullable=False, index=True)
 
