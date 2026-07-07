@@ -613,3 +613,15 @@ async def test_skills_rewrite_only_offers_evidenced_skills():
     assert "Kubernetes" not in captured["prompt"]
     assert "evidenced" in captured["prompt"]
     assert st.honest_gaps() == ["Kubernetes"]
+
+
+def test_critique_resume_removed():
+    """Verify critique_resume function and its TOOL_DEFS/TOOL_MAP entries are deleted."""
+    from agents import tools
+    from orchestration.agent_loop import TOOL_DEFS, TOOL_MAP
+
+    assert not hasattr(tools, "critique_resume")
+    assert "critique_resume" not in TOOL_MAP
+    assert [t["function"]["name"] for t in TOOL_DEFS] == [
+        "keyword_inject", "bullet_strengthen", "skills_rewrite", "bullets_reorder",
+    ]

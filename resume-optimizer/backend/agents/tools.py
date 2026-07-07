@@ -45,7 +45,6 @@ from config import (
     AGENT_TOKEN_BUDGET,
     DEBATE_TOKEN_BUDGET,
     MODEL_BULLET_STRENGTHEN,
-    MODEL_CRITIQUE,
     MODEL_KEYWORD_INJECT,
     MODEL_SKILLS_REWRITE,
 )
@@ -555,98 +554,3 @@ Return ONLY the complete {section_name} section text with bullets reordered."""
         state.update_section(section_name, result["text"])
         return f"Reordered bullets in '{section_name}' by JD relevance."
     return f"Bullet reorder of '{section_name}' returned empty output — section unchanged."
-
-
-# ── Tool 5: Resume critique (qualitative feedback on the whole draft) ────────
-
-
-async def critique_resume(
-    state: ResumeState,
-    focus_areas_csv: str = "",
-) -> str:
-    """
-    Run a critic over the full resume draft and return structured feedback.
-
-    The strategist can call this at any point to get qualitative feedback
-    on what still reads weak, robotic, or generic — then decide which
-    fix tools to call based on the critique.
-
-    Args:
-        state: The ResumeState for this optimisation session.
-        focus_areas_csv: Optional comma-separated areas to focus critique on
-            (e.g. "robotic language,weak bullets,keyword stuffing"). Empty
-            means critique everything.
-
-    Returns:
-        Structured feedback string the strategist can act on.
-    """
-    ok, msg = _budget_ok(state)
-    if not ok:
-        return msg
-
-    draft = state.reassemble()
-    if not draft.strip():
-        return "Resume draft is empty — nothing to critique."
-
-    focus_note = (
-        f"Focus your critique on: {focus_areas_csv}"
-        if focus_areas_csv.strip()
-        else "Critique on dimensions the optimizer can act on: weak bullets, missing keywords, missing skills, bullet ordering."
-    )
-
-    prompt = f"""You are a senior hiring manager reviewing a resume. Be specific and actionable.
-
-{focus_note}
-
-For each issue you find, quote the exact phrase from the resume that needs fixing.
-
-The optimizer has tools that can only fix these dimensions — only return issues that map to one:
-- "weak_bullets" → fixed by bullet_strengthen
-- "missing_keywords" → fixed by keyword_inject
-- "missing_skills" → fixed by skills_rewrite
-- "ordering_issues" → fixed by bullets_reorder
-
-Do NOT raise issues about tone, robotic language, or wording — a separate humanize stage handles those.
-
-Return ONLY a JSON object with these keys (omit any key with an empty list):
-- "weak_bullets": list of bullet texts that lack impact or measurable outcomes
-- "missing_keywords": list of JD keywords the resume should include but doesn't
-- "missing_skills": list of required skills missing from the skills section
-- "ordering_issues": list of sections where the most JD-relevant bullets are not first
-
-Resume:
-\"\"\"
-{draft}
-\"\"\"
-
-JSON:"""
-
-    try:
-        result = await complete(prompt, MODEL_CRITIQUE, response_format={"type": "json_object"})
-    except Exception as exc:
-        return f"Critique LLM call failed: {exc}"
-
-    state.add_tokens(
-        result.get("input_tokens", 0),
-        result.get("output_tokens", 0),
-        result.get("cost_usd", 0.0),
-    )
-
-    import json
-    raw = result.get("text", "").strip()
-    try:
-        feedback = json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
-        return f"Critique returned non-JSON: {raw[:300]}"
-
-    parts = []
-    for key in ("weak_bullets", "missing_keywords", "missing_skills", "ordering_issues"):
-        items = feedback.get(key, [])
-        if items:
-            label = key.replace("_", " ").title()
-            parts.append(f"{label}: {'; '.join(str(i) for i in items[:5])}")
-
-    if not parts:
-        return "Critique found no issues — resume reads well."
-
-    return " | ".join(parts)

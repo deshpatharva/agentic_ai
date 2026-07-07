@@ -67,7 +67,7 @@ _NOOP_TOOL_MAP = {
     name: AsyncMock(return_value="OK")
     for name in [
         "keyword_inject", "bullet_strengthen", "skills_rewrite",
-        "bullets_reorder", "critique_resume",
+        "bullets_reorder",
     ]
 }
 
