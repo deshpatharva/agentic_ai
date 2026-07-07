@@ -44,11 +44,16 @@ async def humanize_resume(
 
 Improve the resume text on exactly THREE dimensions:
 1. Voice variety — vary sentence openings; avoid starting consecutive bullets with the same verb
-2. Confident assertions — replace hedges ("helped with", "assisted in", "worked on") with direct ownership ("led", "built", "delivered", "owned")
+2. Confident assertions -- replace hedges ("helped with", "assisted in") with direct ownership
+   ("led", "built", "delivered") ONLY where the surrounding text shows the candidate owned that work.
+   If ownership is not evidenced, keep the honest scope ("contributed to", "supported") and
+   strengthen the verb within that scope.
 3. Industry tone — use vocabulary natural to the target industry; avoid generic filler phrases
 
 Preserve every metric, company name, job title, and date exactly as written — never invent,
 inflate, or alter a number, and never insert a placeholder like "[XX%]".
+Do NOT add any new skill, tool, technology, metric, or achievement.
+Do NOT change job titles or seniority wording anywhere, including the summary.
 Plain text ONLY: no markdown and NO LaTeX or "$" math wrappers. Write figures plainly
 ("100M+ events/day", "$500K") — never "$(100M+events/day$".
 Return ONLY the improved resume text. No commentary."""
@@ -82,7 +87,7 @@ Example: {{"robotic_phrases": ["responsible for"], "weak_bullets": ["helped team
 Resume:
 {humanized_v1}
 
-JSON:""", MODEL_CRITIC)
+JSON:""", MODEL_CRITIC, response_format={"type": "json_object"})
     raw_critic = response["text"]
     accumulated["input_tokens"] += response.get("input_tokens", 0)
     accumulated["output_tokens"] += response.get("output_tokens", 0)
@@ -125,7 +130,8 @@ Resume:
 
 - Address every piece of feedback
 - Do NOT change names, dates, companies, or metrics
-- Do NOT add new metrics, numbers, achievements, or facts that aren't already in the resume
+- Do NOT add any new skill, tool, technology, metric, or achievement. Do NOT change job
+  titles or seniority wording.
 - Do NOT invent placeholder metrics like "[XX%]" or absolute claims like "100% reliability"
 - Keep plain-text structure
 Return ONLY the final resume text.""", MODEL_HUMANIZER)

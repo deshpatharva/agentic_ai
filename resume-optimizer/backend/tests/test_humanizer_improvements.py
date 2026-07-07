@@ -38,3 +38,29 @@ def test_humanizer_no_max_3_cap_in_critic():
     source = inspect.getsource(hum_module)
     assert "max 3" not in source.lower() or "max_iter" in source, \
         "Humanizer critic still has 'max 3' items cap — remove it"
+
+
+async def test_humanizer_prompts_forbid_new_claims_and_scope_ownership(monkeypatch):
+    import agents.humanizer as humanizer
+
+    prompts, kwargs_seen = [], []
+
+    async def fake_complete(prompt, model, **kw):
+        prompts.append(prompt)
+        kwargs_seen.append(kw)
+        if len(prompts) == 2:  # critic step
+            return {"text": '{"robotic_phrases": ["responsible for"]}',
+                    "input_tokens": 1, "output_tokens": 1, "cost_usd": 0.0}
+        return {"text": "polished resume", "input_tokens": 1, "output_tokens": 1,
+                "cost_usd": 0.0}
+
+    monkeypatch.setattr(humanizer, "complete", fake_complete)
+    await humanizer.humanize_resume("Some resume text.", industry="saas",
+                                    seniority_level="mid")
+
+    step1, step3 = prompts[0], prompts[2]
+    assert "ONLY where the surrounding text shows the candidate owned that work" in step1
+    assert "Do NOT add any new skill, tool, technology, metric, or achievement" in step1
+    assert "Do NOT change job titles or seniority wording" in step1
+    assert kwargs_seen[1].get("response_format") == {"type": "json_object"}
+    assert "Do NOT add any new skill, tool, technology, metric, or achievement" in step3
