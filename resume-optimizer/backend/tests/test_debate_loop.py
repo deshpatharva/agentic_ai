@@ -382,7 +382,10 @@ async def test_final_round_skips_rescore_and_reviewer(monkeypatch):
     assert "honest_gaps" in result
 
 
-async def test_reviewer_prompt_is_presentation_only(monkeypatch):
+async def test_reviewer_prompt_is_quality_mandate(monkeypatch):
+    """The reviewer must hunt for the single biggest TRUTHFUL quality improvement via the four
+    content-preserving actions -- NOT presentation-only nitpicks, and never by adding new content.
+    Guards against a regression to the old inert presentation-only mandate."""
     from agents.fact_extractor import ClaimsLedger
     from agents.tools import ResumeState
     from orchestration import debate_loop
@@ -441,10 +444,13 @@ async def test_reviewer_prompt_is_presentation_only(monkeypatch):
         ledger=ledger, original_resume="python work",
     )
     p = captured["prompt"]
-    assert "PRESENTATION" in p
+    assert "TRUTHFUL case" in p
+    assert "reorder" in p and "emphasize" in p and "sharpen" in p and "summary" in p
+    assert "never by adding anything new" in p
+    assert "OBJECTION: <reorder|emphasize|sharpen|summary>" in p
     assert "HONEST GAPS" in p and "Kubernetes" in p
-    assert "CURRENT SCORES" in p or "UPDATED SCORES" in p
-    assert "Do NOT raise objections about: missing skills" in p
+    assert "PRESENTATION" not in p
+    assert "Do NOT raise objections about: missing skills" not in p
 
 
 # ---------------------------------------------------------------------------
@@ -582,3 +588,76 @@ async def test_debate_loop_sweeps_initial_scores_with_zero_tool_calls(monkeypatc
     assert "Terraform" in result["honest_gaps"], (
         f"expected baseline scorer gap 'Terraform' in honest_gaps, got {result['honest_gaps']}"
     )
+
+
+async def test_round1_objection_carries_action_to_tool_mapping(monkeypatch):
+    """When the reviewer objects, round 2's optimizer messages must include the objection and
+    the action->tool mapping, so a reorder/emphasize/sharpen/summary objection is actionable."""
+    from agents.fact_extractor import ClaimsLedger
+    from agents.tools import ResumeState
+    from orchestration import debate_loop
+
+    ledger = ClaimsLedger(companies=frozenset(), metrics=frozenset(),
+                          raw_bullets=(), capabilities=frozenset({"python"}))
+    state = ResumeState(sections={"experience": "python work"},
+                        capabilities=ledger.capabilities)
+    captured_msgs = []
+
+    class _ToolCall:
+        id = "t1"
+        class function:  # noqa: N801
+            name = "bullet_strengthen"
+            arguments = '{"weak_bullets_csv": "python work"}'
+
+    class _MsgTools:
+        content = ""
+        tool_calls = [_ToolCall()]
+
+    class _MsgDone:
+        content = "done"
+        tool_calls = None
+
+    msgs = [_MsgTools(), _MsgDone(), _MsgTools(), _MsgDone()]
+
+    async def fake_cwt(messages, model, tools, **kw):
+        captured_msgs.append([dict(m) for m in messages])
+        return {"message": msgs.pop(0), "input_tokens": 5, "output_tokens": 5,
+                "cost_usd": 0.0, "cached_input_tokens": 0}
+
+    rc = [0]
+
+    async def fake_reviewer(prompt, model, **kw):
+        rc[0] += 1
+        if rc[0] == 1:
+            return {"text": "OBJECTION: sharpen: bullet 1 is vague",
+                    "input_tokens": 1, "output_tokens": 1, "cost_usd": 0.0}
+        return {"text": "No objections.", "input_tokens": 1, "output_tokens": 1, "cost_usd": 0.0}
+
+    async def fake_score(*a, **kw):
+        return {"text": {"overall": 70, "ats": {"score": 70}},
+                "tokens": {"input_tokens": 0, "output_tokens": 0}, "cost_usd": 0.0}
+
+    async def fake_tool(state_, **kw):
+        state_.update_section("experience", "stronger python work")
+        return "ok"
+
+    def fake_guard(text, ledger_, original):
+        return type("_G", (), {"gaps": [], "text": text})()
+
+    monkeypatch.setattr(debate_loop, "complete_with_tools", fake_cwt)
+    monkeypatch.setattr(debate_loop, "complete", fake_reviewer)
+    monkeypatch.setattr(debate_loop, "score_combined", fake_score)
+    monkeypatch.setattr(debate_loop, "fabrication_guard", fake_guard)
+    monkeypatch.setattr(debate_loop, "TOOL_MAP", {"bullet_strengthen": fake_tool})
+
+    await debate_loop.run_debate(
+        state=state, scores={"overall": 60}, jd_text="jd", jd_keywords=[],
+        ledger=ledger, original_resume="python work",
+    )
+
+    user_texts = " ".join(
+        m["content"] for round_msgs in captured_msgs for m in round_msgs if m["role"] == "user"
+    )
+    assert "The reviewer raised this objection" in user_texts
+    assert "sharpen" in user_texts and "emphasize" in user_texts
+    assert "bullets_reorder" in user_texts and "bullet_strengthen" in user_texts

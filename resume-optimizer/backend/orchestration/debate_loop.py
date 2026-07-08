@@ -115,11 +115,16 @@ async def run_debate(
                 "role": "user",
                 "content": (
                     f"The reviewer raised this objection: {last_objection}\n\n"
-                    "Address ONLY this objection. Call at most 1-2 tools that directly "
-                    "target the issue raised. Do NOT re-run a full optimization. Pick the "
-                    "tool that matches the objection (keyword_inject for missing keywords, "
-                    "bullet_strengthen for weak bullets, skills_rewrite for missing skills, "
-                    "bullets_reorder for ordering). When the targeted fix is applied, stop."
+                    "Address ONLY this objection with at most 1-2 tool calls, using only evidenced\n"
+                    "content already in the resume. Map the objection's action to a tool:\n"
+                    "  reorder   -> bullets_reorder\n"
+                    "  emphasize -> keyword_inject or skills_rewrite (an evidenced keyword/skill only)\n"
+                    "  sharpen   -> bullet_strengthen on the named bullet, adding NO metrics, tools,\n"
+                    "               outcomes, or scope\n"
+                    "  summary   -> keyword_inject or bullet_strengthen on the summary, using\n"
+                    "               existing facts\n"
+                    "Do NOT add any skill, tool, metric, or achievement not already in the resume. "
+                    "When the targeted fix is applied, stop."
                 ),
             })
 
@@ -238,22 +243,27 @@ async def run_debate(
 
         # ── Reviewer single-pass critique ──────────────────────────────────
         reviewer_prompt = (
-            "You are a skeptical resume reviewer. The optimizer revised this resume and can run more\n"
-            "tools, but it can only make PRESENTATION fixes to existing, verified content:\n"
-            "  - keyword_inject: weave pre-verified keywords into existing sentences\n"
-            "  - bullet_strengthen: stronger verbs on existing bullets\n"
-            "  - skills_rewrite: sync the skills section with skills evidenced elsewhere in the resume\n"
-            "  - bullets_reorder: reorder existing bullets by JD relevance\n\n"
+            "You are a senior resume reviewer. An optimizer has already tailored this resume to\n"
+            "the target job using ONLY facts the candidate can support. Find the SINGLE change\n"
+            "that would most strengthen how well the resume makes the candidate's TRUTHFUL case\n"
+            "for THIS job.\n\n"
+            "Your objection MUST be fixable by exactly ONE of these actions, using only content\n"
+            "already in the resume -- never by adding anything new:\n"
+            "  reorder   -- a highly relevant experience or bullet is buried; move it earlier\n"
+            "  emphasize -- an evidenced skill the job prioritizes is underweighted; foreground it\n"
+            "  sharpen   -- a bullet states evidenced work vaguely; make it concrete, with NO new\n"
+            "               metrics, tools, outcomes, or scope\n"
+            "  summary   -- the summary/headline doesn't foreground the target role; align it using\n"
+            "               facts already in the resume\n\n"
             f"{_build_scores_context(current_scores, state.capabilities)}\n\n"
             "HONEST GAPS already identified (impossible to fix truthfully -- do NOT raise these):\n"
             f"{', '.join(state.honest_gaps()) or 'none'}\n\n"
             f"CURRENT RESUME DRAFT:\n{draft}\n\n"
-            "Raise ONE objection that is fixable purely by presentation changes to existing content.\n"
-            "Do NOT raise objections about: missing skills, keywords, metrics, certifications, or\n"
-            "experience the resume does not contain; tone or wording (a humanize stage follows);\n"
-            "employment gaps or dates.\n"
-            "If you have no fixable objection, respond EXACTLY: No objections.\n"
-            "Otherwise respond EXACTLY: OBJECTION: <one presentation issue, 20 words or less>"
+            "If the resume already makes its strongest truthful case, respond EXACTLY:\n"
+            "No objections.\n"
+            "Otherwise respond EXACTLY (one line):\n"
+            "OBJECTION: <reorder|emphasize|sharpen|summary>: <specific change naming the bullet "
+            "or section, 25 words or less>"
         )
 
         try:
