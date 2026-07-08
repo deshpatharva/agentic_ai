@@ -136,7 +136,7 @@ from agents.scorer import score_combined                    # noqa: E402
 from agents.fabrication_guard import fabrication_guard      # noqa: E402
 from agents.humanizer import humanize_resume                # noqa: E402
 import orchestration.optimizer as opt                        # noqa: E402
-from config import SCORE_DIMENSIONS, SCORE_TARGET           # noqa: E402
+from config import SCORE_DIMENSIONS                          # noqa: E402
 from observability.trace import new_trace, set_call_kind, set_job_context  # noqa: E402
 from utils.cost import DEFAULT_PROVIDER_RATES, estimate_cache_savings      # noqa: E402
 
