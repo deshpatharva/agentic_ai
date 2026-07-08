@@ -11,7 +11,7 @@ import litellm
 DEFAULT_PROVIDER_RATES: dict[str, tuple[float, float]] = {
     "anthropic": (3.0, 15.0),    # anthropic/claude-sonnet-4-6 (no config.py MODEL_* uses anthropic today)
     "google": (0.25, 1.5),       # gemini/gemini-3.1-flash-lite — predominant google model (10 of 11 MODEL_* consts)
-    "groq": (0.05, 0.08),        # groq/llama-3.1-8b-instant — MODEL_CRITIC/MODEL_VERIFIER/MODEL_CRITIQUE
+    "groq": (0.05, 0.08),        # groq/llama-3.1-8b-instant -- MODEL_CRITIC/MODEL_VERIFIER
     "deepseek": (0.435, 0.87),   # deepseek/deepseek-v4-pro — MODEL_OPTIMIZER
 }
 

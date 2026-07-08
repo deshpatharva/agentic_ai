@@ -17,6 +17,7 @@ def _ledger_to_dict(ledger: ClaimsLedger) -> dict:
         "job_titles":  sorted(ledger.job_titles),
         "degrees":     sorted(ledger.degrees),
         "date_ranges": sorted(ledger.date_ranges),
+        "capabilities": sorted(ledger.capabilities),
     }
 
 
@@ -28,6 +29,7 @@ def _dict_to_ledger(d: dict) -> ClaimsLedger:
         job_titles  = frozenset(d.get("job_titles", [])),
         degrees     = frozenset(d.get("degrees", [])),
         date_ranges = frozenset(d.get("date_ranges", [])),
+        capabilities = frozenset(d.get("capabilities", [])),
     )
 
 
@@ -40,6 +42,7 @@ def merge_ledgers(base: ClaimsLedger, fresh: ClaimsLedger) -> ClaimsLedger:
         job_titles  = base.job_titles  | fresh.job_titles,
         degrees     = base.degrees     | fresh.degrees,
         date_ranges = base.date_ranges | fresh.date_ranges,
+        capabilities = base.capabilities | fresh.capabilities,
     )
 
 

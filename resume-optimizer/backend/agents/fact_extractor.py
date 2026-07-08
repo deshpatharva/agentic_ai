@@ -15,6 +15,9 @@ from dataclasses import dataclass, field
 
 import spacy
 
+from utils.section_parser import detect_sections
+from utils.skills_normalizer import _parse_skills, matched_taxonomy_terms
+
 try:
     nlp = spacy.load("en_core_web_sm")
 except OSError:
@@ -61,6 +64,7 @@ class ClaimsLedger:
     job_titles:  frozenset = field(default_factory=frozenset)  # job titles found in the resume
     degrees:     frozenset = field(default_factory=frozenset)  # academic degrees found in the resume
     date_ranges: frozenset = field(default_factory=frozenset)  # date ranges found in the resume
+    capabilities: frozenset = field(default_factory=frozenset)  # evidenced skills/tools (lowercased)
 
     def prompt_block(self) -> str:
         """Compact string injected into the rewriter prompt."""
@@ -69,9 +73,25 @@ class ClaimsLedger:
             parts.append(f"  Permitted metrics: {', '.join(sorted(self.metrics))}")
         if self.companies:
             parts.append(f"  Permitted companies/orgs: {', '.join(sorted(self.companies))}")
-        if not self.metrics and not self.companies:
+        if self.capabilities:
+            parts.append(f"  Verified capabilities: {', '.join(sorted(self.capabilities))}")
+        if not self.metrics and not self.companies and not self.capabilities:
             parts.append("  (no explicit metrics or organisations detected)")
         return "\n".join(parts)
+
+
+def _extract_capabilities(resume_text: str) -> frozenset:
+    caps: set = set()
+    skills_text = detect_sections(resume_text).get("skills", "")
+    if skills_text.strip():
+        # Whole comma/semicolon-delimited tokens only -- NOT split on whitespace.
+        # Splitting multi-word entries into individual words would evidence
+        # generic filler ("custom", "tool") as if it were a real skill, which
+        # defeats the point of this allowlist (spec: capabilities feed the
+        # evidence check that stops the optimizer from claiming unowned skills).
+        caps.update(t.lower() for t in _parse_skills(skills_text))
+    caps.update(matched_taxonomy_terms(resume_text))
+    return frozenset(caps)
 
 
 def extract_claims(resume_text: str) -> ClaimsLedger:
@@ -126,4 +146,5 @@ def extract_claims(resume_text: str) -> ClaimsLedger:
         job_titles=job_titles,
         degrees=degrees,
         date_ranges=date_ranges,
+        capabilities=_extract_capabilities(resume_text),
     )

@@ -15,9 +15,8 @@ import logging
 from typing import Callable, Optional
 
 from agents.fact_extractor import ClaimsLedger
-from agents.tools import ResumeState
+from agents.tools import ResumeState, split_evidenced
 from agents.rewriter import rewrite_resume
-from agents.verifier import verify_final_draft
 import config
 from orchestration.agent_loop import run_agent
 from orchestration.debate_loop import run_debate
@@ -53,7 +52,7 @@ async def run_optimization_async(
                        "pro" activates the debate loop when PRO_DEBATE_ENABLED=True.
 
     Returns:
-        {"text", "input_tokens", "output_tokens", "cost_usd", "iterations", "fallback"}
+        {"text", "input_tokens", "output_tokens", "cost_usd", "iterations", "fallback", "honest_gaps"}
     """
     if on_event:
         on_event({"type": "stage", "message": "Parsing resume sections...", "stage": "agent"})
@@ -74,10 +73,10 @@ async def run_optimization_async(
                 "stage":   "agent",
             })
         pipeline_result = await _deterministic_fallback(resume_text, jd_keywords, claims_ledger, scores)
-        return await _with_verifier(pipeline_result, claims_ledger)
+        return pipeline_result
 
     available_metrics = ", ".join(sorted(claims_ledger.metrics)[:15]) if claims_ledger.metrics else ""
-    state = ResumeState(sections=sections, available_metrics=available_metrics)
+    state = ResumeState(sections=sections, available_metrics=available_metrics, capabilities=claims_ledger.capabilities)
 
     if on_event:
         on_event({
@@ -127,7 +126,7 @@ async def run_optimization_async(
         if on_event:
             on_event({"type": "stage", "message": "Agent error — using deterministic rewrite.", "stage": "agent"})
         pipeline_result = await _deterministic_fallback(resume_text, jd_keywords, claims_ledger, scores)
-        return await _with_verifier(pipeline_result, claims_ledger)
+        return pipeline_result
 
     # ── Extract result ────────────────────────────────────────────────────────
     optimized  = result.get("text", resume_text)
@@ -145,7 +144,7 @@ async def run_optimization_async(
         if on_event:
             on_event({"type": "stage", "message": "No changes from agent — using deterministic rewrite.", "stage": "agent"})
         pipeline_result = await _deterministic_fallback(resume_text, jd_keywords, claims_ledger, scores)
-        return await _with_verifier(pipeline_result, claims_ledger)
+        return pipeline_result
 
     pipeline_result = {
         "text":          optimized,
@@ -154,48 +153,47 @@ async def run_optimization_async(
         "cost_usd":      cost_usd,
         "iterations":    iterations,
         "fallback":      False,
+        "honest_gaps":   result.get("honest_gaps", []),
     }
-    return await _with_verifier(pipeline_result, claims_ledger)
+    return pipeline_result
 
 
-async def _with_verifier(pipeline_result: dict, ledger: ClaimsLedger) -> dict:
-    """Run the LLM verifier on the final draft and attach verifier_flagged to the result dict."""
-    draft = pipeline_result.get("text", "")
-    vr = await verify_final_draft(draft, ledger)
-    return {
-        **pipeline_result,
-        "input_tokens":  pipeline_result.get("input_tokens",  0) + vr.input_tokens,
-        "output_tokens": pipeline_result.get("output_tokens", 0) + vr.output_tokens,
-        "cost_usd":      pipeline_result.get("cost_usd",     0.0) + vr.cost_usd,
-        "verifier_flagged": vr.flagged,
-    }
-
-
-def _format_scores_feedback(scores: dict) -> str:
+def _format_scores_feedback(scores: dict, capabilities: frozenset = frozenset()) -> tuple:
     """Turn the raw scores dict into a human-readable feedback block for the rewriter.
 
     Without this, ``f"{scores}"`` dumps the Python repr (``{'ats': {...}}``) into the
     prompt — far less useful than a list of concrete weaknesses.
+
+    Filters keyword/skill asks through the capabilities evidence allowlist so this
+    second feedback channel doesn't undo the keyword filtering in rewrite_resume's
+    own jd_keywords path. Returns (feedback_text, gaps).
     """
     if not isinstance(scores, dict):
-        return str(scores)
+        return str(scores), []
 
     lines: list[str] = []
+    gaps: list[str] = []
     ats = scores.get("ats", {}) or {}
     if ats.get("missing_keywords"):
-        lines.append(f"- Add missing ATS keywords: {', '.join(ats['missing_keywords'][:10])}")
+        evidenced, kw_gaps = split_evidenced(ats["missing_keywords"][:10], capabilities)
+        gaps.extend(kw_gaps)
+        if evidenced:
+            lines.append(f"- Add missing ATS keywords: {', '.join(evidenced)}")
     impact = scores.get("impact", {}) or {}
     if impact.get("weak_bullets"):
         lines.append("- Strengthen weak bullets: " + "; ".join(impact["weak_bullets"][:5]))
     skills = scores.get("skills_gap", {}) or {}
     crit = skills.get("critical_missing") or skills.get("missing_skills") or []
     if crit:
-        lines.append(f"- Add missing required skills: {', '.join(crit[:10])}")
+        evidenced, sk_gaps = split_evidenced(crit[:10], capabilities)
+        gaps.extend(sk_gaps)
+        if evidenced:
+            lines.append(f"- Add missing required skills: {', '.join(evidenced)}")
     tailor = scores.get("jd_tailoring", {}) or {}
     if tailor.get("issues"):
         lines.append("- Fix tailoring issues: " + "; ".join(tailor["issues"][:3]))
 
-    return "\n".join(lines) if lines else ""
+    return ("\n".join(lines) if lines else ""), gaps
 
 
 async def _deterministic_fallback(
@@ -205,10 +203,11 @@ async def _deterministic_fallback(
     scores: dict,
 ) -> dict:
     """Single full rewrite used when the agent cannot run or produces no change."""
+    feedback_text, feedback_gaps = _format_scores_feedback(scores, claims_ledger.capabilities)
     result = await rewrite_resume(
         resume_text=resume_text,
         jd_keywords=jd_keywords,
-        consolidated_feedback=_format_scores_feedback(scores),
+        consolidated_feedback=feedback_text,
         claims_ledger=claims_ledger,
     )
     return {
@@ -218,4 +217,5 @@ async def _deterministic_fallback(
         "cost_usd":      result.get("cost_usd", 0.0),
         "iterations":    1,
         "fallback":      True,
+        "honest_gaps":   sorted(set(result.get("gaps", [])) | set(feedback_gaps)),
     }

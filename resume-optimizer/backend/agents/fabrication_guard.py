@@ -1,14 +1,16 @@
 """
 Fabrication guard — post-generation verifier.
 
-Checks every explicit metric (%, $, K/M/B, x) and every ORG entity in the
-generated resume against the ClaimsLedger built from the original resume text.
+Checks every explicit metric (%, $, K/M/B, x), every ORG entity, and every
+taxonomy capability term (skill/tool/technology) in the generated resume
+against the ClaimsLedger built from the original resume text.
 
 Decision per line:
   - All claims verified → keep the line unchanged
-  - Fabricated metric or company found →
+  - Fabricated metric, company, or unevidenced capability found →
       a) substitute with the closest matching original bullet (difflib ratio > 0.35)
-      b) or drop entirely and add to `gaps` so the user can fill it honestly
+      b) or drop the line entirely (no inline verification tag -- see `gaps`
+         for what was removed so the user can fill it in honestly)
 
 Nothing unverifiable is ever kept in the output.
 """
@@ -17,12 +19,13 @@ from __future__ import annotations
 
 import difflib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
 
 from agents.fact_extractor import (
     METRIC_RE, ClaimsLedger, _BULLET_STRIP_RE, nlp_process
 )
+from utils.skills_normalizer import matched_taxonomy_terms
 
 # Role-domain terms that should never appear in a resume unless the candidate's
 # *source* resume already contains them. If the LLM injected these from a JD
@@ -38,12 +41,17 @@ _PERSONA_TERMS: frozenset[str] = frozenset({
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
+# The capability novelty check shares utils.skills_normalizer.matched_taxonomy_terms
+# with fact_extractor's capability extraction, so their word-boundary logic (which
+# terms count as "mentioned") can never drift apart.
+
 
 @dataclass
 class GuardResult:
     text:     str
     stripped: List[str]  # fabricated claims removed (for transparency)
     gaps:     List[str]  # bullets dropped because no original matched
+    capability_gaps: List[str] = field(default_factory=list)  # unevidenced tech terms found in output
 
 
 def _normalise_metric(m: str) -> float:
@@ -158,6 +166,11 @@ def fabrication_guard(
     # Persona terms that are legitimately in the source (candidate's own words)
     allowed_persona = _persona_terms_in_source(source_text)
 
+    # Capabilities the output may legitimately mention: the ledger's evidenced
+    # set plus any taxonomy term already present in the source text.
+    allowed_caps = set(ledger.capabilities) | matched_taxonomy_terms(source_text)
+    capability_gaps: set = set()
+
     output_lines: list = []
     stripped: list     = []
     gaps: list         = []
@@ -191,17 +204,36 @@ def fabrication_guard(
         # Which fabricated companies appear on this line (simple substring check)?
         bad_companies = [c for c in fabricated_companies if c.lower() in line.lower()]
 
-        if bad_metrics or bad_companies:
+        bad_caps = sorted(matched_taxonomy_terms(line) - allowed_caps)
+
+        if bad_metrics or bad_companies or bad_caps:
             stripped.extend(bad_metrics)
             stripped.extend(bad_companies)
+            stripped.extend(bad_caps)
+            capability_gaps.update(bad_caps)
 
-            output_lines.append(f"[VERIFY] {line}")
-            gaps.append(f"unverified claim: {bare!r}")
+            # Substitute the closest original bullet, else drop the line.
+            # No inline verification tags: nothing unverifiable is ever kept (spec 4b).
+            m = _BULLET_STRIP_RE.match(line)
+            prefix = m.group(0) if m else ""
+            best = _closest_original(bare, ledger.raw_bullets)
+            if best and best not in "\n".join(output_lines):
+                output_lines.append(f"{prefix}{best}")
+                gaps.append(f"unverified claim replaced with original: {bare[:80]!r}")
+            else:
+                gaps.append(f"unverified claim dropped: {bare[:80]!r}")
         else:
             output_lines.append(line)
 
+    # splitlines() drops a final trailing newline; restore it so unmodified
+    # input (no fabrications at all) round-trips byte-for-byte.
+    text = "\n".join(output_lines)
+    if generated_text.endswith("\n") and not text.endswith("\n"):
+        text += "\n"
+
     return GuardResult(
-        text="\n".join(output_lines),
+        text=text,
         stripped=list(dict.fromkeys(stripped)),  # deduplicate, preserve order
         gaps=gaps,
+        capability_gaps=sorted(capability_gaps),
     )

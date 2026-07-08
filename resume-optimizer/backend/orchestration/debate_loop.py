@@ -23,7 +23,13 @@ from agents.tools import ResumeState
 from config import AGENT_MAX_ITER, DEBATE_TOKEN_BUDGET, MODEL_OPTIMIZER, MODEL_REVIEWER
 from llm import complete, complete_with_tools
 from observability.trace import set_call_kind
-from orchestration.agent_loop import TOOL_DEFS, TOOL_MAP, _build_system_stable, _build_scores_context
+from orchestration.agent_loop import (
+    TOOL_DEFS,
+    TOOL_MAP,
+    _build_scores_context,
+    _build_system_stable,
+    _dimension_work,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -63,16 +69,28 @@ async def run_debate(
           - cost_usd (float): cumulative cost
           - iterations (int): number of complete_with_tools calls made
           - flagged (list): fabrication-guard gaps on the final draft
+          - honest_gaps (list): JD asks recorded as impossible to truthfully add
     """
     # Tag all LlmCallLog rows from this driver as "pro_debate"
     set_call_kind("pro_debate")
 
     # Stable system prompt — shared across rounds so the provider cache hits.
-    stable_system = _build_system_stable(state.available_sections())
+    stable_system = _build_system_stable(state.available_sections(), ledger)
 
     current_scores = scores
     iterations = 0
     last_objection: str | None = None
+
+    # Sweep scorer-derived gaps from the baseline scores immediately, mirroring
+    # run_agent's per-reflection sweep (agent_loop.py) -- this driver otherwise
+    # only records gaps from tools that were actually invoked, and a
+    # well-behaved optimizer never calls a tool on an off-limits item. Doing
+    # this once up front means honest_gaps is populated even if the debate
+    # makes zero between-round re-scores (e.g. 0 tool calls or budget hit
+    # in round 1).
+    _work = _dimension_work(current_scores, state.capabilities)
+    for _entry in _work.values():
+        state.add_gaps(_entry.get("gaps", []))
 
     for round_idx in range(DEBATE_MAX_ROUNDS):
         _logger.info("debate_loop: starting round %d/%d", round_idx + 1, DEBATE_MAX_ROUNDS)
@@ -88,7 +106,7 @@ async def run_debate(
         # ── Optimizer inner tool-calling loop ──────────────────────────────
         messages: list[dict] = [
             {"role": "system", "content": stable_system},
-            {"role": "user", "content": _build_scores_context(current_scores)},
+            {"role": "user", "content": _build_scores_context(current_scores, state.capabilities)},
         ]
 
         # Feed reviewer objection from previous round as user context (round > 0)
@@ -97,11 +115,16 @@ async def run_debate(
                 "role": "user",
                 "content": (
                     f"The reviewer raised this objection: {last_objection}\n\n"
-                    "Address ONLY this objection. Call at most 1-2 tools that directly "
-                    "target the issue raised. Do NOT re-run a full optimization. Pick the "
-                    "tool that matches the objection (keyword_inject for missing keywords, "
-                    "bullet_strengthen for weak bullets, skills_rewrite for missing skills, "
-                    "bullets_reorder for ordering). When the targeted fix is applied, stop."
+                    "Address ONLY this objection with at most 1-2 tool calls, using only evidenced\n"
+                    "content already in the resume. Map the objection's action to a tool:\n"
+                    "  reorder   -> bullets_reorder\n"
+                    "  emphasize -> keyword_inject or skills_rewrite (an evidenced keyword/skill only)\n"
+                    "  sharpen   -> bullet_strengthen on the named bullet, adding NO metrics, tools,\n"
+                    "               outcomes, or scope\n"
+                    "  summary   -> keyword_inject or bullet_strengthen on the summary, using\n"
+                    "               existing facts\n"
+                    "Do NOT add any skill, tool, metric, or achievement not already in the resume. "
+                    "When the targeted fix is applied, stop."
                 ),
             })
 
@@ -187,6 +210,12 @@ async def run_debate(
             _logger.info("debate_loop: optimizer made 0 tool calls in round %d — skipping reviewer", round_idx + 1)
             break
 
+        # Final round: a re-score would only feed a reviewer whose objection can
+        # never be acted on -- skip both (spec 5b; measured ~11% of pro-job cost).
+        if round_idx >= DEBATE_MAX_ROUNDS - 1:
+            _logger.info("debate_loop: final round %d complete -- skipping re-score and reviewer", round_idx + 1)
+            break
+
         # ── Re-score the draft so round N+1 (and the reviewer) see fresh scores ──
         draft = state.reassemble()
         try:
@@ -202,26 +231,39 @@ async def run_debate(
         except Exception as exc:
             _logger.warning("debate_loop: re-score failed (%s) — keeping prior scores", exc)
 
-        # ── Reviewer single-pass critique ──────────────────────────────────
-        overall = current_scores.get("overall", 0)
+        # Sweep scorer-derived gaps (evidenced-vs-gap split) into honest_gaps --
+        # same purpose as the initial sweep above, run again on every scores
+        # value the loop sees so a gap that only appears after this round's
+        # re-score is still captured. Runs whether or not the re-score above
+        # succeeded (current_scores may still hold the prior round's values,
+        # which is a harmless no-op re-sweep since add_gaps is set-based).
+        work = _dimension_work(current_scores, state.capabilities)
+        for entry in work.values():
+            state.add_gaps(entry.get("gaps", []))
 
+        # ── Reviewer single-pass critique ──────────────────────────────────
         reviewer_prompt = (
-            "You are a skeptical resume reviewer. The optimizer just revised this resume "
-            "and can run more tools to address objections.\n\n"
+            "You are a senior resume reviewer. An optimizer has already tailored this resume to\n"
+            "the target job using ONLY facts the candidate can support. Find the SINGLE change\n"
+            "that would most strengthen how well the resume makes the candidate's TRUTHFUL case\n"
+            "for THIS job.\n\n"
+            "Your objection MUST be fixable by exactly ONE of these actions, using only content\n"
+            "already in the resume -- never by adding anything new:\n"
+            "  reorder   -- a highly relevant experience or bullet is buried; move it earlier\n"
+            "  emphasize -- an evidenced skill the job prioritizes is underweighted; foreground it\n"
+            "  sharpen   -- a bullet states evidenced work vaguely; make it concrete, with NO new\n"
+            "               metrics, tools, outcomes, or scope\n"
+            "  summary   -- the summary/headline doesn't foreground the target role; align it using\n"
+            "               facts already in the resume\n\n"
+            f"{_build_scores_context(current_scores, state.capabilities)}\n\n"
+            "HONEST GAPS already identified (impossible to fix truthfully -- do NOT raise these):\n"
+            f"{', '.join(state.honest_gaps()) or 'none'}\n\n"
             f"CURRENT RESUME DRAFT:\n{draft}\n\n"
-            f"SCORES: overall={overall}\n\n"
-            "The optimizer can only fix issues with these tools:\n"
-            "  - keyword_inject: add missing ATS keywords\n"
-            "  - bullet_strengthen: rewrite weak bullets with stronger verbs/metrics\n"
-            "  - skills_rewrite: add missing skills to the skills section\n"
-            "  - bullets_reorder: reorder bullets by JD relevance\n\n"
-            "Raise ONE objection that is fixable by these tools. Do NOT raise objections about:\n"
-            "  - tone, density, robotic language, metric inflation, wording — a dedicated humanize "
-            "stage runs after the debate completes and handles all language polish\n"
-            "  - employment gaps, timeline, dates, missing certifications, lack of specific projects, "
-            "or anything requiring new factual information — the optimizer cannot fabricate facts\n\n"
-            "If you have no more fixable objections, respond EXACTLY: No objections.\n"
-            "Otherwise respond EXACTLY: OBJECTION: <one fixable issue, 20 words or less>"
+            "If the resume already makes its strongest truthful case, respond EXACTLY:\n"
+            "No objections.\n"
+            "Otherwise respond EXACTLY (one line):\n"
+            "OBJECTION: <reorder|emphasize|sharpen|summary>: <specific change naming the bullet "
+            "or section, 25 words or less>"
         )
 
         try:
@@ -261,13 +303,6 @@ async def run_debate(
         # Store objection to feed back next round
         last_objection = reviewer_text
 
-        # If this is the last round, don't iterate further
-        if round_idx >= DEBATE_MAX_ROUNDS - 1:
-            _logger.info(
-                "debate_loop: max rounds (%d) exhausted — exiting with last draft",
-                DEBATE_MAX_ROUNDS,
-            )
-
     # ── Fabrication guard on final draft ──────────────────────────────────────
     final_draft = state.reassemble()
     # CPU-bound (spaCy NER + difflib) — offload so concurrent requests aren't stalled.
@@ -283,4 +318,5 @@ async def run_debate(
         "cost_usd":      state.cost_usd,
         "iterations":    iterations,
         "flagged":       list(guard.gaps),
+        "honest_gaps":   state.honest_gaps(),
     }

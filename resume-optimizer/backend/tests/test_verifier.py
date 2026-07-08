@@ -71,7 +71,7 @@ async def test_verifier_flags_unsupported_metric():
     flagged_response = "unsupported claim: increased revenue by 500%"
 
     with patch("agents.verifier.complete", _mock_complete(flagged_response)):
-        result = await verify_final_draft(SAMPLE_DRAFT, ledger)
+        result = await verify_final_draft(SAMPLE_DRAFT, ledger, original_resume=SAMPLE_DRAFT)
 
     assert result.flagged, "Expected non-empty flagged list when LLM returns unsupported claims"
     assert any("500%" in f or "revenue" in f.lower() for f in result.flagged)
@@ -89,7 +89,7 @@ async def test_verifier_clean_draft_returns_empty_flagged():
     ledger = _make_ledger()
 
     with patch("agents.verifier.complete", _mock_complete("VERIFIED")):
-        result = await verify_final_draft(CLEAN_DRAFT, ledger)
+        result = await verify_final_draft(CLEAN_DRAFT, ledger, original_resume=CLEAN_DRAFT)
 
     assert result.flagged == [], f"Expected empty flagged list, got: {result.flagged}"
 
@@ -106,7 +106,7 @@ async def test_verifier_result_preserves_draft_text():
     ledger = _make_ledger()
 
     with patch("agents.verifier.complete", _mock_complete("VERIFIED")):
-        result = await verify_final_draft(CLEAN_DRAFT, ledger)
+        result = await verify_final_draft(CLEAN_DRAFT, ledger, original_resume=CLEAN_DRAFT)
 
     assert result.text == CLEAN_DRAFT, (
         f"Expected result.text == original_draft, got: {result.text!r}"
@@ -114,14 +114,17 @@ async def test_verifier_result_preserves_draft_text():
 
 
 # ---------------------------------------------------------------------------
-# Test 4 — verifier runs in standard tier via run_optimization_async
+# Test 4 -- verifier no longer runs inside run_optimization_async (Task 12: it
+# moved to main.py's pipeline tail, after humanize/guard, so it sees the
+# actual delivered text -- see tests/test_pipeline_order.py for that guarantee)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_verifier_runs_in_standard_tier():
+async def test_verifier_flagged_not_in_standard_tier_result():
     """
-    Mock run_agent to return an over-claimed draft, mock complete (verifier) to flag it.
-    Call run_optimization_async and assert result["verifier_flagged"] is non-empty.
+    Mock run_agent to return a draft. run_optimization_async's result must NOT
+    include verifier_flagged -- verification is now main.py's responsibility,
+    run after humanize/guard on the text that is actually delivered.
     """
     from orchestration.optimizer import run_optimization_async
 
@@ -147,12 +150,8 @@ async def test_verifier_runs_in_standard_tier():
         "iterations":    1,
     }
 
-    # Verifier LLM flags the invented metric
-    flagged_line = "unsupported claim: 500% revenue boost not in original resume"
-
     with (
         patch("orchestration.optimizer.run_agent", AsyncMock(return_value=agent_return)),
-        patch("agents.verifier.complete", _mock_complete(flagged_line)),
         patch("orchestration.optimizer.detect_sections", return_value={
             "experience": "Worked at Acme Corp as a Senior Software Engineer."
         }),
@@ -166,9 +165,9 @@ async def test_verifier_runs_in_standard_tier():
             scores=scores,
         )
 
-    assert "verifier_flagged" in result, "run_optimization_async must include 'verifier_flagged' in return dict"
-    assert result["verifier_flagged"], (
-        f"Expected non-empty verifier_flagged; got: {result['verifier_flagged']}"
+    assert "verifier_flagged" not in result, (
+        "verify_final_draft moved to main.py -- run_optimization_async must no "
+        "longer carry verifier_flagged in its result dict"
     )
 
 
@@ -193,7 +192,7 @@ async def test_verifier_uses_ledger_companies_and_metrics():
         return {"text": "VERIFIED", "input_tokens": 10, "output_tokens": 5, "cost_usd": 0.0}
 
     with patch("agents.verifier.complete", capture_complete):
-        await verify_final_draft(CLEAN_DRAFT, ledger)
+        await verify_final_draft(CLEAN_DRAFT, ledger, original_resume=CLEAN_DRAFT)
 
     assert captured_prompt, "complete was never called"
     prompt = captured_prompt[0]
@@ -204,3 +203,32 @@ async def test_verifier_uses_ledger_companies_and_metrics():
     assert "99%" in prompt or "$5M" in prompt, (
         "Ledger metrics must appear in the verifier prompt"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 6 -- verifier prompt includes original resume text and flag rules
+# ---------------------------------------------------------------------------
+
+async def test_verifier_prompt_includes_original_and_flag_rules(monkeypatch):
+    import agents.verifier as verifier
+    from agents.fact_extractor import ClaimsLedger
+
+    captured = {}
+
+    async def fake_complete(prompt, model, **kw):
+        captured["prompt"] = prompt
+        return {"text": "VERIFIED", "input_tokens": 1, "output_tokens": 1, "cost_usd": 0.0}
+
+    monkeypatch.setattr(verifier, "complete", fake_complete)
+    ledger = ClaimsLedger(companies=frozenset({"Acme"}), metrics=frozenset({"40%"}),
+                          raw_bullets=())
+    result = await verifier.verify_final_draft(
+        "Reduced load time by 40% at Acme.", ledger,
+        original_resume="Original: reduced page load time by 40% at Acme.",
+    )
+    p = captured["prompt"]
+    assert "ORIGINAL RESUME (ground truth):" in p
+    assert "reduced page load time by 40%" in p
+    assert "Do not flag rephrasings of supported claims" in p
+    assert "At most 10 flags" in p
+    assert result.flagged == []

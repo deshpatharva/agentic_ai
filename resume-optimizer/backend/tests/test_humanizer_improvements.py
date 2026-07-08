@@ -38,3 +38,46 @@ def test_humanizer_no_max_3_cap_in_critic():
     source = inspect.getsource(hum_module)
     assert "max 3" not in source.lower() or "max_iter" in source, \
         "Humanizer critic still has 'max 3' items cap — remove it"
+
+
+async def test_humanizer_prompts_are_readability_only_no_inflation(monkeypatch):
+    """The humanizer must polish language WITHOUT strengthening claims. Live QA on
+    real models showed the old 'replace hedges with direct ownership' framing drove
+    scope inflation ('assisted' -> 'spearheaded') and invented outcomes; the prompts
+    are now scoped to readability only. Guards against a regression to that framing."""
+    import agents.humanizer as humanizer
+
+    prompts, kwargs_seen = [], []
+
+    async def fake_complete(prompt, model, **kw):
+        prompts.append(prompt)
+        kwargs_seen.append(kw)
+        if len(prompts) == 2:  # critic step
+            return {"text": '{"robotic_phrases": ["responsible for"]}',
+                    "input_tokens": 1, "output_tokens": 1, "cost_usd": 0.0}
+        return {"text": "polished resume", "input_tokens": 1, "output_tokens": 1,
+                "cost_usd": 0.0}
+
+    monkeypatch.setattr(humanizer, "complete", fake_complete)
+    await humanizer.humanize_resume("Some resume text.", industry="saas",
+                                    seniority_level="mid")
+
+    step1, critic, step3 = prompts[0], prompts[1], prompts[2]
+
+    # Step 1: line-editor framing, forbids upgrading scope verbs and inventing outcomes,
+    # preserves bullets, and does not reintroduce the old ownership-strengthening rule.
+    assert "You are a resume line editor." in step1
+    assert "editing language, not" in step1 and "strengthening the resume" in step1
+    assert "spearheaded" in step1  # named in the forbidden-verb list
+    assert "Add NO outcome, result, or impact the source doesn't state" in step1
+    assert "Do NOT add any new skill, tool, technology, metric, or achievement" in step1
+    assert "Do NOT drop, merge, or collapse bullets" in step1
+    assert "direct ownership" not in step1  # the old inflation-driving instruction is gone
+
+    # Step 2 critic: readability problems only, must not push strengthening.
+    assert "Look ONLY for language and readability problems" in critic
+    assert kwargs_seen[1].get("response_format") == {"type": "json_object"}
+
+    # Step 3: applies edits without upgrading verbs or adding outcomes.
+    assert "Do NOT upgrade verbs" in step3
+    assert "Add NO outcome, result, metric, skill, tool, or achievement" in step3

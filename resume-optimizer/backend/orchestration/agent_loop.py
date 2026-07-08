@@ -31,11 +31,11 @@ from agents.tools import (
     ResumeState,
     bullet_strengthen,
     bullets_reorder,
-    critique_resume,
     keyword_inject,
     skills_rewrite,
+    split_evidenced,
 )
-from config import AGENT_MAX_ITER, AGENT_TOKEN_BUDGET, MODEL_OPTIMIZER, SCORE_DIMENSIONS, SCORE_TARGET
+from config import AGENT_MAX_ITER, AGENT_TOKEN_BUDGET, MODEL_OPTIMIZER, SCORE_TARGET
 from llm import complete_with_tools
 from observability.trace import set_call_kind
 
@@ -107,7 +107,7 @@ TOOL_DEFS = [
         "type": "function",
         "function": {
             "name": "bullets_reorder",
-            "description": "Reorder bullets in an experience section so the most JD-relevant bullets appear first. Call when JD Tailoring score is below target due to bullet ordering.",
+            "description": "Reorder bullets in a section (experience, summary, or skills) so the most JD-relevant appear first. Call when JD Tailoring score is below target due to bullet ordering.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -124,23 +124,6 @@ TOOL_DEFS = [
             },
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "critique_resume",
-            "description": "Run a critic over the full resume draft to get qualitative feedback on what still reads weak, robotic, or generic. Returns structured issues (robotic phrases, weak bullets, keyword stuffing, tone issues, structural issues). Call this to understand what needs fixing before deciding which tools to use.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "focus_areas_csv": {
-                        "type": "string",
-                        "description": "Optional comma-separated areas to focus on (e.g. 'robotic language,weak bullets'). Leave empty for full critique.",
-                    },
-                },
-                "required": [],
-            },
-        },
-    },
 ]
 
 # ── Tool dispatch table ───────────────────────────────────────────────────────
@@ -150,17 +133,16 @@ TOOL_MAP: dict[str, Callable] = {
     "bullet_strengthen": bullet_strengthen,
     "skills_rewrite":    skills_rewrite,
     "bullets_reorder":   bullets_reorder,
-    "critique_resume":   critique_resume,
 }
 
 
 # ── System prompt builder ─────────────────────────────────────────────────────
 
 
-def _build_system_stable(available_sections: list,
+def _build_system_stable(available_sections: list, ledger,
                          user_instruction: Optional[str] = None) -> str:
-    """Stable system prompt — stays identical across reflections/rounds so the
-    provider's context cache can hit on it."""
+    """Stable system prompt -- identical across reflections/rounds so the
+    provider's context cache can hit on it. The ledger is per-job stable."""
     instruction_block = ""
     if user_instruction:
         instruction_block = (
@@ -170,50 +152,84 @@ def _build_system_stable(available_sections: list,
             "optimization or change sections the user did not mention.\n\n"
         )
 
-    return f"""{instruction_block}You are a Resume Optimization Strategist. Your job is to raise all resume scores above {SCORE_TARGET} using the available tools.
+    return f"""{instruction_block}You are a Resume Optimization Strategist. Present this candidate's
+VERIFIED experience as strongly and as relevantly to the target job as possible.
+
+VERIFIED FACTS -- the only claims this resume may make:
+{ledger.prompt_block()}
 
 AVAILABLE RESUME SECTIONS: {', '.join(available_sections)}
 
-Call tools only for dimensions marked NEEDS WORK. When all needed tools have been called, output a brief summary and stop calling tools."""
+HARD RULES:
+- Never add a skill, tool, technology, job title, seniority claim, or number that is not
+  in the VERIFIED FACTS above or already present in the resume text.
+- Tools refuse unevidenced items and record them as honest gaps for the user's gap
+  report. Do not retry a refused item; move on.
+- If a score cannot reach target truthfully, leave it -- honest gaps are a product
+  feature, not a failure.
+
+Work only on items marked "addable" and on presentation fixes (bullet strength, bullet
+ordering, JD tailoring of existing content). When no truthful work remains, output a
+one-line summary and stop calling tools."""
 
 
-def _build_scores_context(scores: dict) -> str:
-    """Volatile scores block — injected as a user message so the system prompt
-    stays cacheable across reflections.
-
-    Readability is intentionally omitted — a dedicated humanize stage runs
-    after the agent loop and handles language polish, so the optimizer should
-    not waste tool calls trying to fix readability.
-    """
-    ats    = scores.get("ats", {})
-    impact = scores.get("impact", {})
-    skills = scores.get("skills_gap", {})
-    tailor = scores.get("jd_tailoring", {})
+def _dimension_work(scores: dict, capabilities: frozenset) -> dict:
+    """Per-dimension score + what is truthfully actionable (spec 2b/2c)."""
+    ats    = scores.get("ats", {}) or {}
+    impact = scores.get("impact", {}) or {}
+    skills = scores.get("skills_gap", {}) or {}
+    tailor = scores.get("jd_tailoring", {}) or {}
 
     def _s(d: dict) -> int:
-        return d.get("score", 0)
+        v = d.get("score", 0)
+        return v if isinstance(v, (int, float)) else 0
 
-    def _flag(d: dict) -> str:
-        return "NEEDS WORK" if _s(d) < SCORE_TARGET else "ok"
-
-    return f"""CURRENT SCORES:
-  ATS Match:    {_s(ats):>3}  [{_flag(ats)}]
-    missing_keywords: {', '.join(ats.get('missing_keywords', [])[:15])}
-  Impact:       {_s(impact):>3}  [{_flag(impact)}]
-    weak_bullets: {', '.join(impact.get('weak_bullets', [])[:8])}
-  Skills Gap:   {_s(skills):>3}  [{_flag(skills)}]
-    missing_skills: {', '.join(skills.get('missing_skills', [])[:15])}
-  JD Tailoring: {_s(tailor):>3}  [{_flag(tailor)}]
-    issues: {', '.join(tailor.get('issues', [])[:3])}
-
-Analyze the scores above. Call tools for dimensions marked NEEDS WORK."""
+    kw_add, kw_gaps = split_evidenced(ats.get("missing_keywords", [])[:15], capabilities)
+    sk_add, sk_gaps = split_evidenced(skills.get("missing_skills", [])[:15], capabilities)
+    weak   = impact.get("weak_bullets", [])[:8]
+    issues = tailor.get("issues", [])[:3]
+    return {
+        "ats":          {"score": _s(ats),    "actionable": bool(kw_add), "addable": kw_add, "gaps": kw_gaps},
+        "impact":       {"score": _s(impact), "actionable": bool(weak),   "items": weak},
+        "skills_gap":   {"score": _s(skills), "actionable": bool(sk_add), "addable": sk_add, "gaps": sk_gaps},
+        "jd_tailoring": {"score": _s(tailor), "actionable": bool(issues), "items": issues},
+    }
 
 
-def _build_system(scores: dict, available_sections: list,
+def _flag_for(entry: dict) -> str:
+    if entry["score"] >= SCORE_TARGET:
+        return "ok"
+    return "NEEDS WORK" if entry["actionable"] else "capped (honest ceiling)"
+
+
+def _build_scores_context(scores: dict, capabilities: frozenset,
+                          heading: str = "CURRENT SCORES (baseline)") -> str:
+    """Volatile scores block -- a user message so the system prompt stays cacheable.
+
+    Missing items are split against the capabilities allowlist: only evidenced
+    items are presented as work; the rest are explicitly off-limits gaps.
+    Readability is omitted -- the post-loop humanize stage owns it."""
+    w = _dimension_work(scores, capabilities)
+    return f"""{heading}:
+  ATS Match:    {w['ats']['score']:>3}  [{_flag_for(w['ats'])}]
+    addable keywords (evidenced): {', '.join(w['ats']['addable'])}
+    gaps (no evidence -- DO NOT add; reported to user): {', '.join(w['ats']['gaps'])}
+  Impact:       {w['impact']['score']:>3}  [{_flag_for(w['impact'])}]
+    weak_bullets: {', '.join(w['impact']['items'])}
+  Skills Gap:   {w['skills_gap']['score']:>3}  [{_flag_for(w['skills_gap'])}]
+    addable skills (evidenced): {', '.join(w['skills_gap']['addable'])}
+    gaps (no evidence -- DO NOT add): {', '.join(w['skills_gap']['gaps'])}
+  JD Tailoring: {w['jd_tailoring']['score']:>3}  [{_flag_for(w['jd_tailoring'])}]
+    issues: {', '.join(w['jd_tailoring']['items'])}
+
+Do the addable and presentation work above. Items listed as gaps are off-limits."""
+
+
+def _build_system(scores: dict, available_sections: list, ledger,
                   user_instruction: Optional[str] = None) -> str:
     """Full system prompt (backward-compat wrapper)."""
-    return (_build_system_stable(available_sections, user_instruction)
-            + "\n\n" + _build_scores_context(scores))
+    return (_build_system_stable(available_sections, ledger, user_instruction)
+            + "\n\n" + _build_scores_context(scores, ledger.capabilities))
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -250,9 +266,9 @@ async def run_agent(
 
     messages: list[dict] = [
         {"role": "system",
-         "content": _build_system_stable(state.available_sections(), user_instruction)},
+         "content": _build_system_stable(state.available_sections(), ledger, user_instruction)},
         {"role": "user",
-         "content": _build_scores_context(scores)},
+         "content": _build_scores_context(scores, state.capabilities)},
     ]
 
     current_scores = scores
@@ -369,18 +385,19 @@ async def run_agent(
                 _logger.warning("Re-score failed (%s) — using prior scores for reflection", exc)
 
         overall = current_scores.get("overall", 0)
-        # Readability is excluded — the post-loop humanize stage owns it, and the
-        # optimizer has no tool to raise it. Including it here would block the
-        # done-check indefinitely whenever readability lags the other dimensions.
-        _agent_dims = tuple(d for d in SCORE_DIMENSIONS if d != "readability")
-        all_above = all(
-            current_scores.get(d, {}).get("score", 0) >= SCORE_TARGET
-            for d in _agent_dims
+        # Truthful done-check (spec 2c): a dimension is satisfied when it meets
+        # target OR nothing truthfully actionable remains ("capped") -- readability
+        # is excluded, since the post-loop humanize stage owns it, not this loop.
+        work = _dimension_work(current_scores, state.capabilities)
+        for entry in work.values():
+            state.add_gaps(entry.get("gaps", []))
+        all_done = all(
+            e["score"] >= SCORE_TARGET or not e["actionable"] for e in work.values()
         )
 
         _logger.info(
-            "agent_loop reflection %d/%d: overall=%s all_above=%s guard_gaps=%d",
-            reflection_idx + 1, reflections_cap, overall, all_above, len(guard.gaps),
+            "agent_loop reflection %d/%d: overall=%s all_done=%s guard_gaps=%d",
+            reflection_idx + 1, reflections_cap, overall, all_done, len(guard.gaps),
         )
 
         # No tool removes fabricated content, so identical gaps two reflections in
@@ -389,7 +406,7 @@ async def run_agent(
         gaps_stalled = bool(guard.gaps) and list(guard.gaps) == prev_gaps
         prev_gaps = list(guard.gaps)
 
-        if all_above and (not guard.gaps or gaps_stalled):
+        if all_done and (not guard.gaps or gaps_stalled):
             break  # target met; gaps either absent or unfixable by the toolset
 
         if budget_exhausted:
@@ -401,7 +418,12 @@ async def run_agent(
             # guard feedback. History is append-only — the original scores message
             # stays in place so earlier assistant turns keep their context, and the
             # stable system prompt keeps its cache hits.
-            feedback_parts: list[str] = [_build_scores_context(current_scores)]
+            feedback_parts: list[str] = [
+                _build_scores_context(
+                    current_scores, state.capabilities,
+                    heading=f"UPDATED SCORES (reflection {reflection_idx + 1})",
+                )
+            ]
             if guard.gaps:
                 feedback_parts.append(
                     f"Fabrication guard flagged: {'; '.join(guard.gaps[:5])}"
@@ -423,4 +445,5 @@ async def run_agent(
         "cost_usd":      state.cost_usd,
         "iterations":    iterations,
         "flagged":       list(guard.gaps),
+        "honest_gaps":   state.honest_gaps(),
     }

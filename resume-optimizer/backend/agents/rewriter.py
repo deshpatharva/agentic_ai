@@ -7,6 +7,7 @@ from typing import Optional
 from llm import complete
 from config import MODEL_REWRITER, MODEL_REWRITER_FAST
 from agents.fact_extractor import ClaimsLedger
+from agents.tools import split_evidenced
 
 
 async def rewrite_resume(
@@ -22,7 +23,13 @@ async def rewrite_resume(
     Returns a dict with "text" (the rewritten resume) and "tokens" (accumulated token counts).
     """
     accumulated = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
-    keywords_str = ", ".join(jd_keywords[:40]) if jd_keywords else "None provided"
+
+    gaps: list[str] = []
+    if claims_ledger is not None and getattr(claims_ledger, "capabilities", None):
+        evidenced, gaps = split_evidenced(jd_keywords or [], claims_ledger.capabilities)
+    else:
+        evidenced = list(jd_keywords or [])
+    keywords_str = ", ".join(evidenced[:40]) if evidenced else "None provided"
 
     input_word_count = len(resume_text.split())
     max_words = min(700, int(input_word_count * 1.2))
@@ -40,12 +47,10 @@ async def rewrite_resume(
 
 Rewrite the resume following THREE priorities in order:
 
-PRIORITY 1 — KEYWORD SATURATION
-  Weave all JD keywords naturally into bullets and summary.
-  Every required keyword must appear at least once; critical keywords ideally 2-3 times.
-  Inject only keywords that match the candidate's actual profession and the target role's domain.
-  Skip any keyword implying a job function the candidate has never performed, regardless of field.
-  Do NOT add new sentences or bullet points to carry keywords; weave them into existing content only.
+PRIORITY 1 -- TRUTHFUL KEYWORD ALIGNMENT
+  Weave the VERIFIED keywords below into existing bullets and summary. Every keyword
+  listed is evidenced by the resume itself; skip any keyword that would require claiming
+  a new duty, tool, or role. Never add content solely to host a keyword.
 
 PRIORITY 2 — QUANTIFIED IMPACT
   Where a bullet already has a metric (%, $, count, time-saved), keep it and make it prominent.
@@ -58,7 +63,7 @@ PRIORITY 3 — FLOW AND CONCISION
   Use consistent past tense throughout except for current role (present tense).
   Keep formatting clean: plain text, no tables or columns.
 
-SELF-CHECK before returning: confirm all required keywords appear, all bullets have metrics,
+SELF-CHECK before returning: confirm the VERIFIED keywords appear where truthful, no new facts were added,
 and the word count is under {max_words}.
 
 Preserve all company names, job titles, dates, and degrees exactly as written.
@@ -91,4 +96,5 @@ Current Resume:
         "text": final_text,
         "tokens": accumulated,
         "cost_usd": accumulated["cost_usd"],
+        "gaps": gaps,
     }
