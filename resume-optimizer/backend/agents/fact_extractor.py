@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 import spacy
 
 from utils.section_parser import detect_sections
-from utils.skills_normalizer import _parse_skills, taxonomy_terms
+from utils.skills_normalizer import _parse_skills, matched_taxonomy_terms
 
 try:
     nlp = spacy.load("en_core_web_sm")
@@ -80,14 +80,6 @@ class ClaimsLedger:
         return "\n".join(parts)
 
 
-# Custom boundaries so "c++", "c#", "ci/cd" match whole terms and "go" never
-# matches inside "Django". Compiled once at import.
-_TAXONOMY_PATTERNS: dict = {
-    t: re.compile(r"(?<![\w+#])" + re.escape(t) + r"(?![\w+#])")
-    for t in taxonomy_terms()
-}
-
-
 def _extract_capabilities(resume_text: str) -> frozenset:
     caps: set = set()
     skills_text = detect_sections(resume_text).get("skills", "")
@@ -98,10 +90,7 @@ def _extract_capabilities(resume_text: str) -> frozenset:
         # defeats the point of this allowlist (spec: capabilities feed the
         # evidence check that stops the optimizer from claiming unowned skills).
         caps.update(t.lower() for t in _parse_skills(skills_text))
-    text_lower = resume_text.lower()
-    for term, pattern in _TAXONOMY_PATTERNS.items():
-        if pattern.search(text_lower):
-            caps.add(term)
+    caps.update(matched_taxonomy_terms(resume_text))
     return frozenset(caps)
 
 

@@ -27,6 +27,24 @@ def test_taxonomy_terms_exposed():
     assert all(t == t.lower() for t in terms)
 
 
+def test_matched_taxonomy_terms_shared_helper():
+    from utils.skills_normalizer import matched_taxonomy_terms
+
+    # Returns the lowercased taxonomy terms present in the text (word-bounded).
+    hits = matched_taxonomy_terms("We use Python and Kubernetes in production.")
+    assert "python" in hits and "kubernetes" in hits
+    assert "terraform" not in hits
+
+    # Lowercases internally: callers need not pre-lower the text.
+    assert matched_taxonomy_terms("PYTHON") == matched_taxonomy_terms("python")
+
+    # Word boundaries: "go" must not match inside "Django"; "c++" matches whole.
+    assert "go" not in matched_taxonomy_terms("Built a Django app")
+    assert "c++" in matched_taxonomy_terms("Wrote C++ and Python")
+
+    assert isinstance(hits, frozenset)
+
+
 def test_capabilities_from_skills_section_and_taxonomy():
     from agents.fact_extractor import extract_claims
     ledger = extract_claims(RESUME)

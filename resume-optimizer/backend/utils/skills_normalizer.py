@@ -286,6 +286,28 @@ def taxonomy_terms() -> frozenset:
     return frozenset(_SKILL_CATEGORY.keys())
 
 
+# Word-bounded patterns for every taxonomy term, compiled once. Custom
+# boundaries keep "c++"/"c#"/"ci/cd" intact and stop "go" matching inside
+# "Django". This is the single compiled copy -- fact_extractor (capability
+# extraction) and fabrication_guard (capability novelty check) both go through
+# matched_taxonomy_terms() so their boundary logic can never drift apart.
+_TAXONOMY_PATTERNS: dict = {
+    t: re.compile(r"(?<![\w+#])" + re.escape(t) + r"(?![\w+#])")
+    for t in taxonomy_terms()
+}
+
+
+def matched_taxonomy_terms(text: str) -> frozenset:
+    """Return the taxonomy terms (lowercased) that appear word-bounded in text.
+
+    Lowercases internally, so callers must not pre-lower -- a caller passing
+    mixed-case text would otherwise silently miss every match, since taxonomy
+    terms are lowercase.
+    """
+    low = text.lower()
+    return frozenset(t for t, p in _TAXONOMY_PATTERNS.items() if p.search(low))
+
+
 # Substring heuristics for unknown tokens (checked in order).
 _KEYWORD_RULES: list[tuple[str, str]] = [
     ("aws ", "Cloud & Platforms"),

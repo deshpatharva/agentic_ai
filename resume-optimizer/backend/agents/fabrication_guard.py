@@ -25,7 +25,7 @@ from typing import List
 from agents.fact_extractor import (
     METRIC_RE, ClaimsLedger, _BULLET_STRIP_RE, nlp_process
 )
-from utils.skills_normalizer import taxonomy_terms
+from utils.skills_normalizer import matched_taxonomy_terms
 
 # Role-domain terms that should never appear in a resume unless the candidate's
 # *source* resume already contains them. If the LLM injected these from a JD
@@ -41,16 +41,9 @@ _PERSONA_TERMS: frozenset[str] = frozenset({
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
-# Precompiled taxonomy patterns for the capability novelty check. Custom
-# boundaries keep "c++"/"c#" intact and stop "go" matching inside "Django".
-_TAXONOMY_PATTERNS = {
-    t: re.compile(r"(?<![\w+#])" + re.escape(t) + r"(?![\w+#])")
-    for t in taxonomy_terms()
-}
-
-
-def _taxonomy_terms_in(text_lower: str) -> set:
-    return {t for t, p in _TAXONOMY_PATTERNS.items() if p.search(text_lower)}
+# The capability novelty check shares utils.skills_normalizer.matched_taxonomy_terms
+# with fact_extractor's capability extraction, so their word-boundary logic (which
+# terms count as "mentioned") can never drift apart.
 
 
 @dataclass
@@ -175,7 +168,7 @@ def fabrication_guard(
 
     # Capabilities the output may legitimately mention: the ledger's evidenced
     # set plus any taxonomy term already present in the source text.
-    allowed_caps = set(ledger.capabilities) | _taxonomy_terms_in(source_text.lower())
+    allowed_caps = set(ledger.capabilities) | matched_taxonomy_terms(source_text)
     capability_gaps: set = set()
 
     output_lines: list = []
@@ -211,7 +204,7 @@ def fabrication_guard(
         # Which fabricated companies appear on this line (simple substring check)?
         bad_companies = [c for c in fabricated_companies if c.lower() in line.lower()]
 
-        bad_caps = sorted(_taxonomy_terms_in(line.lower()) - allowed_caps)
+        bad_caps = sorted(matched_taxonomy_terms(line) - allowed_caps)
 
         if bad_metrics or bad_companies or bad_caps:
             stripped.extend(bad_metrics)
