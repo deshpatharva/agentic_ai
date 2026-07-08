@@ -1135,17 +1135,23 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
 
         # ── Final score on the delivered text ───────────────────────────────────
         set_call_kind("final_scoring")
-        final_score_dict = await score_combined(
-            current_resume, jd_text,
-            jd_keywords=jd_keywords,
-            seniority_level=seniority_level,
-            required_hard_skills=required_hard_skills,
-        )
-        current_scores = final_score_dict.get("text", scores)
-        final_tokens   = final_score_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
-        total_input_tokens  += final_tokens["input_tokens"]
-        total_output_tokens += final_tokens["output_tokens"]
-        total_cost_usd      += final_score_dict.get("cost_usd", 0.0)
+        try:
+            final_score_dict = await score_combined(
+                current_resume, jd_text,
+                jd_keywords=jd_keywords,
+                seniority_level=seniority_level,
+                required_hard_skills=required_hard_skills,
+            )
+            current_scores = final_score_dict.get("text", scores)
+            final_tokens   = final_score_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
+            total_input_tokens  += final_tokens["input_tokens"]
+            total_output_tokens += final_tokens["output_tokens"]
+            total_cost_usd      += final_score_dict.get("cost_usd", 0.0)
+        except Exception:
+            _logger.exception(
+                "job=%s: final score_combined failed -- falling back to baseline scores", job_id
+            )
+            current_scores = baseline_scores
         current_avg = round(
             sum(current_scores.get(k, {}).get("score", 0) for k in SCORE_DIMENSIONS) / len(SCORE_DIMENSIONS)
         )
@@ -1154,7 +1160,8 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                     "message": f"Score after optimization: {current_avg}"})
         scores = {**current_scores, "average": current_avg}
 
-        honest_gaps = sorted(set(agent_honest_gaps) | set(guard_result.capability_gaps))
+        from utils.optimization_report import merge_honest_gaps  # noqa: PLC0415
+        honest_gaps = merge_honest_gaps(agent_honest_gaps, guard_result.capability_gaps)
 
         # ── Phase 3: Generate .docx (no DB held during file I/O) ───────────
         await emit({"type": "stage", "message": "Generating optimized .docx file...", "stage": "generate"})

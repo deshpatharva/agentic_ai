@@ -12,6 +12,25 @@ from chat.gaps import compute_gaps
 from utils.section_parser import detect_sections
 
 
+def merge_honest_gaps(agent_gaps: list, capability_gaps: list) -> list:
+    """Merge agent- and guard-reported honest gaps, case-insensitively.
+
+    agent_gaps preserve original JD casing (e.g. "Kubernetes"); capability_gaps
+    are lowercased taxonomy terms from fabrication_guard (e.g. "kubernetes").
+    A plain set union of the two would report the same gap twice under
+    different casing -- dedup on the lowercase key instead, preferring the
+    agent's original casing when both forms are present.
+    """
+    merged: dict[str, str] = {}
+    for g in agent_gaps or []:
+        if g:
+            merged.setdefault(g.lower(), g)
+    for g in capability_gaps or []:
+        if g:
+            merged.setdefault(g.lower(), g)
+    return sorted(merged.values())
+
+
 def build_report(
     jd_result: dict,
     original_text: str,

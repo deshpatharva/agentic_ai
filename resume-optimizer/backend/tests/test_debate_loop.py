@@ -445,3 +445,140 @@ async def test_reviewer_prompt_is_presentation_only(monkeypatch):
     assert "HONEST GAPS" in p and "Kubernetes" in p
     assert "CURRENT SCORES" in p or "UPDATED SCORES" in p
     assert "Do NOT raise objections about: missing skills" in p
+
+
+# ---------------------------------------------------------------------------
+# Test 8: scorer-derived gaps sweep into honest_gaps even with no tool-recorded gap
+# ---------------------------------------------------------------------------
+
+
+async def test_debate_loop_sweeps_scorer_gaps_after_rescore(monkeypatch):
+    """run_debate must sweep _dimension_work's unevidenced items into
+    state.honest_gaps() after each between-round re-score, mirroring run_agent's
+    reflection sweep (agent_loop.py). The strategist is told gaps are off-limits,
+    so a well-behaved optimizer never calls a tool on an off-limits item -- if
+    the sweep is missing, a real, uncloseable gap never reaches the report."""
+    from agents.fact_extractor import ClaimsLedger
+    from agents.tools import ResumeState
+    from orchestration import debate_loop
+
+    ledger = ClaimsLedger(companies=frozenset(), metrics=frozenset(),
+                          raw_bullets=(), capabilities=frozenset({"python"}))
+    state = ResumeState(sections={"experience": "python work"},
+                        capabilities=ledger.capabilities)
+
+    class _ToolCall:
+        id = "t1"
+        class function:  # noqa: N801 - mimic litellm shape
+            name = "bullet_strengthen"
+            arguments = '{"weak_bullets_csv": "python work"}'
+
+    class _MsgTools:
+        content = ""
+        tool_calls = [_ToolCall()]
+
+    class _MsgDone:
+        content = "done"
+        tool_calls = None
+
+    msgs = [_MsgTools(), _MsgDone()]
+
+    async def fake_cwt(messages, model, tools, **kw):
+        return {"message": msgs.pop(0), "input_tokens": 5, "output_tokens": 5,
+                "cost_usd": 0.0, "cached_input_tokens": 0}
+
+    async def fake_reviewer(prompt, model, **kw):
+        return {"text": "No objections.", "input_tokens": 1, "output_tokens": 1,
+                "cost_usd": 0.0}
+
+    async def fake_tool_no_gaps(state_, **kw):
+        # Deliberately does NOT call state.add_gaps -- proves the sweep, not
+        # the tool, is what surfaces the scorer-derived gap below.
+        return "ok"
+
+    async def fake_score(*a, **kw):
+        return {
+            "text": {
+                "overall": 70,
+                "ats": {"score": 60, "missing_keywords": ["Kubernetes"]},
+                "skills_gap": {"score": 90, "missing_skills": []},
+            },
+            "tokens": {"input_tokens": 0, "output_tokens": 0},
+            "cost_usd": 0.0,
+        }
+
+    def fake_guard(text, ledger_, original):
+        return type("_G", (), {"gaps": [], "text": text})()
+
+    monkeypatch.setattr(debate_loop, "complete_with_tools", fake_cwt)
+    monkeypatch.setattr(debate_loop, "complete", fake_reviewer)
+    monkeypatch.setattr(debate_loop, "score_combined", fake_score)
+    monkeypatch.setattr(debate_loop, "fabrication_guard", fake_guard)
+    monkeypatch.setattr(debate_loop, "TOOL_MAP", {"bullet_strengthen": fake_tool_no_gaps})
+
+    result = await debate_loop.run_debate(
+        state=state,
+        scores={"overall": 60, "ats": {"score": 60, "missing_keywords": []}},
+        jd_text="jd", jd_keywords=[], ledger=ledger, original_resume="python work",
+    )
+
+    assert "Kubernetes" in result["honest_gaps"], (
+        f"expected scorer-derived gap 'Kubernetes' in honest_gaps, got {result['honest_gaps']}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 9: baseline scores are swept even when the debate makes zero re-scores
+# ---------------------------------------------------------------------------
+
+
+async def test_debate_loop_sweeps_initial_scores_with_zero_tool_calls(monkeypatch):
+    """Even when the optimizer makes zero tool calls in round 1 (the loop exits
+    before ever reaching a between-round re-score), a scorer-derived gap present
+    in the baseline `scores` passed into run_debate must still surface in
+    honest_gaps -- the initial-scores sweep must not depend on a re-score
+    happening first."""
+    from agents.fact_extractor import ClaimsLedger
+    from agents.tools import ResumeState
+    from orchestration import debate_loop
+
+    ledger = ClaimsLedger(companies=frozenset(), metrics=frozenset(),
+                          raw_bullets=(), capabilities=frozenset({"python"}))
+    state = ResumeState(sections={"experience": "python work"},
+                        capabilities=ledger.capabilities)
+
+    async def fake_cwt(messages, model, tools, **kw):
+        return {"message": _done_msg(), "input_tokens": 5, "output_tokens": 5,
+                "cost_usd": 0.0}
+
+    async def fake_reviewer(prompt, model, **kw):
+        return {"text": "No objections.", "input_tokens": 1, "output_tokens": 1,
+                "cost_usd": 0.0}
+
+    async def fake_score(*a, **kw):
+        return {"text": {"overall": 60}, "tokens": {"input_tokens": 0, "output_tokens": 0},
+                "cost_usd": 0.0}
+
+    def fake_guard(text, ledger_, original):
+        return type("_G", (), {"gaps": [], "text": text})()
+
+    baseline_scores = {
+        "overall": 60,
+        "ats": {"score": 60, "missing_keywords": ["Terraform"]},
+        "skills_gap": {"score": 90, "missing_skills": []},
+    }
+
+    monkeypatch.setattr(debate_loop, "complete_with_tools", fake_cwt)
+    monkeypatch.setattr(debate_loop, "complete", fake_reviewer)
+    monkeypatch.setattr(debate_loop, "score_combined", fake_score)
+    monkeypatch.setattr(debate_loop, "fabrication_guard", fake_guard)
+    monkeypatch.setattr(debate_loop, "TOOL_MAP", {})
+
+    result = await debate_loop.run_debate(
+        state=state, scores=baseline_scores, jd_text="jd", jd_keywords=[],
+        ledger=ledger, original_resume="python work",
+    )
+
+    assert "Terraform" in result["honest_gaps"], (
+        f"expected baseline scorer gap 'Terraform' in honest_gaps, got {result['honest_gaps']}"
+    )

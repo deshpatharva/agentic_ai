@@ -17,7 +17,7 @@ from config import SCORE_DIMENSIONS
 from db.models import ChatSession, JobStatus, PipelineJob, Profile, User
 from db.session import AsyncSessionLocal
 from orchestration.agent_loop import run_agent
-from utils.optimization_report import build_report
+from utils.optimization_report import build_report, merge_honest_gaps
 from utils.profile_utils import sections_to_text
 from utils.section_parser import detect_sections
 
@@ -343,7 +343,7 @@ async def apply_edit(user, session, arguments: dict) -> dict:
     edited_text = guard.text
     vr = await verify_final_draft(edited_text, ledger, source_text)
     verifier_flagged = vr.flagged
-    honest_gaps = sorted(set(agent_result.get("honest_gaps", [])) | set(guard.capability_gaps))
+    honest_gaps = merge_honest_gaps(agent_result.get("honest_gaps", []), guard.capability_gaps)
 
     # ── Re-score the edited draft ─────────────────────────────────────────────
     new_dict = await score_combined(

@@ -23,7 +23,13 @@ from agents.tools import ResumeState
 from config import AGENT_MAX_ITER, DEBATE_TOKEN_BUDGET, MODEL_OPTIMIZER, MODEL_REVIEWER
 from llm import complete, complete_with_tools
 from observability.trace import set_call_kind
-from orchestration.agent_loop import TOOL_DEFS, TOOL_MAP, _build_system_stable, _build_scores_context
+from orchestration.agent_loop import (
+    TOOL_DEFS,
+    TOOL_MAP,
+    _build_scores_context,
+    _build_system_stable,
+    _dimension_work,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -74,6 +80,17 @@ async def run_debate(
     current_scores = scores
     iterations = 0
     last_objection: str | None = None
+
+    # Sweep scorer-derived gaps from the baseline scores immediately, mirroring
+    # run_agent's per-reflection sweep (agent_loop.py) -- this driver otherwise
+    # only records gaps from tools that were actually invoked, and a
+    # well-behaved optimizer never calls a tool on an off-limits item. Doing
+    # this once up front means honest_gaps is populated even if the debate
+    # makes zero between-round re-scores (e.g. 0 tool calls or budget hit
+    # in round 1).
+    _work = _dimension_work(current_scores, state.capabilities)
+    for _entry in _work.values():
+        state.add_gaps(_entry.get("gaps", []))
 
     for round_idx in range(DEBATE_MAX_ROUNDS):
         _logger.info("debate_loop: starting round %d/%d", round_idx + 1, DEBATE_MAX_ROUNDS)
@@ -208,6 +225,16 @@ async def run_debate(
             state.add_tokens(_st.get("input_tokens", 0), _st.get("output_tokens", 0), _rescore.get("cost_usd", 0.0))
         except Exception as exc:
             _logger.warning("debate_loop: re-score failed (%s) — keeping prior scores", exc)
+
+        # Sweep scorer-derived gaps (evidenced-vs-gap split) into honest_gaps --
+        # same purpose as the initial sweep above, run again on every scores
+        # value the loop sees so a gap that only appears after this round's
+        # re-score is still captured. Runs whether or not the re-score above
+        # succeeded (current_scores may still hold the prior round's values,
+        # which is a harmless no-op re-sweep since add_gaps is set-based).
+        work = _dimension_work(current_scores, state.capabilities)
+        for entry in work.values():
+            state.add_gaps(entry.get("gaps", []))
 
         # ── Reviewer single-pass critique ──────────────────────────────────
         reviewer_prompt = (

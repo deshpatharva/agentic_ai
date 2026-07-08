@@ -41,3 +41,31 @@ def test_report_carries_honest_gaps():
         honest_gaps=["Kubernetes"],
     )
     assert report["gaps_for_jd"] == ["Kubernetes"]
+
+
+def test_merge_honest_gaps_dedupes_case_insensitively():
+    """agent-reported gaps keep original JD casing (e.g. 'Kubernetes'); guard
+    capability_gaps are lowercased taxonomy terms (e.g. 'kubernetes'). The two
+    merge points (main.py, chat/handoff.py) must not report the same gap
+    twice under different casing -- original casing wins."""
+    from utils.optimization_report import merge_honest_gaps
+
+    assert merge_honest_gaps(["Kubernetes"], ["kubernetes"]) == ["Kubernetes"]
+    # Mixed: one collision (Kubernetes/kubernetes), one agent-only (Terraform),
+    # one capability-only (docker) -- all three survive, no duplicates.
+    assert merge_honest_gaps(
+        ["Kubernetes", "Terraform"], ["kubernetes", "docker"],
+    ) == ["Kubernetes", "Terraform", "docker"]
+    # No collision: both survive.
+    assert merge_honest_gaps(["Kubernetes"], ["docker"]) == ["Kubernetes", "docker"]
+    # Empty inputs are handled.
+    assert merge_honest_gaps([], []) == []
+
+
+def test_merge_honest_gaps_used_at_both_call_sites():
+    """Both honest_gaps merge points must call the shared dedup helper --
+    otherwise the fix could regress silently at one site while the unit
+    test above keeps passing."""
+    handoff_src = (Path(__file__).parent.parent / "chat" / "handoff.py").read_text(encoding="utf-8")
+    assert "merge_honest_gaps(" in SRC
+    assert "merge_honest_gaps(" in handoff_src

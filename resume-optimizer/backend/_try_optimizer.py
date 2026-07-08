@@ -474,8 +474,8 @@ async def main():
     )
     if _leaked:
         failures.append(f"unevidenced capabilities in delivered text: {_leaked}")
-    if result.get("honest_gaps") is None:
-        failures.append("phase2 result missing honest_gaps")
+    if not result.get("honest_gaps"):
+        failures.append("phase2 result missing honest_gaps (None or empty)")
 
     print("\n  TRUTHFULNESS ASSERTIONS")
     if failures:
