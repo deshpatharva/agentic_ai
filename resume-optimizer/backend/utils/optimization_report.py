@@ -19,12 +19,15 @@ def build_report(
     baseline_score: float,
     final_scores: dict,
     iterations: int,
+    honest_gaps: list | None = None,
 ) -> dict:
     """Compute what the optimization changed and which JD gaps it addressed.
 
     - gaps_identified: JD-required skills missing from the ORIGINAL resume.
     - gaps_addressed:  identified gaps that now appear in the OPTIMIZED resume.
     - gaps_remaining:  still missing after optimization (honest — don't overclaim).
+    - gaps_for_jd:     the real gaps we couldn't truthfully close (accumulated by
+                       tools/guard/rewriter across the run) -- honest, not optimistic.
     """
     identified = compute_gaps(jd_result, [], original_text or "", limit=12)
     remaining = compute_gaps(jd_result, [], optimized_text or "", limit=12)
@@ -66,6 +69,7 @@ def build_report(
         "gaps_identified": identified,
         "gaps_addressed": addressed,
         "gaps_remaining": remaining,
+        "gaps_for_jd": list(honest_gaps or []),
         "iterations": int(iterations),
         # Per-dimension detail so the co-pilot can ask targeted improvement questions.
         # Capped at 5 items each to keep the context window lean.

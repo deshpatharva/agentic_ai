@@ -46,18 +46,6 @@ def _driver_result(text="Optimized resume text."):
     }
 
 
-def _verifier_result(text="Optimized resume text."):
-    """Return a fake VerifierResult."""
-    from agents.verifier import VerifierResult
-    return VerifierResult(
-        text=text,
-        flagged=[],
-        input_tokens=10,
-        output_tokens=5,
-        cost_usd=0.001,
-    )
-
-
 # ---------------------------------------------------------------------------
 # Test 1: standard plan routes to agent_loop
 # ---------------------------------------------------------------------------
@@ -70,12 +58,10 @@ async def test_standard_plan_uses_agent_loop():
 
     mock_run_agent  = AsyncMock(return_value=_driver_result())
     mock_run_debate = AsyncMock(return_value=_driver_result())
-    mock_verify     = AsyncMock(return_value=_verifier_result())
 
-    with patch.object(optimizer, "run_agent",          mock_run_agent), \
-         patch.object(optimizer, "run_debate",         mock_run_debate), \
-         patch.object(optimizer, "verify_final_draft", mock_verify):
-        await optimizer.run_optimization_async(
+    with patch.object(optimizer, "run_agent",  mock_run_agent), \
+         patch.object(optimizer, "run_debate", mock_run_debate):
+        result = await optimizer.run_optimization_async(
             job_id="test-job-1",
             resume_text=SAMPLE_RESUME,
             jd_text=SAMPLE_JD,
@@ -87,6 +73,7 @@ async def test_standard_plan_uses_agent_loop():
 
     mock_run_agent.assert_called_once()
     mock_run_debate.assert_not_called()
+    assert "verifier_flagged" not in result
 
 
 # ---------------------------------------------------------------------------
@@ -102,13 +89,11 @@ async def test_pro_plan_uses_debate_loop():
 
     mock_run_agent  = AsyncMock(return_value=_driver_result())
     mock_run_debate = AsyncMock(return_value=_driver_result())
-    mock_verify     = AsyncMock(return_value=_verifier_result())
 
-    with patch.object(optimizer, "run_agent",          mock_run_agent), \
-         patch.object(optimizer, "run_debate",         mock_run_debate), \
-         patch.object(optimizer, "verify_final_draft", mock_verify), \
+    with patch.object(optimizer, "run_agent",  mock_run_agent), \
+         patch.object(optimizer, "run_debate", mock_run_debate), \
          patch.object(config, "PRO_DEBATE_ENABLED", True):
-        await optimizer.run_optimization_async(
+        result = await optimizer.run_optimization_async(
             job_id="test-job-2",
             resume_text=SAMPLE_RESUME,
             jd_text=SAMPLE_JD,
@@ -120,6 +105,7 @@ async def test_pro_plan_uses_debate_loop():
 
     mock_run_debate.assert_called_once()
     mock_run_agent.assert_not_called()
+    assert "verifier_flagged" not in result
 
 
 # ---------------------------------------------------------------------------
@@ -135,13 +121,11 @@ async def test_pro_plan_with_flag_disabled_falls_back_to_agent_loop():
 
     mock_run_agent  = AsyncMock(return_value=_driver_result())
     mock_run_debate = AsyncMock(return_value=_driver_result())
-    mock_verify     = AsyncMock(return_value=_verifier_result())
 
-    with patch.object(optimizer, "run_agent",          mock_run_agent), \
-         patch.object(optimizer, "run_debate",         mock_run_debate), \
-         patch.object(optimizer, "verify_final_draft", mock_verify), \
+    with patch.object(optimizer, "run_agent",  mock_run_agent), \
+         patch.object(optimizer, "run_debate", mock_run_debate), \
          patch.object(config, "PRO_DEBATE_ENABLED", False):
-        await optimizer.run_optimization_async(
+        result = await optimizer.run_optimization_async(
             job_id="test-job-3",
             resume_text=SAMPLE_RESUME,
             jd_text=SAMPLE_JD,
@@ -153,28 +137,30 @@ async def test_pro_plan_with_flag_disabled_falls_back_to_agent_loop():
 
     mock_run_agent.assert_called_once()
     mock_run_debate.assert_not_called()
+    assert "verifier_flagged" not in result
 
 
 # ---------------------------------------------------------------------------
-# Test 4: verifier runs regardless of plan
+# Test 4: verifier no longer runs inside the optimizer, for either plan
+# (it moved to main.py's pipeline tail -- see tests/test_pipeline_order.py for
+# the it-still-runs-somewhere guarantee)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_verifier_runs_regardless_of_plan():
-    """verify_final_draft must be called exactly once for both standard and pro paths."""
+async def test_result_never_carries_verifier_flagged_regardless_of_plan():
+    """run_optimization_async's result must not include verifier_flagged for
+    either the standard or pro path -- verification now happens in main.py."""
     import config
     from orchestration import optimizer
 
     # -- Standard path --
     mock_run_agent  = AsyncMock(return_value=_driver_result())
     mock_run_debate = AsyncMock(return_value=_driver_result())
-    mock_verify     = AsyncMock(return_value=_verifier_result())
 
-    with patch.object(optimizer, "run_agent",          mock_run_agent), \
-         patch.object(optimizer, "run_debate",         mock_run_debate), \
-         patch.object(optimizer, "verify_final_draft", mock_verify):
-        await optimizer.run_optimization_async(
+    with patch.object(optimizer, "run_agent",  mock_run_agent), \
+         patch.object(optimizer, "run_debate", mock_run_debate):
+        result = await optimizer.run_optimization_async(
             job_id="test-job-4a",
             resume_text=SAMPLE_RESUME,
             jd_text=SAMPLE_JD,
@@ -184,18 +170,16 @@ async def test_verifier_runs_regardless_of_plan():
             plan="standard",
         )
 
-    mock_verify.assert_called_once(), "verify_final_draft must run on standard path"
+    assert "verifier_flagged" not in result
 
     # -- Pro path --
     mock_run_agent  = AsyncMock(return_value=_driver_result())
     mock_run_debate = AsyncMock(return_value=_driver_result())
-    mock_verify     = AsyncMock(return_value=_verifier_result())
 
-    with patch.object(optimizer, "run_agent",          mock_run_agent), \
-         patch.object(optimizer, "run_debate",         mock_run_debate), \
-         patch.object(optimizer, "verify_final_draft", mock_verify), \
+    with patch.object(optimizer, "run_agent",  mock_run_agent), \
+         patch.object(optimizer, "run_debate", mock_run_debate), \
          patch.object(config, "PRO_DEBATE_ENABLED", True):
-        await optimizer.run_optimization_async(
+        result = await optimizer.run_optimization_async(
             job_id="test-job-4b",
             resume_text=SAMPLE_RESUME,
             jd_text=SAMPLE_JD,
@@ -205,7 +189,7 @@ async def test_verifier_runs_regardless_of_plan():
             plan="pro",
         )
 
-    mock_verify.assert_called_once(), "verify_final_draft must run on pro path"
+    assert "verifier_flagged" not in result
 
 
 # ---------------------------------------------------------------------------

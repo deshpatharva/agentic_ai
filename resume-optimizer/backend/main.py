@@ -56,6 +56,7 @@ from agents.scorer import score_combined
 from agents.fact_extractor import extract_claims
 from agents.fabrication_guard import fabrication_guard
 from agents.humanizer import humanize_resume
+from agents.verifier import verify_final_draft
 from orchestration.optimizer import run_optimization_async
 from generators.docx_generator import generate_docx
 from utils.skills_normalizer import normalize_skills
@@ -1010,7 +1011,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
 
         # ── Phase 2: Agentic optimization (no DB held) ─────────────────
         _iter = 0
-        verifier_flagged: list = []
+        agent_honest_gaps: list = []
         if baseline_avg < SCORE_TARGET:
             current_resume = resume_text
             current_scores = baseline_scores
@@ -1040,50 +1041,16 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             total_output_tokens += agent_result.get("output_tokens", 0)
             total_cost_usd      += agent_result.get("cost_usd", 0.0)
             _iter = agent_result.get("iterations", 1)
-            verifier_flagged = agent_result.get("verifier_flagged", [])
+            agent_honest_gaps = agent_result.get("honest_gaps", [])
 
             if optimized_text and optimized_text.strip() != current_resume.strip():
                 current_resume = optimized_text
-
-            # Final re-score for the UI score event + downstream report. Hits the
-            # PR-3 result cache (0 tokens) when the draft is unchanged from the
-            # agent's last internal re-score (same scoring params).
-            set_call_kind("final_scoring")
-            final_score_dict = await score_combined(
-                current_resume,
-                jd_text,
-                jd_keywords=jd_keywords,
-                seniority_level=seniority_level,
-                required_hard_skills=required_hard_skills,
-            )
-            current_scores = final_score_dict.get("text", current_scores)
-            final_tokens   = final_score_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
-            total_input_tokens  += final_tokens["input_tokens"]
-            total_output_tokens += final_tokens["output_tokens"]
-            total_cost_usd      += final_score_dict.get("cost_usd", 0.0)
-            current_avg = round(
-                sum(current_scores.get(k, {}).get("score", 0) for k in SCORE_DIMENSIONS) / len(SCORE_DIMENSIONS)
-            )
-            await emit({"type": "average", "score": current_avg, "iteration": _iter,
-                        "scores": {k: current_scores.get(k, {}).get("score", 0) for k in SCORE_DIMENSIONS},
-                        "message": f"Score after optimization: {current_avg}"})
-
-            scores = {**current_scores, "average": current_avg}
         else:
             current_resume = resume_text
 
-        # ── Fabrication guard — flag unverified claims before rendering ────
-        # CPU-bound (spaCy NER + difflib over the whole resume) — keep it off the event loop.
-        guard_result = await asyncio.to_thread(fabrication_guard, current_resume, ledger, resume_text)
-        if guard_result.gaps:
-            _logger.warning(
-                "fabrication_guard flagged %d unverified claims for job %s",
-                len(guard_result.gaps),
-                job_id,
-            )
-        current_resume = guard_result.text
-
-        # ── Humanize after optimization + guard ────────────────────────────
+        # ── Humanize (spec 4a: runs BEFORE guard/verifier/score so the delivered
+        # text is the checked and scored text) ─────────────────────────────────
+        set_call_kind("humanize")
         await emit({"type": "stage", "message": "Humanizing resume language...", "stage": "humanize"})
         try:
             humanize_result = await humanize_resume(
@@ -1097,7 +1064,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             total_output_tokens += humanize_tokens["output_tokens"]
             total_cost_usd      += humanize_result.get("cost_usd", 0.0)
         except Exception:
-            _logger.exception("job=%s: humanize_resume failed — skipping humanization", job_id)
+            _logger.exception("job=%s: humanize_resume failed -- skipping humanization", job_id)
 
         # ── Normalize skills section ───────────────────────────────────────
         # Reconcile experience→skills, dedup, strip filler — pure CPU, no LLM.
@@ -1148,6 +1115,46 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
             current_resume = _sanitize_text(current_resume)
         except Exception:
             _logger.exception("job=%s: text sanitization failed — skipping", job_id)
+
+        # ── Fabrication guard on the DELIVERED text (capability-aware) ─────────
+        guard_result = await asyncio.to_thread(fabrication_guard, current_resume, ledger, resume_text)
+        if guard_result.gaps:
+            _logger.warning(
+                "fabrication_guard flagged %d unverified claims for job %s",
+                len(guard_result.gaps), job_id,
+            )
+        current_resume = guard_result.text
+
+        # ── Verifier on the delivered text ──────────────────────────────────────
+        set_call_kind("verifier")
+        vr = await verify_final_draft(current_resume, ledger, resume_text)
+        verifier_flagged = vr.flagged
+        total_input_tokens  += vr.input_tokens
+        total_output_tokens += vr.output_tokens
+        total_cost_usd      += vr.cost_usd
+
+        # ── Final score on the delivered text ───────────────────────────────────
+        set_call_kind("final_scoring")
+        final_score_dict = await score_combined(
+            current_resume, jd_text,
+            jd_keywords=jd_keywords,
+            seniority_level=seniority_level,
+            required_hard_skills=required_hard_skills,
+        )
+        current_scores = final_score_dict.get("text", scores)
+        final_tokens   = final_score_dict.get("tokens", {"input_tokens": 0, "output_tokens": 0})
+        total_input_tokens  += final_tokens["input_tokens"]
+        total_output_tokens += final_tokens["output_tokens"]
+        total_cost_usd      += final_score_dict.get("cost_usd", 0.0)
+        current_avg = round(
+            sum(current_scores.get(k, {}).get("score", 0) for k in SCORE_DIMENSIONS) / len(SCORE_DIMENSIONS)
+        )
+        await emit({"type": "average", "score": current_avg, "iteration": max(_iter, 1),
+                    "scores": {k: current_scores.get(k, {}).get("score", 0) for k in SCORE_DIMENSIONS},
+                    "message": f"Score after optimization: {current_avg}"})
+        scores = {**current_scores, "average": current_avg}
+
+        honest_gaps = sorted(set(agent_honest_gaps) | set(guard_result.capability_gaps))
 
         # ── Phase 3: Generate .docx (no DB held during file I/O) ───────────
         await emit({"type": "stage", "message": "Generating optimized .docx file...", "stage": "generate"})
@@ -1267,6 +1274,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                 baseline_score=baseline_avg,
                 final_scores=scores,
                 iterations=max(_iter, 1),
+                honest_gaps=honest_gaps,
             )
         except Exception:
             _logger.exception("job=%s: optimization report build failed", job_id)
@@ -1294,6 +1302,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                         "label_hint":     (_clean_role_label(job_title) or industry or ""),
                         "report":         optimization_report,
                         "verifier_flagged": verifier_flagged,
+                        "honest_gaps":    honest_gaps,
                     }
                     sess_row.context = ctx
                     sess_row.updated_at = datetime.now(timezone.utc)

@@ -114,14 +114,17 @@ async def test_verifier_result_preserves_draft_text():
 
 
 # ---------------------------------------------------------------------------
-# Test 4 — verifier runs in standard tier via run_optimization_async
+# Test 4 -- verifier no longer runs inside run_optimization_async (Task 12: it
+# moved to main.py's pipeline tail, after humanize/guard, so it sees the
+# actual delivered text -- see tests/test_pipeline_order.py for that guarantee)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_verifier_runs_in_standard_tier():
+async def test_verifier_flagged_not_in_standard_tier_result():
     """
-    Mock run_agent to return an over-claimed draft, mock complete (verifier) to flag it.
-    Call run_optimization_async and assert result["verifier_flagged"] is non-empty.
+    Mock run_agent to return a draft. run_optimization_async's result must NOT
+    include verifier_flagged -- verification is now main.py's responsibility,
+    run after humanize/guard on the text that is actually delivered.
     """
     from orchestration.optimizer import run_optimization_async
 
@@ -147,12 +150,8 @@ async def test_verifier_runs_in_standard_tier():
         "iterations":    1,
     }
 
-    # Verifier LLM flags the invented metric
-    flagged_line = "unsupported claim: 500% revenue boost not in original resume"
-
     with (
         patch("orchestration.optimizer.run_agent", AsyncMock(return_value=agent_return)),
-        patch("agents.verifier.complete", _mock_complete(flagged_line)),
         patch("orchestration.optimizer.detect_sections", return_value={
             "experience": "Worked at Acme Corp as a Senior Software Engineer."
         }),
@@ -166,9 +165,9 @@ async def test_verifier_runs_in_standard_tier():
             scores=scores,
         )
 
-    assert "verifier_flagged" in result, "run_optimization_async must include 'verifier_flagged' in return dict"
-    assert result["verifier_flagged"], (
-        f"Expected non-empty verifier_flagged; got: {result['verifier_flagged']}"
+    assert "verifier_flagged" not in result, (
+        "verify_final_draft moved to main.py -- run_optimization_async must no "
+        "longer carry verifier_flagged in its result dict"
     )
 
 

@@ -4,7 +4,10 @@ Tests for PR-7 edit_resume tool.
 Mocking strategy:
   - Source-inspection tests check module text (schema/prompt presence).
   - apply_edit tests patch chat.handoff.run_agent, .score_combined, .analyze_jd,
-    .extract_claims, ._parse_sections so no real LLM/API is hit.
+    ._parse_sections so no real LLM/API is hit. extract_claims and
+    fabrication_guard are pure CPU/spaCy (no LLM) and run for real so the
+    guard/verifier tail (Task 12) sees a properly grounded ledger; the LLM
+    verifier itself is mocked via agents.verifier.verify_final_draft.
   - Quota tests use SQLite via db.session.engine.
 
 pytest-asyncio runs in auto mode (pytest.ini).
@@ -174,6 +177,15 @@ def _fake_scores(values: dict):
     return {"text": out, "tokens": {"input_tokens": 0, "output_tokens": 0}, "cost_usd": 0.0}
 
 
+def _verifier_result(flagged=None):
+    """Fake VerifierResult for mocking agents.verifier.verify_final_draft.
+
+    apply_edit imports verify_final_draft INSIDE the function body, so it must
+    be patched at its home module (agents.verifier), not on chat.handoff."""
+    from agents.verifier import VerifierResult
+    return VerifierResult(text="", flagged=list(flagged or []))
+
+
 @pytest.mark.asyncio
 async def test_apply_edit_last_result_source_writes_back(db_tables):
     from chat import handoff
@@ -192,7 +204,10 @@ async def test_apply_edit_last_result_source_writes_back(db_tables):
     }
     user, sess = await _make_user_and_session(ctx)
 
-    agent_ret = {"text": "SUMMARY\nNew summary.\n\nEXPERIENCE\n- Built Spark pipelines.",
+    # Keeps "Kafka" (already evidenced in source_text) rather than introducing an
+    # unevidenced new capability -- this test verifies write-back plumbing, not
+    # fabrication_guard's (separately tested) capability-gap stripping.
+    agent_ret = {"text": "SUMMARY\nNew summary.\n\nEXPERIENCE\n- Built Kafka pipelines.",
                  "input_tokens": 5, "output_tokens": 5, "cost_usd": 0.0,
                  "iterations": 1, "flagged": []}
 
@@ -201,9 +216,9 @@ async def test_apply_edit_last_result_source_writes_back(db_tables):
              {"ats": 82, "impact": 75, "skills_gap": 80, "readability": 88, "jd_tailoring": 71}))), \
          patch.object(handoff, "analyze_jd", AsyncMock(return_value={"text": {"keywords": ["spark"],
              "seniority_level": "mid", "required_hard_skills": []}, "tokens": {}, "cost_usd": 0.0})), \
-         patch.object(handoff, "extract_claims", return_value=None), \
+         patch("agents.verifier.verify_final_draft", new=AsyncMock(return_value=_verifier_result())), \
          patch.object(handoff, "_parse_sections", AsyncMock(return_value={"summary": "New summary."})):
-        result = await handoff.apply_edit(user, sess, {"instruction": "Replace Kafka with Spark."})
+        result = await handoff.apply_edit(user, sess, {"instruction": "Tighten the summary."})
 
     # returned event payload
     assert result["scores"]["ats"] == 82
@@ -249,7 +264,7 @@ async def test_apply_edit_profile_source(db_tables):
     with patch.object(handoff, "run_agent", AsyncMock(return_value=agent_ret)), \
          patch.object(handoff, "score_combined", AsyncMock(return_value=_fake_scores(
              {"ats": 80, "impact": 80, "skills_gap": 80, "readability": 90, "jd_tailoring": 60}))), \
-         patch.object(handoff, "extract_claims", return_value=None), \
+         patch("agents.verifier.verify_final_draft", new=AsyncMock(return_value=_verifier_result())), \
          patch.object(handoff, "_parse_sections", AsyncMock(return_value={"summary": "Tighter summary."})):
         result = await handoff.apply_edit(user, sess, {"instruction": "Shorten the summary.", "profile_id": pid})
 
@@ -289,8 +304,7 @@ async def test_apply_edit_empty_output_returns_422(db_tables):
     agent_ret = {"text": "SUMMARY\nSame text.", "flagged": [], "iterations": 1,
                  "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
     with patch.object(handoff, "run_agent", AsyncMock(return_value=agent_ret)), \
-         patch.object(handoff, "score_combined", AsyncMock(return_value=_fake_scores({"ats": 80}))), \
-         patch.object(handoff, "extract_claims", return_value=None):
+         patch.object(handoff, "score_combined", AsyncMock(return_value=_fake_scores({"ats": 80}))):
         with pytest.raises(HTTPException) as exc:
             await handoff.apply_edit(user, sess, {"instruction": "no-op"})
     assert exc.value.status_code == 422
@@ -307,7 +321,8 @@ async def test_apply_edit_fabrication_flagged_still_writes_back(db_tables):
                  "iterations": 1, "input_tokens": 1, "output_tokens": 1, "cost_usd": 0.0}
     with patch.object(handoff, "run_agent", AsyncMock(return_value=agent_ret)), \
          patch.object(handoff, "score_combined", AsyncMock(return_value=_fake_scores({"ats": 75}))), \
-         patch.object(handoff, "extract_claims", return_value=None), \
+         patch("agents.verifier.verify_final_draft",
+               new=AsyncMock(return_value=_verifier_result(["Managed a team of 20"]))), \
          patch.object(handoff, "_parse_sections", AsyncMock(return_value={"summary": "Edited text."})):
         result = await handoff.apply_edit(user, sess, {"instruction": "Add team leadership."})
     assert result["verifier_flagged"] == ["Managed a team of 20"]

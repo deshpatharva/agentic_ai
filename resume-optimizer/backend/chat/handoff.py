@@ -315,7 +315,7 @@ async def apply_edit(user, session, arguments: dict) -> dict:
     available_metrics = ""
     if ledger and hasattr(ledger, "metrics") and ledger.metrics:
         available_metrics = ", ".join(sorted(ledger.metrics)[:15])
-    state = ResumeState(sections=sections, available_metrics=available_metrics)
+    state = ResumeState(sections=sections, available_metrics=available_metrics, capabilities=ledger.capabilities)
 
     agent_result = await run_agent(
         state=state,
@@ -337,7 +337,13 @@ async def apply_edit(user, session, arguments: dict) -> dict:
             detail="The edit produced no change — your resume is unchanged.",
         )
 
-    verifier_flagged = agent_result.get("flagged", []) or []
+    from agents.fabrication_guard import fabrication_guard  # noqa: PLC0415
+    from agents.verifier import verify_final_draft  # noqa: PLC0415
+    guard = await asyncio.to_thread(fabrication_guard, edited_text, ledger, source_text)
+    edited_text = guard.text
+    vr = await verify_final_draft(edited_text, ledger, source_text)
+    verifier_flagged = vr.flagged
+    honest_gaps = sorted(set(agent_result.get("honest_gaps", [])) | set(guard.capability_gaps))
 
     # ── Re-score the edited draft ─────────────────────────────────────────────
     new_dict = await score_combined(
@@ -375,6 +381,7 @@ async def apply_edit(user, session, arguments: dict) -> dict:
                 "scores":           new_flat,
                 "report":           report,
                 "verifier_flagged": list(verifier_flagged),
+                "honest_gaps":      honest_gaps,
             })
             new_ctx["last_result"] = prev
             sess_row.context = new_ctx
@@ -386,4 +393,5 @@ async def apply_edit(user, session, arguments: dict) -> dict:
         "scores":           new_flat,
         "scores_before":    scores_before,
         "verifier_flagged": list(verifier_flagged),
+        "honest_gaps":      honest_gaps,
     }
