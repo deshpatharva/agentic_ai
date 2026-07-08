@@ -40,7 +40,11 @@ def test_humanizer_no_max_3_cap_in_critic():
         "Humanizer critic still has 'max 3' items cap — remove it"
 
 
-async def test_humanizer_prompts_forbid_new_claims_and_scope_ownership(monkeypatch):
+async def test_humanizer_prompts_are_readability_only_no_inflation(monkeypatch):
+    """The humanizer must polish language WITHOUT strengthening claims. Live QA on
+    real models showed the old 'replace hedges with direct ownership' framing drove
+    scope inflation ('assisted' -> 'spearheaded') and invented outcomes; the prompts
+    are now scoped to readability only. Guards against a regression to that framing."""
     import agents.humanizer as humanizer
 
     prompts, kwargs_seen = [], []
@@ -58,9 +62,22 @@ async def test_humanizer_prompts_forbid_new_claims_and_scope_ownership(monkeypat
     await humanizer.humanize_resume("Some resume text.", industry="saas",
                                     seniority_level="mid")
 
-    step1, step3 = prompts[0], prompts[2]
-    assert "ONLY where the surrounding text shows the candidate owned that work" in step1
+    step1, critic, step3 = prompts[0], prompts[1], prompts[2]
+
+    # Step 1: line-editor framing, forbids upgrading scope verbs and inventing outcomes,
+    # preserves bullets, and does not reintroduce the old ownership-strengthening rule.
+    assert "You are a resume line editor." in step1
+    assert "editing language, not" in step1 and "strengthening the resume" in step1
+    assert "spearheaded" in step1  # named in the forbidden-verb list
+    assert "Add NO outcome, result, or impact the source doesn't state" in step1
     assert "Do NOT add any new skill, tool, technology, metric, or achievement" in step1
-    assert "Do NOT change job titles or seniority wording" in step1
+    assert "Do NOT drop, merge, or collapse bullets" in step1
+    assert "direct ownership" not in step1  # the old inflation-driving instruction is gone
+
+    # Step 2 critic: readability problems only, must not push strengthening.
+    assert "Look ONLY for language and readability problems" in critic
     assert kwargs_seen[1].get("response_format") == {"type": "json_object"}
-    assert "Do NOT add any new skill, tool, technology, metric, or achievement" in step3
+
+    # Step 3: applies edits without upgrading verbs or adding outcomes.
+    assert "Do NOT upgrade verbs" in step3
+    assert "Add NO outcome, result, metric, skill, tool, or achievement" in step3
