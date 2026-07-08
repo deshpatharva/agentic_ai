@@ -276,9 +276,40 @@ async def test_skills_rewrite_updates_section_and_cost():
     with patch.object(tools, "complete", new=_fake_complete):
         msg = await tools.skills_rewrite(st, missing_skills_csv="Docker, Kubernetes")
 
-    assert st.get_section("skills") == FAKE_RESULT["text"]
+    delivered = st.get_section("skills")
+    # The LLM's rewrite is incorporated...
+    assert FAKE_RESULT["text"] in delivered
+    # ...but every pre-existing skill is preserved (superset invariant), even
+    # though the fake LLM output mentioned none of them.
+    for kept in ("Python", "SQL", "Git"):
+        assert kept in delivered
     assert st.cost_usd > 0
     assert st.total_tokens() > 0
+
+
+async def test_skills_rewrite_preserves_existing_skills():
+    """skills_rewrite must never drop a skill the candidate already listed.
+
+    Regression for the Senior Data Engineer bug: the LLM "helpfully" returned a
+    drastically reduced Skills section and the tool blindly trusted it, deleting
+    JD-required PySpark / Apache Airflow / Snowflake.
+    """
+    from agents import tools
+
+    original = "PySpark, Apache Airflow, Snowflake, Databricks, dbt, SQL, Python"
+    st = tools.ResumeState(sections={"skills": original},
+                           capabilities=frozenset({"docker"}))
+
+    async def lossy(prompt, model, **kw):
+        # Drops five existing skills, keeps only two.
+        return {"text": "SQL, Python", "input_tokens": 10, "output_tokens": 3, "cost_usd": 0.0}
+
+    with patch.object(tools, "complete", new=lossy):
+        await tools.skills_rewrite(st, missing_skills_csv="Docker")
+
+    delivered = st.get_section("skills").lower()
+    for must in ("pyspark", "apache airflow", "snowflake", "databricks", "dbt"):
+        assert must in delivered, f"skills_rewrite dropped existing skill {must!r}"
 
 
 async def test_skills_rewrite_budget_guard():

@@ -124,10 +124,38 @@ def _reconcile_from_experience(
     return tokens + additions
 
 
+def restore_missing_skills(tokens: list[str], required: list[str]) -> list[str]:
+    """Append any ``required`` skill missing from ``tokens``, preserving order.
+
+    Enforces the superset invariant: no optimization stage may silently drop a
+    skill the candidate already listed. Presence is case-insensitive and
+    member-aware -- a ``required`` skill that appears as a delimited member of an
+    existing grouped token (e.g. 'Azure DevOps' inside 'CI/CD (Azure DevOps,
+    Jenkins)') counts as present and is not re-added. Any redundant append is a
+    no-op after the caller's dedup pass, so this errs toward keeping skills.
+    """
+    present: set[str] = set()
+    for tok in tokens:
+        present |= _members(tok.lower())
+
+    result = list(tokens)
+    for req in required:
+        rq = req.strip()
+        if not rq:
+            continue
+        members = _members(rq.lower())
+        if members & present:
+            continue
+        result.append(rq)
+        present |= members
+    return result
+
+
 def normalize_skills(
     skills_text: str,
     experience_text: str = "",
     seniority: str = "mid",
+    preserve_skills: Optional[list[str]] = None,
 ) -> str:
     """
     Normalize the skills section text.
@@ -136,6 +164,9 @@ def normalize_skills(
         skills_text:     Raw skills section (may include the section header line).
         experience_text: Full experience section text for reconciliation.
         seniority:       'entry' | 'mid' | 'senior' | 'lead' — controls filler removal.
+        preserve_skills: Skills the candidate originally listed. Any that an
+                         upstream stage dropped are restored (superset invariant),
+                         except filler removed for senior/lead candidates.
 
     Returns:
         Normalized skills section text (header line preserved if present).
@@ -154,6 +185,10 @@ def normalize_skills(
 
     tokens = _parse_skills(skills_text)
     tokens = _reconcile_from_experience(tokens, experience_text)
+    # Restore originals before stripping filler, so filler in the preserve list is
+    # still removed for senior/lead candidates rather than sneaking back in.
+    if preserve_skills:
+        tokens = restore_missing_skills(tokens, preserve_skills)
     tokens = _strip_filler(tokens, seniority)
     tokens = _dedup(tokens)
 

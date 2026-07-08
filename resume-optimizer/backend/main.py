@@ -1069,7 +1069,7 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
         # ── Normalize skills section ───────────────────────────────────────
         # Reconcile experience→skills, dedup, strip filler — pure CPU, no LLM.
         try:
-            from utils.skills_normalizer import categorize_skills as _categorize  # noqa: PLC0415
+            from utils.skills_normalizer import categorize_skills as _categorize, _parse_skills as _ps  # noqa: PLC0415
             _resume_sections = _detect_sections(current_resume)
             _skills_raw = _resume_sections.get("skills", "")
             _exp_raw    = _resume_sections.get("experience", "")
@@ -1079,16 +1079,22 @@ async def _run_pipeline_task(job_id: str, user_id: str = ""):
                 _skills_lines = _skills_raw.splitlines()
                 _skills_header = _skills_lines[0] if _skills_lines and _SKILLS_HEADER_RE.match(_skills_lines[0].strip()) else ""
 
+                # Superset invariant: never deliver fewer skills than the candidate
+                # originally listed. An upstream LLM stage (skills_rewrite or the
+                # humanizer) can silently drop skills; re-derive the originals from
+                # the untouched source resume and restore any that went missing.
+                _orig_skills_raw = _detect_sections(resume_text).get("skills", "")
+                _preserve = _ps(_orig_skills_raw) if _orig_skills_raw else []
                 _normalized_skills = normalize_skills(
                     _skills_raw,
                     experience_text=_exp_raw,
                     seniority=seniority_level,
+                    preserve_skills=_preserve,
                 )
                 # Deterministically group skills into labeled categories (Languages: ...,
                 # Cloud & Platforms: ...) via a curated taxonomy — same input always yields
                 # the same grouping. The docx generator bolds "Label: values" lines, giving
                 # visually distinct skill groups in the output document with zero docx changes.
-                from utils.skills_normalizer import _parse_skills as _ps  # noqa: PLC0415
                 _skill_tokens = _ps(_normalized_skills)
                 _categories = await _categorize(_skill_tokens, role_hint=industry or "")
                 if len(_categories) > 1 or (len(_categories) == 1 and "" not in _categories):

@@ -51,6 +51,8 @@ from config import (
 from llm import complete
 from observability.trace import current_call_kind
 from utils.section_parser import reassemble as _reassemble_sections
+from utils.skills_normalizer import _parse_skills as _parse_skill_tokens
+from utils.skills_normalizer import restore_missing_skills
 
 
 # ── Shared session state ──────────────────────────────────────────────────────
@@ -485,7 +487,17 @@ Return ONLY the complete updated skills section text."""
     skipped_note = (f" Skipped (no evidence -- recorded as gaps): {', '.join(gaps)}."
                     if gaps else "")
     if result.get("text"):
-        state.update_section("skills", result["text"])
+        # Superset invariant: the rewrite may ADD evidenced skills but must never
+        # DROP one the candidate already listed. The model sometimes returns a
+        # reduced list despite the prompt, so re-append anything it dropped -- a
+        # blind trust here once shipped a 45-skill section as 12.
+        rewritten = result["text"]
+        kept = _parse_skill_tokens(rewritten)
+        restored = restore_missing_skills(kept, _parse_skill_tokens(skills_text))
+        dropped = restored[len(kept):]
+        if dropped:
+            rewritten = f"{rewritten.rstrip()}\n{', '.join(dropped)}"
+        state.update_section("skills", rewritten)
         return f"Skills section updated to include: {', '.join(evidenced)}.{skipped_note}"
     return "Skills rewrite returned empty output -- section unchanged."
 
