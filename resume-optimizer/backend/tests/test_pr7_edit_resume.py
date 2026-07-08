@@ -331,6 +331,39 @@ async def test_apply_edit_fabrication_flagged_still_writes_back(db_tables):
         assert row.context["last_result"]["verifier_flagged"] == ["Managed a team of 20"]
 
 
+@pytest.mark.asyncio
+async def test_apply_edit_report_gaps_for_jd_agrees_with_honest_gaps(db_tables):
+    """The edit path must thread honest_gaps into build_report so
+    last_result["report"]["gaps_for_jd"] matches last_result["honest_gaps"]
+    (they were silently disagreeing -- report always [] -- before the fix).
+
+    Uses a clean edited_text (no unevidenced taxonomy terms) so the real
+    fabrication_guard leaves capability_gaps empty and honest_gaps is exactly
+    the agent's list -- deterministic, and non-empty so a regression (report
+    defaulting honest_gaps to None -> []) would fail this assertion."""
+    from chat import handoff
+    from db.models import ChatSession
+    from db.session import AsyncSessionLocal
+    ctx = {"last_result": {"optimized_text": "SUMMARY\nReal text.", "sections": {}, "scores": {"ats": 70}}}
+    user, sess = await _make_user_and_session(ctx)
+    agent_ret = {"text": "SUMMARY\nEdited text.", "flagged": [], "honest_gaps": ["Kubernetes"],
+                 "iterations": 1, "input_tokens": 1, "output_tokens": 1, "cost_usd": 0.0}
+    with patch.object(handoff, "run_agent", AsyncMock(return_value=agent_ret)), \
+         patch.object(handoff, "score_combined", AsyncMock(return_value=_fake_scores({"ats": 75}))), \
+         patch("agents.verifier.verify_final_draft", new=AsyncMock(return_value=_verifier_result())), \
+         patch.object(handoff, "_parse_sections", AsyncMock(return_value={"summary": "Edited text."})):
+        result = await handoff.apply_edit(user, sess, {"instruction": "Tighten the summary."})
+
+    assert result["honest_gaps"] == ["Kubernetes"]
+    async with AsyncSessionLocal() as db:
+        row = await db.get(ChatSession, sess.id)
+        lr = row.context["last_result"]
+        assert lr["honest_gaps"] == ["Kubernetes"]
+        # The two fields that must agree: honest_gaps and the report's gaps_for_jd.
+        assert lr["report"]["gaps_for_jd"] == ["Kubernetes"]
+        assert lr["report"]["gaps_for_jd"] == lr["honest_gaps"]
+
+
 # ── Group 7: router quota helpers ────────────────────────────────────────────
 
 @pytest.mark.asyncio

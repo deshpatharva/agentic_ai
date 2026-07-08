@@ -361,6 +361,7 @@ async def apply_edit(user, session, arguments: dict) -> dict:
         baseline_score=_avg_dims(scores_before),
         final_scores=new_scores_for_report,
         iterations=agent_result.get("iterations", 1),
+        honest_gaps=honest_gaps,
     )
 
     # ── Re-parse into rich profile sections (for save/docx) ──────────────────
