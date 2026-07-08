@@ -54,10 +54,13 @@ def test_fabrication_guard_tolerance_is_ten_percent():
         "Metric tolerance 0.10 not found in fabrication_guard"
 
 
-def test_fabrication_guard_uses_verify_not_silent_substitution():
-    """Guard must add [VERIFY] to uncertain lines, not silently substitute them."""
+def test_fabrication_guard_never_emits_verify_marker():
+    """Guard must never tag uncertain lines with [VERIFY]; it substitutes the
+    closest original bullet or drops the line entirely (spec 4b)."""
     import inspect
     from agents import fabrication_guard as fg_module
     source = inspect.getsource(fg_module)
-    assert "[VERIFY]" in source, \
-        "Guard must tag uncertain lines with [VERIFY] instead of silently substituting"
+    assert "[VERIFY]" not in source, \
+        "Guard must not tag lines with [VERIFY] -- substitute or drop instead"
+    assert "_closest_original" in source, \
+        "Guard must substitute fabricated lines via the closest-original-bullet path"
