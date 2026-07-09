@@ -48,6 +48,11 @@ router = APIRouter(prefix="/optimize", tags=["optimize-agent"])
 class ChatTurnRequest(BaseModel):
     session_id: str | None = None
     message: str
+    # Set by the profile-picker click: the EXACT id of the profile the user chose.
+    # When present, the turn launches that profile deterministically instead of
+    # letting the LLM re-resolve the selection by label (which mis-picks among
+    # similarly-labelled profiles).
+    profile_id: str | None = None
 
 
 class SessionRenameRequest(BaseModel):
@@ -413,6 +418,27 @@ async def _launch_and_stream(current_user, session, handoff_payload):
 # ── Main chat endpoint ────────────────────────────────────────────────────────
 
 
+def _explicit_pick_launch(profile_id: str | None, profiles_list: list[dict]) -> dict | None:
+    """Turn an explicit profile-picker selection into a deterministic launch.
+
+    A picker click already carries the chosen profile's exact id, so the launch
+    must NOT be re-resolved by the LLM (it hand-copies a UUID and can pick the
+    wrong profile among similar labels). Returns a launch action only when the id
+    belongs to one of the user's own profiles; otherwise None (fall through to
+    normal handling — a foreign/typed id is never launched blindly).
+    """
+    if not profile_id:
+        return None
+    picked = next((p for p in profiles_list if p["id"] == profile_id), None)
+    if not picked:
+        return None
+    return {
+        "action": "launch",
+        "profile_id": picked["id"],
+        "response": f'Optimizing your "{picked["label"]}" profile…',
+    }
+
+
 @router.post("/chat")
 async def optimize_chat(
     body: ChatTurnRequest,
@@ -506,11 +532,16 @@ async def optimize_chat(
 
     # If the session believes a run is in flight, reconcile with the jobs table
     # first — a failed/reaped/vanished job must not brick the session.
-    recovery = None
-    if phase == OPTIMIZING:
-        recovery = await _check_optimizer_job(session, ctx, profiles_list, db)
+    # An explicit picker selection is unambiguous — launch that exact profile and
+    # skip both the deterministic heuristics and the LLM, so a click is never
+    # re-resolved by label.
+    deterministic = _explicit_pick_launch(body.profile_id, profiles_list)
+    if deterministic is None:
+        recovery = None
+        if phase == OPTIMIZING:
+            recovery = await _check_optimizer_job(session, ctx, profiles_list, db)
 
-    deterministic = recovery or try_deterministic(phase, body.message, ctx, profiles_list)
+        deterministic = recovery or try_deterministic(phase, body.message, ctx, profiles_list)
 
     # try_deterministic/_check_optimizer_job mutate ctx (_pending_confirm,
     # _optimizer_launched, last_error) — persist so changes survive to next turn.
