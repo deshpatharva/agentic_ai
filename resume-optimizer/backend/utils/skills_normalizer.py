@@ -343,6 +343,25 @@ def matched_taxonomy_terms(text: str) -> frozenset:
     return frozenset(t for t, p in _TAXONOMY_PATTERNS.items() if p.search(low))
 
 
+def evidenced_skills_in_text(text: str) -> list[str]:
+    """Return taxonomy skills present in ``text``, in the text's own casing.
+
+    Enforces the superset invariant at PARSE time: an LLM resume->JSON parser
+    (or a prompt-length cap) can silently drop skills, so callers restore every
+    skill the taxonomy can prove is present in the full source text. Casing is
+    taken from ``text`` ("PySpark" stays "PySpark"); order follows the taxonomy.
+    """
+    low = text.lower()
+    out: list[str] = []
+    for term, pat in _TAXONOMY_PATTERNS.items():
+        m = pat.search(low)
+        if m:
+            # low is a char-for-char lowercase of text for ASCII resume content,
+            # so the match span maps back to the original casing.
+            out.append(text[m.start():m.end()])
+    return out
+
+
 # Substring heuristics for unknown tokens (checked in order).
 _KEYWORD_RULES: list[tuple[str, str]] = [
     ("aws ", "Cloud & Platforms"),

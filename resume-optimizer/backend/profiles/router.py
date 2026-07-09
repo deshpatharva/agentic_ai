@@ -180,9 +180,25 @@ Resume text:
         raise HTTPException(status_code=502, detail=f"AI parsing service error: {exc}") from exc
 
     try:
-        return parse_llm_json(result["text"])
+        parsed = parse_llm_json(result["text"])
     except ValueError as e:
         raise HTTPException(status_code=502, detail=f"Profile parser returned invalid JSON: {e}")
+
+    # Superset guard: the parser LLM (and the raw_text[:8000] prompt cap above)
+    # can silently drop skills — and a skill dropped HERE poisons the profile and
+    # every reuse of it. Restore every taxonomy-evidenced skill from the FULL
+    # raw_text so a parsed profile is never a subset of what the resume lists.
+    from utils.skills_normalizer import (  # noqa: PLC0415
+        evidenced_skills_in_text,
+        restore_missing_skills,
+    )
+    current_skills = parsed.get("skills")
+    if not isinstance(current_skills, list):
+        current_skills = []
+    parsed["skills"] = restore_missing_skills(
+        current_skills, evidenced_skills_in_text(raw_text)
+    )
+    return parsed
 
 
 async def _get_owned(profile_id: str, user_id, db: AsyncSession) -> Profile:
