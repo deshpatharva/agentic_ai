@@ -12,6 +12,7 @@ LLM, so they are fully reproducible.
 
 from utils.skills_normalizer import (
     _parse_skills,
+    evidenced_skills_in_text,
     normalize_skills,
     restore_missing_skills,
 )
@@ -74,3 +75,49 @@ def test_normalize_skills_preserve_none_is_backward_compatible():
     out = normalize_skills("Skills\nPython, SQL", experience_text="", seniority="mid")
     low = out.lower()
     assert "python" in low and "sql" in low
+
+
+def test_evidenced_skills_in_text_finds_taxonomy_skills_with_casing():
+    text = ("Built ELT with PySpark and Apache Airflow; migrated AWS Redshift to "
+            "Snowflake on Databricks with dbt and Terraform.")
+    out = evidenced_skills_in_text(text)
+
+    low = {s.lower() for s in out}
+    assert {"pyspark", "apache airflow", "snowflake", "databricks", "dbt", "terraform"} <= low
+    # Casing comes from the source text, not the lowercase taxonomy key.
+    assert "PySpark" in out
+    assert "Snowflake" in out
+
+
+async def test_parse_sections_restores_parser_dropped_skills(monkeypatch):
+    """The LLM profile parser (and its 8000-char prompt cap) can drop skills; the
+    guard restores every taxonomy-evidenced skill from the FULL raw_text.
+
+    Regression for the poisoned auto-profile: a prior run's profile parse kept
+    only 9 of ~40 skills, and that gutted profile then drove every re-run.
+    """
+    import profiles.router as router
+
+    raw = (
+        "SUMMARY Senior Data Engineer.\n"
+        "EXPERIENCE Built pipelines with PySpark, Apache Airflow, and Kafka; "
+        "migrated AWS Redshift to Snowflake on Databricks using dbt and Terraform.\n"
+        "SKILLS SQL, Python"
+    )
+
+    async def fake_complete(prompt, model, **kw):
+        # The parser 'returns' only two skills, dropping the rest.
+        return {
+            "text": '{"label":"DE","contact":{},"summary":"","experience":[],'
+                    '"education":[],"skills":["SQL","Python"],"additional_sections":[]}',
+            "input_tokens": 1, "output_tokens": 1, "cost_usd": 0.0,
+        }
+
+    monkeypatch.setattr("llm.complete", fake_complete)
+    parsed = await router._parse_sections(raw)
+
+    low = {s.lower() for s in parsed["skills"]}
+    for must in ("pyspark", "apache airflow", "kafka", "snowflake", "databricks", "dbt", "terraform"):
+        assert must in low, f"parser-dropped skill {must!r} was not restored"
+    # The LLM's own two skills survive too.
+    assert {"sql", "python"} <= low

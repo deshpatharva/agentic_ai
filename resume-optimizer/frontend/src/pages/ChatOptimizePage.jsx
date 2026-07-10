@@ -240,7 +240,9 @@ export default function ChatOptimizePage() {
   }
 
   // ── Core send logic (shared by textarea and profile picker) ──────────────────
-  async function sendMessage(text) {
+  // profileId is set only by a picker click — it pins the launch to that exact
+  // profile so the backend never re-resolves the selection by label.
+  async function sendMessage(text, profileId = null) {
     if (!text?.trim() || phase === 'running' || phase === 'chatting') return;
 
     setInput('');
@@ -266,7 +268,11 @@ export default function ChatOptimizePage() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${getToken()}`,
         },
-        body: JSON.stringify({ session_id: sessionId, message: text }),
+        body: JSON.stringify({
+          session_id: sessionId,
+          message: text,
+          ...(profileId ? { profile_id: profileId } : {}),
+        }),
         signal: ac.signal,
       });
 
@@ -368,7 +374,9 @@ export default function ChatOptimizePage() {
 
   // ── Profile picker selection ──────────────────────────────────────────────────
   function handleProfileSelect(profile) {
-    sendMessage(`Use my "${profile.label}" profile`);
+    // Pass the exact profile id so the backend launches THIS profile deterministically,
+    // never re-resolving the click by label.
+    sendMessage(`Use my "${profile.label}" profile`, profile.id);
   }
 
   // ── Welcome starter prompt — populate input and focus (let user edit/send) ─────
